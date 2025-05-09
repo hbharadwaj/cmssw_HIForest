@@ -1,6 +1,8 @@
 /*
   Based on the jet response analyzer
   Modified by Matt Nguyen, November 2010
+  Modified by Leticia Cunqueiro, September 2021
+  Modified by Bharadwaj Harikrishnan, October 2024
 */
 
 #include "HeavyIonsAnalysis/JetAnalysis/interface/HiInclusiveJetAnalyzer.h"
@@ -38,7 +40,7 @@ HiInclusiveJetAnalyzer::HiInclusiveJetAnalyzer(const edm::ParameterSet& iConfig)
   doGenSym_ = iConfig.getUntrackedParameter<bool>("doGenSym", false);
   doSubJets_ = iConfig.getUntrackedParameter<bool>("doSubJets", false);
   doJetConstituents_ = iConfig.getUntrackedParameter<bool>("doJetConstituents", false);
-  doCaloJets_ = iConfig.getUntrackedParameter<bool>("doCaloJets", true);
+  doCaloJets_ = iConfig.getUntrackedParameter<bool>("doCaloJets", false);
   doGenSubJets_ = iConfig.getUntrackedParameter<bool>("doGenSubJets", false);
   if (doGenSubJets_)
     subjetGenTag_ = consumes<reco::JetView>(iConfig.getUntrackedParameter<InputTag>("subjetGenTag"));
@@ -60,33 +62,40 @@ HiInclusiveJetAnalyzer::HiInclusiveJetAnalyzer(const edm::ParameterSet& iConfig)
   isMC_ = iConfig.getUntrackedParameter<bool>("isMC", false);
   useHepMC_ = iConfig.getUntrackedParameter<bool>("useHepMC", false);
   fillGenJets_ = iConfig.getUntrackedParameter<bool>("fillGenJets", false);
+  fillDetailBranches_ = iConfig.getUntrackedParameter<bool>("fillDetailBranches", true);
 
   doHiJetID_ = iConfig.getUntrackedParameter<bool>("doHiJetID", false);
   doStandardJetID_ = iConfig.getUntrackedParameter<bool>("doStandardJetID", false);
 
-  rParam = iConfig.getParameter<double>("rParam");
+  rParam_ = iConfig.getUntrackedParameter<double>("rParam",0.4);
   hardPtMin_ = iConfig.getUntrackedParameter<double>("hardPtMin", 4);
-  jetPtMin_ = iConfig.getParameter<double>("jetPtMin");
+  jetPtMin_ = iConfig.getUntrackedParameter<double>("jetPtMin",10.0);
   jetAbsEtaMax_ = iConfig.getUntrackedParameter<double>("jetAbsEtaMax", 5.1);
+
+  doSubstructure_ = iConfig.getUntrackedParameter<bool>("doSubstructure", true);
+  sdZcut_ = iConfig.getUntrackedParameter<double>("sdZcut",0.2);
+  sdBeta_ = iConfig.getUntrackedParameter<double>("sdBeta",0.0);
+  sdDynktcut_ = iConfig.getUntrackedParameter<double>("sdDynktcut",1.0);
+  groomType_ = iConfig.getUntrackedParameter<double>("groomType",1.0);
+  groomCombine_ = iConfig.getUntrackedParameter<double>("groomCombine",0.0);
+  doChargedConstOnly_ = iConfig.getUntrackedParameter<bool>("doChargedConstOnly",false);
 
   if (isMC_) {
     genjetTag_ = consumes<edm::View<reco::GenJet>>(iConfig.getParameter<InputTag>("genjetTag"));
     if (useHepMC_)
       eventInfoTag_ = consumes<HepMCProduct>(iConfig.getParameter<InputTag>("eventInfoTag"));
     eventGenInfoTag_ = consumes<GenEventInfoProduct>(iConfig.getParameter<InputTag>("eventInfoTag"));
-    jetFlavourInfosToken_ = consumes<reco::JetFlavourInfoMatchingCollection>( iConfig.getParameter<edm::InputTag>("jetFlavourInfos") );
   }
   useRawPt_ = iConfig.getUntrackedParameter<bool>("useRawPt", true);
+
   doLegacyBtagging_ = iConfig.getUntrackedParameter<bool>("doLegacyBtagging", true);
   doCandidateBtagging_ = iConfig.getUntrackedParameter<bool>("doCandidateBtagging", true);
   useNewBtaggers_ = iConfig.getUntrackedParameter<bool>("useNewBtaggers", false);
 
-  pfCandidateLabel_ =
-      consumes<edm::View<pat::PackedCandidate>>(iConfig.getUntrackedParameter<edm::InputTag>("pfCandidateLabel"));
+  pfCandidateLabel_ = consumes<edm::View<pat::PackedCandidate>>(iConfig.getUntrackedParameter<edm::InputTag>("pfCandidateLabel"));
 
   if (isMC_)
-    genParticleSrc_ =
-        consumes<reco::GenParticleCollection>(iConfig.getUntrackedParameter<edm::InputTag>("genParticles"));
+    genParticleSrc_ = consumes<reco::GenParticleCollection>(iConfig.getUntrackedParameter<edm::InputTag>("genParticles"));
 
   if (doLegacyBtagging_) {
     trackCHEBJetTags_ = "trackCountingHighEffBJetTags";
@@ -129,6 +138,12 @@ HiInclusiveJetAnalyzer::HiInclusiveJetAnalyzer(const edm::ParameterSet& iConfig)
   if (isMC_) {
     genPtMin_ = iConfig.getUntrackedParameter<double>("genPtMin", 10);
     doSubEvent_ = iConfig.getUntrackedParameter<bool>("doSubEvent", false);
+
+    doPFCandEnergySmear_ = iConfig.getUntrackedParameter<bool>("doPFCandEnergySmearCand", false);
+    pfChargedCandidateEnergyScale_ = iConfig.getUntrackedParameter<double>("pfChargedEnergyScaleVar",1.);
+    pfNeutralCandidateEnergyScale_ = iConfig.getUntrackedParameter<double>("pfNeutralEnergyScaleVar",1.);
+    pfGammaCandidateEnergyScale_ = iConfig.getUntrackedParameter<double>("pfGammaEnergyScaleVar",1.);
+
   }
 }
 
@@ -168,21 +183,23 @@ void HiInclusiveJetAnalyzer::beginJob() {
     t->Branch("WTAphi", jets_.WTAphi, "WTAphi[nref]/F");
   }
 
-  t->Branch("jtPfCHF", jets_.jtPfCHF, "jtPfCHF[nref]/F");
-  t->Branch("jtPfNHF", jets_.jtPfNHF, "jtPfNHF[nref]/F");
-  t->Branch("jtPfCEF", jets_.jtPfCEF, "jtPfCEF[nref]/F");
-  t->Branch("jtPfNEF", jets_.jtPfNEF, "jtPfNEF[nref]/F");
-  t->Branch("jtPfMUF", jets_.jtPfMUF, "jtPfMUF[nref]/F");
+  if(fillDetailBranches_){
+    t->Branch("jtPfCHF", jets_.jtPfCHF, "jtPfCHF[nref]/F");
+    t->Branch("jtPfNHF", jets_.jtPfNHF, "jtPfNHF[nref]/F");
+    t->Branch("jtPfCEF", jets_.jtPfCEF, "jtPfCEF[nref]/F");
+    t->Branch("jtPfNEF", jets_.jtPfNEF, "jtPfNEF[nref]/F");
+    t->Branch("jtPfMUF", jets_.jtPfMUF, "jtPfMUF[nref]/F");
 
-  t->Branch("jtPfCHM", jets_.jtPfCHM, "jtPfCHM[nref]/I");
-  t->Branch("jtPfNHM", jets_.jtPfNHM, "jtPfNHM[nref]/I");
-  t->Branch("jtPfCEM", jets_.jtPfCEM, "jtPfCEM[nref]/I");
-  t->Branch("jtPfNEM", jets_.jtPfNEM, "jtPfNEM[nref]/I");
-  t->Branch("jtPfMUM", jets_.jtPfMUM, "jtPfMUM[nref]/I");
+    t->Branch("jtPfCHM", jets_.jtPfCHM, "jtPfCHM[nref]/I");
+    t->Branch("jtPfNHM", jets_.jtPfNHM, "jtPfNHM[nref]/I");
+    t->Branch("jtPfCEM", jets_.jtPfCEM, "jtPfCEM[nref]/I");
+    t->Branch("jtPfNEM", jets_.jtPfNEM, "jtPfNEM[nref]/I");
+    t->Branch("jtPfMUM", jets_.jtPfMUM, "jtPfMUM[nref]/I");
 
-  t->Branch("jttau1", jets_.jttau1, "jttau1[nref]/F");
-  t->Branch("jttau2", jets_.jttau2, "jttau2[nref]/F");
-  t->Branch("jttau3", jets_.jttau3, "jttau3[nref]/F");
+    t->Branch("jttau1", jets_.jttau1, "jttau1[nref]/F");
+    t->Branch("jttau2", jets_.jttau2, "jttau2[nref]/F");
+    t->Branch("jttau3", jets_.jttau3, "jttau3[nref]/F");
+  }
 
   if (doSubJets_) {
     t->Branch("jtSubJetPt", &jets_.jtSubJetPt);
@@ -268,17 +285,30 @@ void HiInclusiveJetAnalyzer::beginJob() {
     t->Branch("fHFOOT", jets_.fHFOOT, "fHFOOT[nref]/F");
   }
 
+  // Jet Substructure
+  if (doSubstructure_){
+    t->Branch("jtdyn_split",jets_.jtdyn_split,"jtdyn_split[nref]/I");
+    t->Branch("jtdyn_eta",jets_.jtdyn_eta,"jtdyn_eta[nref]/F");
+    t->Branch("jtdyn_phi",jets_.jtdyn_phi,"jtdyn_phi[nref]/F");
+    t->Branch("jtdyn_deltaR",jets_.jtdyn_deltaR,"jtdyn_deltaR[nref]/F");
+    t->Branch("jtdyn_kt",jets_.jtdyn_kt,"jtdyn_kt[nref]/F");
+    t->Branch("jtdyn_z",jets_.jtdyn_z,"jtdyn_z[nref]/F");
+    t->Branch("jt_intjet_multi", jets_.jt_intjet_multi,"jt_intjet_multi[nref]/I");
+    t->Branch("jt_girth", jets_.jt_girth, "jt_girth[nref]/F");
+    t->Branch("jt_thrust", jets_.jt_thrust,"jt_thrust[nref]/F");
+    t->Branch("jt_LHA", jets_.jt_LHA,"jt_LHA[nref]/F");
+    t->Branch("jt_pTD", jets_.jt_pTD,"jt_pTD[nref]/F");    
+  }
+
   // Jet ID
   if (doMatch_) {
-    t->Branch("mjtPt", jets_.mjtPt, "mjtPt[nref]/F");
-    t->Branch("mjtRawPt", jets_.mjtRawPt, "mjtRawPt[nref]/F");
-    t->Branch("mjtPu", jets_.mjtPu, "mjtPu[nref]/F");
-    t->Branch("mjtR", jets_.mjtR, "mjtR[nref]/F");
+    t->Branch("matchedPt", jets_.matchedPt, "matchedPt[nref]/F");
+    t->Branch("matchedRawPt", jets_.matchedRawPt, "matchedRawPt[nref]/F");
+    t->Branch("matchedPu", jets_.matchedPu, "matchedPu[nref]/F");
+    t->Branch("matchedR", jets_.matchedR, "matchedR[nref]/F");
     if (isMC_) {
-      t->Branch("mjtHadronFlavor", jets_.mjtHadronFlavor, "mjtHadronFlavor[nref]/I");
-      t->Branch("mjtPartonFlavor", jets_.mjtPartonFlavor, "mjtPartonFlavor[nref]/I");
-      t->Branch("mjtNbHad", jets_.mjtNbHad, "mjtNbHad[nref]/I");
-      t->Branch("mjtNcHad", jets_.mjtNcHad, "mjtNcHad[nref]/I");
+      t->Branch("matchedHadronFlavor", jets_.matchedHadronFlavor, "matchedHadronFlavor[nref]/I");
+      t->Branch("matchedPartonFlavor", jets_.matchedPartonFlavor, "matchedPartonFlavor[nref]/I");
     }
   }
 
@@ -333,6 +363,20 @@ void HiInclusiveJetAnalyzer::beginJob() {
     t->Branch("refphi", jets_.refphi, "refphi[nref]/F");
     t->Branch("refm", jets_.refm, "refm[nref]/F");
     t->Branch("refarea", jets_.refarea, "refarea[nref]/F");
+
+    if(doSubstructure_){
+      t->Branch("refdyn_split",jets_.refdyn_split,"refdyn_split[nref]/I");
+      t->Branch("refdyn_eta",jets_.refdyn_eta,"refdyn_eta[nref]/F");
+      t->Branch("refdyn_phi",jets_.refdyn_phi,"refdyn_phi[nref]/F");
+      t->Branch("refdyn_deltaR",jets_.refdyn_deltaR,"refdyn_deltaR[nref]/F");
+      t->Branch("refdyn_kt",jets_.refdyn_kt,"refdyn_kt[nref]/F");
+      t->Branch("refdyn_z",jets_.refdyn_z,"refdyn_z[nref]/F");
+      t->Branch("ref_intjet_multi", jets_.ref_intjet_multi,"ref_intjet_multi[nref]/I");
+      t->Branch("ref_girth", jets_.ref_girth, "ref_girth[nref]/F");
+      t->Branch("ref_thrust", jets_.ref_thrust,"ref_thrust[nref]/F");
+      t->Branch("ref_LHA", jets_.ref_LHA,"ref_LHA[nref]/F");
+      t->Branch("ref_pTD", jets_.ref_pTD,"ref_pTD[nref]/F");
+    }
 
     if (doGenTaus_) {
       t->Branch("reftau1", jets_.reftau1, "reftau1[nref]/F");
@@ -399,6 +443,20 @@ void HiInclusiveJetAnalyzer::beginJob() {
       t->Branch("genm", jets_.genm, "genm[ngen]/F");
       t->Branch("gendphijt", jets_.gendphijt, "gendphijt[ngen]/F");
       t->Branch("gendrjt", jets_.gendrjt, "gendrjt[ngen]/F");
+
+      if(doSubstructure_){
+        t->Branch("gendyn_split",jets_.gendyn_split,"gendyn_split[ngen]/I");
+        t->Branch("gendyn_eta",jets_.gendyn_eta,"gendyn_eta[ngen]/F");
+        t->Branch("gendyn_phi",jets_.gendyn_phi,"gendyn_phi[ngen]/F");
+        t->Branch("gendyn_deltaR",jets_.gendyn_deltaR,"gendyn_deltaR[ngen]/F");
+        t->Branch("gendyn_kt",jets_.gendyn_kt,"gendyn_kt[ngen]/F");
+        t->Branch("gendyn_z",jets_.gendyn_z,"gendyn_z[ngen]/F");
+        t->Branch("gen_intjet_multi", jets_.gen_intjet_multi,"gen_intjet_multi[ngen]/I");
+        t->Branch("gen_girth", jets_.gen_girth,"gen_girth[ngen]/F");
+        t->Branch("gen_thrust", jets_.gen_thrust,"gen_thrust[ngen]/F");
+        t->Branch("gen_LHA", jets_.gen_LHA,"gen_LHA[ngen]/F");
+        t->Branch("gen_pTD", jets_.gen_pTD,"gen_pTD[ngen]/F");
+      }
 
       //for reWTA reclustering
       if (doWTARecluster_) {
@@ -493,12 +551,9 @@ void HiInclusiveJetAnalyzer::analyze(const Event& iEvent, const EventSetup& iSet
 
   edm::Handle<edm::View<pat::PackedCandidate>> pfCandidates;
   iEvent.getByToken(pfCandidateLabel_, pfCandidates);
-  edm::Handle<reco::JetFlavourInfoMatchingCollection> jetFlavourInfos;
-
   if (isMC_) {
     edm::Handle<reco::GenParticleCollection> genparts;
     iEvent.getByToken(genParticleSrc_, genparts);
-    iEvent.getByToken(jetFlavourInfosToken_, jetFlavourInfos );
   }
 
   std::map<std::string, std::map<std::string, edm::Handle<JetTagCollection>>> jetTaggers;
@@ -511,6 +566,7 @@ void HiInclusiveJetAnalyzer::analyze(const Event& iEvent, const EventSetup& iSet
   // FILL JRA TREE
   jets_.nref = 0;
   jets_.ncalo = 0;
+  jets_.ngen = 0;
 
   if (doJetConstituents_) {
     jets_.jtConstituentsId.clear();
@@ -548,6 +604,45 @@ void HiInclusiveJetAnalyzer::analyze(const Event& iEvent, const EventSetup& iSet
     jets_.genSDConstituentsEta.clear();
     jets_.genSDConstituentsPhi.clear();
     jets_.genSDConstituentsM.clear();
+  }
+
+  if(doSubstructure_){
+    jets_.jtdyn_split[jets_.nref] = 0;
+    jets_.jtdyn_eta[jets_.nref] = 0;
+    jets_.jtdyn_phi[jets_.nref] = 0;
+    jets_.jtdyn_deltaR[jets_.nref] = 0;
+    jets_.jtdyn_kt[jets_.nref] = 0;
+    jets_.jtdyn_z[jets_.nref] = 0;
+    jets_.jt_intjet_multi[jets_.nref] = 0;
+    jets_.jt_girth[jets_.nref] = 0;
+    jets_.jt_thrust[jets_.nref] = 0;
+    jets_.jt_LHA[jets_.nref] = 0;
+    jets_.jt_pTD[jets_.nref] = 0;
+
+
+    jets_.refdyn_split[jets_.nref] = 0;
+    jets_.refdyn_eta[jets_.nref] = 0;
+    jets_.refdyn_phi[jets_.nref] = 0;
+    jets_.refdyn_deltaR[jets_.nref] = 0;
+    jets_.refdyn_kt[jets_.nref] = 0;
+    jets_.refdyn_z[jets_.nref] = 0;
+    jets_.ref_intjet_multi[jets_.nref] = 0;
+    jets_.ref_girth[jets_.nref] = 0;
+    jets_.ref_thrust[jets_.nref] = 0;
+    jets_.ref_LHA[jets_.nref] = 0;
+    jets_.ref_pTD[jets_.nref] = 0;
+    
+    jets_.gendyn_split[jets_.ngen] = 0;
+    jets_.gendyn_eta[jets_.ngen] = 0;
+    jets_.gendyn_phi[jets_.ngen] = 0;
+    jets_.gendyn_deltaR[jets_.ngen] = 0;
+    jets_.gendyn_kt[jets_.ngen] = 0;
+    jets_.gendyn_z[jets_.ngen] = 0;
+    jets_.gen_intjet_multi[jets_.ngen] = 0;
+    jets_.gen_girth[jets_.ngen] = 0;
+    jets_.gen_thrust[jets_.ngen] = 0;
+    jets_.gen_LHA[jets_.ngen] = 0;
+    jets_.gen_pTD[jets_.ngen] = 0;
   }
 
   auto getTag = [](const edm::Handle<reco::JetTagCollection> &bTags,const pat::Jet &jet) {
@@ -683,7 +778,7 @@ void HiInclusiveJetAnalyzer::analyze(const Event& iEvent, const EventSetup& iSet
         }
 
         double dr = deltaR(jet, track);
-        if (dr < rParam) {
+        if (dr < rParam_) {
           double ptcand = track.pt();
           jets_.trackSum[jets_.nref] += ptcand;
           jets_.trackN[jets_.nref] += 1;
@@ -701,7 +796,7 @@ void HiInclusiveJetAnalyzer::analyze(const Event& iEvent, const EventSetup& iSet
       for (unsigned int icand = 0; icand < pfCandidates->size(); ++icand) {
         const pat::PackedCandidate& track = (*pfCandidates)[icand];
         double dr = deltaR(jet, track);
-        if (dr < rParam) {
+        if (dr < rParam_) {
           double ptcand = track.pt();
           int pfid = converter.translatePdgIdToType(track.pdgId());
 
@@ -765,29 +860,16 @@ void HiInclusiveJetAnalyzer::analyze(const Event& iEvent, const EventSetup& iSet
 
         double dr = deltaR(jet, mjet);
         if (dr < drMin) {
-          jets_.mjtPt[jets_.nref] = mjet.pt();
+          jets_.matchedPt[jets_.nref] = mjet.pt();
 
-          jets_.mjtRawPt[jets_.nref] = mjet.correctedJet("Uncorrected").pt();
-          jets_.mjtPu[jets_.nref] = mjet.pileup();
+          jets_.matchedRawPt[jets_.nref] = mjet.correctedJet("Uncorrected").pt();
+          jets_.matchedPu[jets_.nref] = mjet.pileup();
           if (isMC_) {
-            jets_.mjtHadronFlavor[jets_.nref] = mjet.hadronFlavour();
-            jets_.mjtPartonFlavor[jets_.nref] = mjet.partonFlavour();
-
-	    for (const JetFlavourInfoMatching& jetFlavourInfoMatching : *jetFlavourInfos) {
-	      if (deltaR(mjet.p4(), jetFlavourInfoMatching.first->p4()) < 1e-6) {
-		JetFlavourInfo jetInfo = jetFlavourInfoMatching.second;
-		const GenParticleRefVector &bHadronsInJet = jetInfo.getbHadrons();
-		const GenParticleRefVector &cHadronsInJet = jetInfo.getcHadrons();
-
-		jets_.mjtNbHad[jets_.nref] = bHadronsInJet.size();
-		jets_.mjtNcHad[jets_.nref] = cHadronsInJet.size();
-
-		break;
-	      }
-	    } // end loop over flavour info
+            jets_.matchedHadronFlavor[jets_.nref] = mjet.hadronFlavour();
+            jets_.matchedPartonFlavor[jets_.nref] = mjet.partonFlavour();
           }
 
-          jets_.mjtR[jets_.nref] = dr;
+          jets_.matchedR[jets_.nref] = dr;
           drMin = dr;
         }
       }
@@ -802,18 +884,25 @@ void HiInclusiveJetAnalyzer::analyze(const Event& iEvent, const EventSetup& iSet
     jets_.jtm[jets_.nref] = jet.mass();
     jets_.jtarea[jets_.nref] = jet.jetArea();
 
+    if(doSubstructure_){
+      fastjet::PseudoJet *sub1Reco = new fastjet::PseudoJet();
+      fastjet::PseudoJet *sub2Reco =new fastjet::PseudoJet();
+      IterativeDeclustering(kReco, jet, sub1Reco, sub2Reco);
+      //TODO: Use or store the subjets
+      delete sub1Reco;
+      delete sub2Reco;
+    }
+
     //recluster the jet constituents in reWTA scheme-------------------------
     if (doWTARecluster_) {
       std::vector<fastjet::PseudoJet> candidates;
       auto daughters = jet.getJetConstituents();
       for (auto it = daughters.begin(); it != daughters.end(); ++it) {
-	if (!it->isAvailable()) continue;
-	const reco::CandidatePtr &constit = *it;
-	if (constit.isNull() || constit->pt() <= std::numeric_limits<double>::epsilon()) continue;
-	candidates.push_back(fastjet::PseudoJet(constit->px(), constit->py(), constit->pz(), constit->energy()));
+        candidates.push_back(fastjet::PseudoJet((**it).px(), (**it).py(), (**it).pz(), (**it).energy()));
       }
       auto cs = new fastjet::ClusterSequence(candidates, WTAjtDef);
       std::vector<fastjet::PseudoJet> wtajt = fastjet::sorted_by_pt(cs->inclusive_jets(0));
+
       jets_.WTAeta[jets_.nref] = (!wtajt.empty()) ? wtajt[0].eta() : -999;
       jets_.WTAphi[jets_.nref] = (!wtajt.empty()) ? wtajt[0].phi_std() : -999;
       delete cs;
@@ -842,30 +931,32 @@ void HiInclusiveJetAnalyzer::analyze(const Event& iEvent, const EventSetup& iSet
     if (jet.hasUserInt(jetName_ + "Jets:droppedBranches"))
       jets_.jtdroppedBranches[jets_.nref] = jet.userInt(jetName_ + "Jets:droppedBranches");
 
-    if (jet.isPFJet()) {
-      jets_.jtPfCHF[jets_.nref] = jet.chargedHadronEnergyFraction();
-      jets_.jtPfNHF[jets_.nref] = jet.neutralHadronEnergyFraction();
-      jets_.jtPfCEF[jets_.nref] = jet.chargedEmEnergyFraction();
-      jets_.jtPfNEF[jets_.nref] = jet.neutralEmEnergyFraction();
-      jets_.jtPfMUF[jets_.nref] = jet.muonEnergyFraction();
+    if(fillDetailBranches_){
+      if (jet.isPFJet()) {
+        jets_.jtPfCHF[jets_.nref] = jet.chargedHadronEnergyFraction();
+        jets_.jtPfNHF[jets_.nref] = jet.neutralHadronEnergyFraction();
+        jets_.jtPfCEF[jets_.nref] = jet.chargedEmEnergyFraction();
+        jets_.jtPfNEF[jets_.nref] = jet.neutralEmEnergyFraction();
+        jets_.jtPfMUF[jets_.nref] = jet.muonEnergyFraction();
 
-      jets_.jtPfCHM[jets_.nref] = jet.chargedHadronMultiplicity();
-      jets_.jtPfNHM[jets_.nref] = jet.neutralHadronMultiplicity();
-      jets_.jtPfCEM[jets_.nref] = jet.electronMultiplicity();
-      jets_.jtPfNEM[jets_.nref] = jet.photonMultiplicity();
-      jets_.jtPfMUM[jets_.nref] = jet.muonMultiplicity();
-    } else {
-      jets_.jtPfCHF[jets_.nref] = 0;
-      jets_.jtPfNHF[jets_.nref] = 0;
-      jets_.jtPfCEF[jets_.nref] = 0;
-      jets_.jtPfNEF[jets_.nref] = 0;
-      jets_.jtPfMUF[jets_.nref] = 0;
+        jets_.jtPfCHM[jets_.nref] = jet.chargedHadronMultiplicity();
+        jets_.jtPfNHM[jets_.nref] = jet.neutralHadronMultiplicity();
+        jets_.jtPfCEM[jets_.nref] = jet.electronMultiplicity();
+        jets_.jtPfNEM[jets_.nref] = jet.photonMultiplicity();
+        jets_.jtPfMUM[jets_.nref] = jet.muonMultiplicity();
+      } else {
+        jets_.jtPfCHF[jets_.nref] = 0;
+        jets_.jtPfNHF[jets_.nref] = 0;
+        jets_.jtPfCEF[jets_.nref] = 0;
+        jets_.jtPfNEF[jets_.nref] = 0;
+        jets_.jtPfMUF[jets_.nref] = 0;
 
-      jets_.jtPfCHM[jets_.nref] = 0;
-      jets_.jtPfNHM[jets_.nref] = 0;
-      jets_.jtPfCEM[jets_.nref] = 0;
-      jets_.jtPfNEM[jets_.nref] = 0;
-      jets_.jtPfMUM[jets_.nref] = 0;
+        jets_.jtPfCHM[jets_.nref] = 0;
+        jets_.jtPfNHM[jets_.nref] = 0;
+        jets_.jtPfCEM[jets_.nref] = 0;
+        jets_.jtPfNEM[jets_.nref] = 0;
+        jets_.jtPfMUM[jets_.nref] = 0;
+      }
     }
 
     //    if(isMC_){
@@ -874,7 +965,7 @@ void HiInclusiveJetAnalyzer::analyze(const Event& iEvent, const EventSetup& iSet
     // const reco::GenParticle& p = (*genparts)[i];
     // if ( p.status()!=1 || p.charge()==0) continue;
     // double dr = deltaR(jet,p);
-    // if(dr < rParam){
+    // if(dr < rParam_){
     //   double ppt = p.pt();
     //   jets_.genChargedSum[jets_.nref] += ppt;
     //   if(ppt > hardPtMin_) jets_.genHardSum[jets_.nref] += ppt;
@@ -898,6 +989,14 @@ void HiInclusiveJetAnalyzer::analyze(const Event& iEvent, const EventSetup& iSet
         jets_.refy[jets_.nref] = genjet->eta();
         jets_.refdphijt[jets_.nref] = reco::deltaPhi(jet.phi(), genjet->phi());
         jets_.refdrjt[jets_.nref] = reco::deltaR(jet.eta(), jet.phi(), genjet->eta(), genjet->phi());
+
+        if(doSubstructure_){
+          fastjet::PseudoJet *sub1MatchGen = new fastjet::PseudoJet();
+          fastjet::PseudoJet *sub2MatchGen =new fastjet::PseudoJet();
+          IterativeDeclustering(kMatchGen, *genjet, sub1MatchGen, sub2MatchGen);
+          delete sub1MatchGen;
+          delete sub2MatchGen;
+        }
 
         if (doSubEvent_) {
           const GenParticle* gencon = genjet->getGenConstituent(0);
@@ -953,17 +1052,17 @@ void HiInclusiveJetAnalyzer::analyze(const Event& iEvent, const EventSetup& iSet
 
       jets_.refparton_flavorForB[jets_.nref] = jet.partonFlavour();
 
-      //      if(jet.genParton()){
-      // // matched partons
-      // const reco::GenParticle & parton = *jet.genParton();
+      if(jet.genParton()){
+        // matched partons
+        const reco::GenParticle & parton = *jet.genParton();
 
-      // jets_.refparton_pt[jets_.nref] = parton.pt();
-      // jets_.refparton_flavor[jets_.nref] = parton.pdgId();
-
-      //      } else {
-      jets_.refparton_pt[jets_.nref] = -999;
-      jets_.refparton_flavor[jets_.nref] = -999;
-      //      }
+        jets_.refparton_pt[jets_.nref] = parton.pt();
+        jets_.refparton_flavor[jets_.nref] = parton.pdgId();
+      }
+      else {
+        jets_.refparton_pt[jets_.nref] = -999;
+        jets_.refparton_flavor[jets_.nref] = -999;
+      }
     }
     jets_.nref++;
   }
@@ -998,11 +1097,18 @@ void HiInclusiveJetAnalyzer::analyze(const Event& iEvent, const EventSetup& iSet
       iEvent.getByToken(tokenGenTau3_, genTau3s);
     }
 
-    jets_.ngen = 0;
-
     for (unsigned int igen = 0; igen < genjets->size(); ++igen) {
       const reco::GenJet& genjet = (*genjets)[igen];
       float genjet_pt = genjet.pt();
+
+      if(doSubstructure_){
+        fastjet::PseudoJet *sub1AllGen = new fastjet::PseudoJet();
+        fastjet::PseudoJet *sub2AllGen =new fastjet::PseudoJet();
+        IterativeDeclustering(kAllGen, genjet, sub1AllGen, sub2AllGen);
+        //TODO: Use or store the subjets
+        delete sub1AllGen;
+        delete sub2AllGen;
+      }
 
       float tau1 = -999.;
       float tau2 = -999.;
@@ -1053,9 +1159,7 @@ void HiInclusiveJetAnalyzer::analyze(const Event& iEvent, const EventSetup& iSet
           std::vector<fastjet::PseudoJet> candidates;
           auto daughters = genjet.getJetConstituents();
           for (auto it = daughters.begin(); it != daughters.end(); ++it) {
-	    if (!it->isAvailable()) continue;  
-	    const reco::CandidatePtr &constit = *it;
-	    candidates.push_back(fastjet::PseudoJet(constit->px(), constit->py(), constit->pz(), constit->energy()));
+            candidates.push_back(fastjet::PseudoJet((**it).px(), (**it).py(), (**it).pz(), (**it).energy()));
           }
           auto cs = new fastjet::ClusterSequence(candidates, WTAjtDef);
           std::vector<fastjet::PseudoJet> wtajt = fastjet::sorted_by_pt(cs->inclusive_jets(0));
@@ -1107,6 +1211,181 @@ void HiInclusiveJetAnalyzer::analyze(const Event& iEvent, const EventSetup& iSet
 
   //memset(&jets_,0,sizeof jets_);
   jets_ = {0};
+}
+
+void HiInclusiveJetAnalyzer::IterativeDeclustering(int flagGen, const reco::Jet& jet, fastjet::PseudoJet *sub1, fastjet::PseudoJet *sub2){
+
+  Int_t dyn_split = 0;
+  double dyn_eta = 0;
+  double dyn_phi = 0;
+  double dyn_deltaR = 0;
+  double dyn_kt = std::numeric_limits<double>::min();
+  double dyn_z = 0;
+
+  Int_t intjet_multi = 0;
+  float jet_girth = 0;
+  float jet_thrust = 0;
+  float jet_LHA = 0;
+  float jet_pTD = 0;
+
+  Bool_t flagSubjet = false;
+  double var_z = 0;
+  Int_t nsplit = 0;
+  Int_t nsel = 0;
+  const double jet_radius_ca = 1.0;
+  // genkt_algorithm with extra parameter = 0 removes kT dependence
+  fastjet::JetDefinition jet_def(fastjet::genkt_algorithm,jet_radius_ca,0,static_cast<fastjet::RecombinationScheme>(0), fastjet::Best);
+  fastjet::PseudoJet myjet;
+  fastjet::PseudoJet mypart;
+
+  // Reclustering jet constituents with new algorithm
+  myjet.reset(jet.p4().px(),jet.p4().py(),jet.p4().pz(),jet.p4().e());
+
+  std::vector<fastjet::PseudoJet> particles = {};
+  auto daughters = jet.getJetConstituents();
+
+  // All jet constituents
+  for(auto it = daughters.begin(); it!=daughters.end(); ++it){
+
+    if(doChargedConstOnly_ && (**it).charge()==0) continue;
+    double PFEnergy_Scale = 1.00;
+    if(isMC_ && doPFCandEnergySmear_){
+      switch(std::abs((**it).pdgId())){
+        case 211: 
+          PFEnergy_Scale = pfChargedCandidateEnergyScale_;
+          break;
+        case 130: 
+          PFEnergy_Scale = pfNeutralCandidateEnergyScale_;
+          break;
+        case 22: 
+          PFEnergy_Scale = pfGammaCandidateEnergyScale_;
+          break;
+        default: 
+          PFEnergy_Scale = 1.00;
+      }
+    }
+    double temp_px =    (**it).px()*PFEnergy_Scale;
+    double temp_py =    (**it).py()*PFEnergy_Scale;
+    double temp_pz =    (**it).pz()*PFEnergy_Scale;
+    double temp_E = (**it).energy()*PFEnergy_Scale;
+
+    mypart.reset(temp_px, temp_py, temp_pz, temp_E);
+
+    double frac_dR = mypart.delta_R(myjet)/rParam_;
+    double frac_pt = mypart.perp()/myjet.perp();
+
+    intjet_multi++;
+    jet_girth     += mypart.perp()*mypart.delta_R(myjet)/myjet.perp();
+    jet_thrust    += frac_pt*frac_dR*frac_dR;
+    jet_LHA       += frac_pt*sqrt(frac_dR);
+    jet_pTD       += frac_pt*frac_pt;
+
+    particles.push_back(fastjet::PseudoJet(temp_px, temp_py, temp_pz, temp_E));
+  }
+
+  fastjet::ClusterSequence csiter(particles, jet_def);
+  std::vector<fastjet::PseudoJet> reclustered_CA_jets = csiter.inclusive_jets(0);
+  reclustered_CA_jets = sorted_by_pt(reclustered_CA_jets);
+
+  fastjet::PseudoJet jj = reclustered_CA_jets[0];
+  fastjet::PseudoJet j1;
+  fastjet::PseudoJet j2;
+
+  while(jj.has_parents(j1,j2)){
+    if(j1.perp() < j2.perp()) std::swap(j1,j2);
+    double delta_R = j1.delta_R(j2);
+    var_z = j2.perp()/(j1.perp()+j2.perp());
+
+    // lateSD
+    if((groomType_==0) && (var_z > sdZcut_*pow(delta_R/rParam_,sdBeta_))){
+      dyn_split = nsplit;
+      dyn_deltaR = delta_R;
+      dyn_z = var_z;
+      dyn_eta = j2.eta();
+      dyn_phi = j2.phi();
+      *sub1 = j1;
+      *sub2 = j2;
+    }
+
+    // standard SD
+    if((groomType_==1) && (var_z > sdZcut_*pow(delta_R/rParam_,sdBeta_)) && !flagSubjet){
+      dyn_split = nsplit;
+      dyn_deltaR = delta_R;
+      dyn_z = var_z;
+      dyn_eta = j2.eta();
+      dyn_phi = j2.phi();
+      *sub1 = j1;
+      *sub2 = j2;
+
+      flagSubjet = true;
+    }
+
+    // kT 
+    double var_kT = var_z*(1-var_z)*j2.perp()*pow(delta_R/rParam_,sdDynktcut_);
+    if(var_kT > dyn_kt){
+      dyn_kt = var_kT;
+      nsel = nsplit;
+    }
+
+    jj = j1;
+    nsplit = nsplit+1;   
+  }
+
+  // latedSD && dynkT
+  if(groomCombine_==1){
+    if(nsel!=dyn_split){
+      sub1->reset(0,0,0,0);   
+      sub2->reset(0,0,0,0);
+      dyn_z = 0;
+      dyn_deltaR = 0;
+    }
+  }
+
+  if(flagGen==kAllGen){
+    jets_.gendyn_split[jets_.ngen] = dyn_split;
+    jets_.gendyn_eta[jets_.ngen] = dyn_eta;
+    jets_.gendyn_phi[jets_.ngen] = dyn_phi;
+    jets_.gendyn_deltaR[jets_.ngen] = dyn_deltaR;
+    jets_.gendyn_kt[jets_.ngen] = dyn_kt;
+    jets_.gendyn_z[jets_.ngen] = dyn_z;
+    jets_.gen_intjet_multi[jets_.ngen] = intjet_multi;
+    jets_.gen_girth[jets_.ngen] = jet_girth;
+    jets_.gen_thrust[jets_.ngen] = jet_thrust;
+    jets_.gen_LHA[jets_.ngen] = jet_LHA;
+    jets_.gen_pTD[jets_.ngen] = jet_pTD;
+
+  }
+  else if(flagGen==kMatchGen){
+    jets_.refdyn_split[jets_.nref] = dyn_split;
+    jets_.refdyn_eta[jets_.nref] = dyn_eta;
+    jets_.refdyn_phi[jets_.nref] = dyn_phi;
+    jets_.refdyn_deltaR[jets_.nref] = dyn_deltaR;
+    jets_.refdyn_kt[jets_.nref] = dyn_kt;
+    jets_.refdyn_z[jets_.nref] = dyn_z;
+    jets_.ref_intjet_multi[jets_.nref] = intjet_multi;
+    jets_.ref_girth[jets_.nref] = jet_girth;
+    jets_.ref_thrust[jets_.nref] = jet_thrust;
+    jets_.ref_LHA[jets_.nref] = jet_LHA;
+    jets_.ref_pTD[jets_.nref] = jet_pTD;
+  }
+  else if(flagGen==kReco){
+    jets_.jtdyn_split[jets_.nref] = dyn_split;
+    jets_.jtdyn_eta[jets_.nref] = dyn_eta;
+    jets_.jtdyn_phi[jets_.nref] = dyn_phi;
+    jets_.jtdyn_deltaR[jets_.nref] = dyn_deltaR;
+    jets_.jtdyn_kt[jets_.nref] = dyn_kt;
+    jets_.jtdyn_z[jets_.nref] = dyn_z;
+    jets_.jt_intjet_multi[jets_.nref] = intjet_multi;
+    jets_.jt_girth[jets_.nref] = jet_girth;
+    jets_.jt_thrust[jets_.nref] = jet_thrust;
+    jets_.jt_LHA[jets_.nref] = jet_LHA;
+    jets_.jt_pTD[jets_.nref] = jet_pTD;
+  }
+  else{
+    //TODO: Handle Exception
+    std::cout<<"\nNot Gen or Reco in Iterative Declustering\n";
+  }
+
 }
 
 int HiInclusiveJetAnalyzer::getPFJetMuon(const pat::Jet& pfJet,
