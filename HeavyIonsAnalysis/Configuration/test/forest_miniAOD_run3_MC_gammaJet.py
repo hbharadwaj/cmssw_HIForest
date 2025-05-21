@@ -131,7 +131,7 @@ process.forest = cms.Path(
 #    process.particleFlowAnalyser +
     process.hiEvtAnalyzer +
     process.HiGenParticleAna +
-    process.muonSequence +
+    # process.muonSequence +
     process.ggHiNtuplizer 
 #    process.zdcdigi +
 #    process.QWzdcreco +
