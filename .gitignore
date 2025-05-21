@@ -20,3 +20,8 @@ __init__.py
 # ignore .root files
 *.root
 
+# ignore figures 
+*.png
+*.jpg
+*.jpeg
+
