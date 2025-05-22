@@ -16,6 +16,7 @@ __init__.py
 
 # ignore crab submissions
 **/crab_projects/
+*.log
 
 # ignore .root files
 *.root
@@ -24,4 +25,8 @@ __init__.py
 *.png
 *.jpg
 *.jpeg
+
+# Jet Substructure analysis related ignores
+HeavyIonsAnalysis/JetAnalysis/test/1_Skimming/batch/
+HeavyIonsAnalysis/JetAnalysis/test/1_Skimming/bharikri.cc
 
