@@ -30,6 +30,11 @@ void writeCustomBase(const char* filename) {
         << "    virtual void Loop() = 0;\n"
         << "    virtual Int_t GetEntry(Long64_t entry) = 0;\n"
         << "    virtual Long64_t LoadTree(Long64_t entry) = 0;\n"
+        << "    \n"
+        << "    // Method to get event weight (for histogramming)\n"
+        << "    // Default implementation returns 1.0 (no weighting)\n"
+        << "    // Override in derived classes for MC-specific weighting\n"
+        << "    virtual float getEventWeight() const { return 1.0; }\n"
         << "};\n\n"
         << "#endif\n";
     out.close();

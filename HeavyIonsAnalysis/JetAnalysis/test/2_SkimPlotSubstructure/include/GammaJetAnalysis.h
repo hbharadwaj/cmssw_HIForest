@@ -29,6 +29,11 @@ public:
     virtual void Loop() = 0;
     virtual Int_t GetEntry(Long64_t entry) = 0;
     virtual Long64_t LoadTree(Long64_t entry) = 0;
+    
+    // Method to get event weight (for histogramming)
+    // Default implementation returns 1.0 (no weighting)
+    // Override in derived classes for MC-specific weighting
+    virtual float getEventWeight() const { return 1.0; }
 };
 
 #endif

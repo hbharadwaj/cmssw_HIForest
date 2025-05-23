@@ -18,6 +18,10 @@
 #include <vector>
 #include <map>
 
+// Forward declarations of helper functions
+std::vector<double> parseVector(const std::string& vecStr);
+std::pair<double, double> parseRange(const std::string& rangeStr);
+
 // Configuration structures
 struct Config {
     // Existing members
@@ -39,6 +43,12 @@ struct Config {
     double photonSigmaIEtaIEtaMax;
     double photonIsoMax;
     double photonR9Min;
+    
+    // MC photon selection
+    bool mcPhotonMatchRequired;
+    int mcPhotonPID;
+    std::vector<int> mcPhotonMomPIDs;
+    double mcPhotonCalIsoDR04Max;
     
     // Jet selection
     double jetPtMin;
@@ -76,6 +86,20 @@ struct Config {
         photonSigmaIEtaIEtaMax = config.GetValue("PhotonSigmaIEtaIEtaMax", 0.010392);
         photonIsoMax = config.GetValue("PhotonIsoMax", 2.099277);
         photonR9Min = config.GetValue("PhotonR9Min", 0.8);
+        
+        // MC photon selection - only relevant for MC
+        mcPhotonMatchRequired = config.GetValue("MCPhotonMatchRequired", false);
+        mcPhotonPID = config.GetValue("MCPhotonPID", 22); // Default to photon (22)
+        
+        // Parse mother PIDs from comma-separated list
+        std::string momPIDsStr = config.GetValue("MCPhotonMomPID", "22,-999");
+        std::vector<double> momPIDsDouble = parseVector(momPIDsStr);
+        mcPhotonMomPIDs.clear();
+        for (const auto& pid : momPIDsDouble) {
+            mcPhotonMomPIDs.push_back(static_cast<int>(pid));
+        }
+        
+        mcPhotonCalIsoDR04Max = config.GetValue("MCPhotonCalIsoDR04Max", 5.0);
         
         // Jet selection - remove redundant parameters
         jetPtMin = config.GetValue("JetPtMin", 20.0);
