@@ -1,12 +1,15 @@
-#include <TFile.h>
-#include <TTree.h>
+// ROOT includes
 #include <TChain.h>
 #include <TSystemDirectory.h>
 #include <TSystemFile.h>
 #include <TEnv.h>
 #include <THashList.h>
 #include <TObjString.h>
+#include <TROOT.h>
+#include <TSystem.h>
 #include <ROOT/RDataFrame.hxx>
+
+// C++ Standard Library includes
 #include <iostream>
 #include <sstream>
 #include <vector>
@@ -14,13 +17,16 @@
 #include <set>
 #include <algorithm>
 #include <cctype>
-#include <iomanip>
 #include <chrono>
-#include <ctime>
+#include <string>
+
+// System includes
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <errno.h>
 #include <string.h>
+
+using namespace ROOT;
 
 // Helper function to check if directory exists
 bool dirExists(const std::string& path) {
@@ -75,7 +81,6 @@ bool createDirectories(const std::string& path) {
     
     return true;
 }
-using namespace ROOT;
 
 // Add verbose as static to make it accessible in ParseBranchSelection
 static int verbose = 1;
@@ -698,3 +703,31 @@ void SkimHiForest(const std::string &cfgPath = "../configs/2023_PbPb_Data_HirawP
     delete base;
     for (auto *f : friends) delete f;
 }
+
+#ifndef __CINT__
+int main(int argc, char** argv) {
+    if (argc < 2 || argc > 3) {
+        std::cerr << "Usage: " << argv[0] << " <config_file> [batch_id]" << std::endl;
+        return 1;
+    }
+
+    std::string cfgPath = argv[1];
+    int batchId = -1;
+    if (argc == 3) {
+        batchId = std::atoi(argv[2]);
+    }
+
+    // Initialize ROOT in batch mode
+    gROOT->SetBatch(true);
+    ROOT::EnableImplicitMT();
+    
+    // Add current directory to library paths
+    gSystem->AddDynamicPath(".");
+    gInterpreter->AddIncludePath(".");
+    
+    // Call the existing function
+    SkimHiForest(cfgPath, batchId);
+    
+    return 0;
+}
+#endif

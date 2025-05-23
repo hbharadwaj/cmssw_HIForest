@@ -1,27 +1,22 @@
-# Makefile for HiForest Skimming with Batch Processing
+# Makefile for HiForest Skimming - Standalone Executable
 
 # Compiler settings
 CXX = g++
-CXXFLAGS = -O2 -g -Wall -fPIC
+CXXFLAGS = -O2 -g -Wall -std=c++17
 ROOTFLAGS = $(shell root-config --cflags)
 ROOTLIBS = $(shell root-config --libs)
 ROOTGLIBS = $(shell root-config --glibs)
-INCLUDES = -I$(shell root-config --incdir)
+INCLUDES = -I$(shell root-config --incdir) -I.
 
 # Source files
-SOURCES = SkimHiForest.C
 EXECUTABLE = SkimHiForest
 
 # Default target
 all: $(EXECUTABLE)
 
-# Build the executable
-$(EXECUTABLE): $(SOURCES)
+# Build the executable directly from SkimHiForest.C
+$(EXECUTABLE): SkimHiForest.C
 	$(CXX) $(CXXFLAGS) $(ROOTFLAGS) $(INCLUDES) -o $@ $< $(ROOTLIBS) $(ROOTGLIBS)
-
-# Build the shared library for ROOT
-lib: $(SOURCES)
-	$(CXX) $(CXXFLAGS) $(ROOTFLAGS) $(INCLUDES) -shared -o lib$(EXECUTABLE).so $< $(ROOTLIBS) $(ROOTGLIBS)
 
 # Clean the build
 clean:
