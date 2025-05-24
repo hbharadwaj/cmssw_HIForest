@@ -34,6 +34,9 @@ public:
     // Default implementation returns 1.0 (no weighting)
     // Override in derived classes for MC-specific weighting
     virtual float getEventWeight() const { return 1.0; }
+    
+    // Method to safely clear fChain pointer to prevent double-delete during cleanup
+    void clearChain() { fChain = nullptr; }
 };
 
 #endif

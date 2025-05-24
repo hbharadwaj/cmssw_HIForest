@@ -35,16 +35,30 @@ void writeCustomBase(const char* filename) {
         << "    // Default implementation returns 1.0 (no weighting)\n"
         << "    // Override in derived classes for MC-specific weighting\n"
         << "    virtual float getEventWeight() const { return 1.0; }\n"
+        << "    \n"
+        << "    // Method to safely clear fChain pointer to prevent double-delete during cleanup\n"
+        << "    void clearChain() { fChain = nullptr; }\n"
         << "};\n\n"
         << "#endif\n";
     out.close();
 }
 
-void generateTemplates(const char* configPath = "../../configs/jetSubstructure.config") {
+void generateTemplates(const char* configPath = "../configs/jetSubstructure.config") {
+    // Convert relative path to absolute path
+    char* absConfigPath = realpath(configPath, nullptr);
+    if (!absConfigPath) {
+        std::cerr << "Could not resolve config path: " << configPath << std::endl;
+        return;
+    }
+    std::string absoluteConfigPath(absConfigPath);
+    free(absConfigPath);
+    
+    std::cout << "Using absolute config path: " << absoluteConfigPath << std::endl;
+    
     // Load configuration
     Config cfg;
-    if (!loadConfig(cfg, configPath)) {
-        std::cerr << "Failed to load config from " << configPath << std::endl;
+    if (!loadConfig(cfg, absoluteConfigPath.c_str())) {
+        std::cerr << "Failed to load config from " << absoluteConfigPath << std::endl;
         return;
     }
 

@@ -559,8 +559,8 @@ GammaJetAnalysis* createAnalyzer(const Config& cfg, TChain* chain) {
 // generatePhotonJetHeader function is also implemented in helpers.h
 
 // Main analysis function
-void photonJet(const char* configPath = "../../configs/photon_only.config",
-               const char* histConfigPath = "../../configs/histParams.config",
+void photonJet(const char* configPath = "../configs/photon_only.config",
+               const char* histConfigPath = "../configs/histParams.config",
                bool testMode = false, Long64_t maxTestEvents = 10000)
 {
     // Set global max events
@@ -675,7 +675,10 @@ void photonJet(const char* configPath = "../../configs/photon_only.config",
         std::cerr << "Unknown exception during analysis" << std::endl;
     }
     
-    // Cleanup
+    // Cleanup - prevent double-delete issues by nullifying fChain before analyzer destruction
+    if (analyzer) {
+        analyzer->clearChain();  // Prevent auto-generated destructor from deleting chain's current file
+    }
     delete analyzer;
     delete chain;
     
@@ -686,9 +689,9 @@ int main(int argc, char* argv[]){
     bool testMode = true;
     Long64_t maxTestEvents = 10000; // Process only 10,000 events for testing by default
     
-    // Default paths to config files
-    const char* configPath = "../../configs/photon_only.config";
-    const char* histConfigPath = "../../configs/histParams.config";
+    // Default path to config file - use relative path but convert to absolute
+    std::string configPath = "../configs/photon_only.config";
+    const char* histConfigPath = "../configs/histParams.config";
     
     // Parse command line options
     for (int i = 1; i < argc; i++) {
@@ -716,7 +719,7 @@ int main(int argc, char* argv[]){
             if (i + 1 < argc) {
                 configPath = argv[i + 1];
                 i++; // Skip the next argument since we used it
-                log(LOG_INFO, "Using config file: " + std::string(configPath));
+                log(LOG_INFO, "Using config file: " + configPath);
             } else {
                 log(LOG_ERROR, "--config requires a file path argument");
                 return 1;
@@ -737,7 +740,7 @@ int main(int argc, char* argv[]){
             std::cout << "Options:" << std::endl;
             std::cout << "  --production, -p     Run in production mode (all events)" << std::endl;
             std::cout << "  --test, -t [n]       Run in test mode with n events (default: 10,000)" << std::endl;
-            std::cout << "  --config, -c FILE    Specify config file (default: ../../configs/photon_only.config)" << std::endl;
+            std::cout << "  --config, -c FILE    Specify config file (default: ../configs/photon_only.config)" << std::endl;
             std::cout << "  --hist, -H FILE      Specify histogram config file (default: ../../configs/histParams.config)" << std::endl;
             return 0;
         }
@@ -748,7 +751,27 @@ int main(int argc, char* argv[]){
         }
     }
     
+    // Convert relative paths to absolute paths to avoid path resolution issues
+    char* absConfigPath = realpath(configPath.c_str(), nullptr);
+    if (!absConfigPath) {
+        log(LOG_ERROR, "Could not resolve config path: " + configPath);
+        return 1;
+    }
+    std::string absoluteConfigPath(absConfigPath);
+    free(absConfigPath);
+    
+    char* absHistConfigPath = realpath(histConfigPath, nullptr);
+    if (!absHistConfigPath) {
+        log(LOG_ERROR, "Could not resolve histogram config path: " + std::string(histConfigPath));
+        return 1;
+    }
+    std::string absoluteHistConfigPath(absHistConfigPath);
+    free(absHistConfigPath);
+    
+    log(LOG_INFO, "Using absolute config path: " + absoluteConfigPath);
+    log(LOG_INFO, "Using absolute histogram config path: " + absoluteHistConfigPath);
+    
     // Run the analysis
-    photonJet(configPath, histConfigPath, testMode, maxTestEvents);
+    photonJet(absoluteConfigPath.c_str(), absoluteHistConfigPath.c_str(), testMode, maxTestEvents);
     return 0;
 }
