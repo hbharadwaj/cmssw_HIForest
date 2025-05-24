@@ -13,10 +13,36 @@
 #include <TObjString.h>
 #include <TSystemDirectory.h>
 #include <TSystemFile.h>
+#include <TLeaf.h>
+#include <TBranch.h>
+#include <TList.h>
+#include <TFriendElement.h>
 #include <iostream>
 #include <string>
 #include <vector>
 #include <map>
+#include <fstream>
+#include <set>
+#include <sstream>
+#include <algorithm>
+
+// Logging system
+enum LogLevel { LOG_ERROR = 0, LOG_INFO = 1, LOG_DEBUG = 2, LOG_TRACE = 3 };
+extern int g_verbosity; // Global verbosity level
+
+// Logging function with verbosity levels
+void log(LogLevel level, const std::string& message);
+
+// Structure to hold parsed class member information for header generation
+struct ClassMember {
+    std::string name;
+    std::string type;
+    bool isArray;
+    int arraySize;
+    
+    ClassMember(const std::string& n, const std::string& t, bool arr = false, int size = 0) 
+        : name(n), type(t), isArray(arr), arraySize(size) {}
+};
 
 // Forward declarations of helper functions
 std::vector<double> parseVector(const std::string& vecStr);
@@ -62,9 +88,14 @@ struct Config {
     
     // Jet collections
     std::vector<std::string> jetCollections;
+    std::vector<std::string> AnalysisCases; // Add this for dynamic jet collection support
 
     // Add missing members
     std::string analysisCases;  // List of jet collections to analyze
+    
+    // Logging and compilation control
+    int verbosity;              // Logging verbosity level (0-3)
+    bool regenerateHeader;      // Whether to regenerate photonJet.h
     
     // Ensure all config parameters are loaded
     bool loadFromEnv(TEnv& config) {
@@ -107,10 +138,28 @@ struct Config {
         deltaPhiMin = config.GetValue("DeltaPhiMin", 2.094);
         xjMin = config.GetValue("XjMin", 0.4);
         analysisCases = config.GetValue("AnalysisCases", "");
+        // Parse AnalysisCases string into vector
+        AnalysisCases.clear();
+        std::string ac = analysisCases;
+        size_t pos = 0;
+        while ((pos = ac.find(",")) != std::string::npos) {
+            std::string token = ac.substr(0, pos);
+            if (!token.empty()) AnalysisCases.push_back(token);
+            ac.erase(0, pos + 1);
+        }
+        if (!ac.empty()) AnalysisCases.push_back(ac);
+        
+        // Logging and compilation control
+        verbosity = config.GetValue("Verbosity", 1);
+        regenerateHeader = config.GetValue("RegenerateHeader", false);
         
         return true;
     }
 };
+
+// Header generation function declarations (after Config is defined)
+std::vector<ClassMember> parseHeaderFile(const std::string& headerPath, const std::string& className);
+void generatePhotonJetHeader(const Config& cfg);
 
 struct HistConfig {
     std::string title;
@@ -321,6 +370,405 @@ void ListBranchesAndTypesWithFriends(TChain* base) {
 
             ListBranchesAndTypes(friendTree, "Friend ");
         }
+    }
+}
+
+// Header generation functions for dynamic photonJet.h creation
+std::vector<ClassMember> parseHeaderFile(const std::string& headerPath, const std::string& className) {
+    std::vector<ClassMember> members;
+    std::ifstream file(headerPath);
+    
+    if (!file.is_open()) {
+        std::cerr << "Could not open header file: " << headerPath << std::endl;
+        return members;
+    }
+    
+    std::string line;
+    bool inClass = false;
+    bool inPublicSection = false;
+    
+    while (std::getline(file, line)) {
+        // Skip comments and empty lines
+        if (line.empty() || line.find("//") == 0) continue;
+        
+        // Check if we're entering the class
+        if (line.find("class " + className) != std::string::npos) {
+            inClass = true;
+            continue;
+        }
+        
+        if (!inClass) continue;
+        
+        // Check for public section
+        if (line.find("public :") != std::string::npos || 
+            line.find("public:") != std::string::npos) {
+            inPublicSection = true;
+            continue;
+        }
+        
+        // Check for private/protected sections (stop parsing member variables)
+        if (line.find("private") != std::string::npos || 
+            line.find("protected") != std::string::npos) {
+            inPublicSection = false;
+            continue;
+        }
+        
+        // End of class
+        if (line.find("};") != std::string::npos && inClass) {
+            break;
+        }
+        
+        if (!inPublicSection) continue;
+        
+        // Parse member variables
+        line = line.substr(line.find_first_not_of(" \t")); // trim leading whitespace
+        
+        // Skip function declarations, constructors, etc.
+        if (line.find("(") != std::string::npos || 
+            line.find("virtual") != std::string::npos ||
+            line.find("~") != std::string::npos ||
+            line.find("//") == 0) continue;
+        
+        // Parse ROOT::VecOps::RVec<type> *varName;
+        if (line.find("ROOT::VecOps::RVec<") != std::string::npos) {
+            size_t start = line.find("*") + 1;
+            size_t end = line.find(";");
+            if (start != std::string::npos && end != std::string::npos) {
+                std::string varName = line.substr(start, end - start);
+                varName.erase(0, varName.find_first_not_of(" \t"));
+                varName.erase(varName.find_last_not_of(" \t") + 1);
+                
+                std::string vecType;
+                if (line.find("RVec<float>") != std::string::npos) {
+                    vecType = "ROOT::VecOps::RVec<float>*";
+                } else if (line.find("RVec<int>") != std::string::npos) {
+                    vecType = "ROOT::VecOps::RVec<int>*";
+                }
+                
+                members.emplace_back(varName, vecType);
+            }
+        }
+        // Parse simple types: Int_t, Float_t, etc.
+        else if (line.find("Int_t") != std::string::npos || 
+                 line.find("Float_t") != std::string::npos ||
+                 line.find("UInt_t") != std::string::npos ||
+                 line.find("ULong64_t") != std::string::npos) {
+            
+            size_t end = line.find(";");
+            if (end == std::string::npos) continue;
+            
+            std::string varDecl = line.substr(0, end);
+            
+            // Check for arrays
+            size_t arrayStart = varDecl.find("[");
+            size_t arrayEnd = varDecl.find("]");
+            
+            if (arrayStart != std::string::npos && arrayEnd != std::string::npos) {
+                // Array variable
+                std::string arraySize = varDecl.substr(arrayStart + 1, arrayEnd - arrayStart - 1);
+                int size = 0;
+                try {
+                    size = std::stoi(arraySize);
+                } catch (...) {
+                    size = 0; // Use dynamic size if can't parse
+                }
+                
+                size_t nameStart = varDecl.find_last_of(" \t", arrayStart) + 1;
+                std::string varName = varDecl.substr(nameStart, arrayStart - nameStart);
+                
+                std::string baseType;
+                if (line.find("Float_t") != std::string::npos) {
+                    baseType = "float";
+                } else if (line.find("Int_t") != std::string::npos) {
+                    baseType = "int";
+                }
+                
+                members.emplace_back(varName, baseType, true, size);
+            } else {
+                // Simple variable
+                size_t nameStart = varDecl.find_last_of(" \t") + 1;
+                std::string varName = varDecl.substr(nameStart);
+                varName.erase(0, varName.find_first_not_of(" \t"));
+                varName.erase(varName.find_last_not_of(" \t") + 1);
+                
+                std::string baseType;
+                if (line.find("Int_t") != std::string::npos) {
+                    baseType = "int";
+                } else if (line.find("Float_t") != std::string::npos) {
+                    baseType = "float";
+                } else if (line.find("UInt_t") != std::string::npos) {
+                    baseType = "unsigned int";
+                } else if (line.find("ULong64_t") != std::string::npos) {
+                    baseType = "unsigned long long";
+                }
+                
+                members.emplace_back(varName, baseType);
+            }
+        }
+    }
+    
+    file.close();
+    return members;
+}
+
+void generatePhotonJetHeader(const Config& cfg) {
+    // Determine which header file to parse based on config
+    std::string className, headerPath;
+    
+    if (cfg.system.find("2023_PbPb") != std::string::npos) {
+        if (cfg.dataType == "MC") {
+            className = "GammaJet2023_PbPbMC";
+            // Try multiple possible paths for the header file
+            std::vector<std::string> possiblePaths = {
+                "./include/GammaJet2023_PbPbMC.h",
+                "../include/GammaJet2023_PbPbMC.h",
+                "include/GammaJet2023_PbPbMC.h",
+                "/afs/cern.ch/user/b/bharikri/private/HeavyIon/run3_gamma_jet/CMSSW_13_2_13/src/HeavyIonsAnalysis/JetAnalysis/test/2_SkimPlotSubstructure/include/GammaJet2023_PbPbMC.h"
+            };
+            
+            for (const auto& path : possiblePaths) {
+                std::ifstream testFile(path);
+                if (testFile.good()) {
+                    headerPath = path;
+                    break;
+                }
+            }
+        } else {
+            className = "GammaJet2023_PbPbData";
+            // Try multiple possible paths for the header file
+            std::vector<std::string> possiblePaths = {
+                "./include/GammaJet2023_PbPbData.h",
+                "../include/GammaJet2023_PbPbData.h", 
+                "include/GammaJet2023_PbPbData.h",
+                "/afs/cern.ch/user/b/bharikri/private/HeavyIon/run3_gamma_jet/CMSSW_13_2_13/src/HeavyIonsAnalysis/JetAnalysis/test/2_SkimPlotSubstructure/include/GammaJet2023_PbPbData.h"
+            };
+            
+            for (const auto& path : possiblePaths) {
+                std::ifstream testFile(path);
+                if (testFile.good()) {
+                    headerPath = path;
+                    break;
+                }
+            }
+        }
+    } else {
+        std::cerr << "Unsupported system: " << cfg.system << std::endl;
+        return;
+    }
+    
+    if (headerPath.empty()) {
+        std::cerr << "Could not find header file for " << className << std::endl;
+        return;
+    }
+    
+    // Parse the header file
+    std::vector<ClassMember> members = parseHeaderFile(headerPath, className);
+    
+    if (members.empty()) {
+        std::cerr << "No members found in header file: " << headerPath << std::endl;
+        return;
+    }
+    
+    // Categorize members
+    std::vector<ClassMember> photonVecMembers, photonIntMembers, jetArrayMembers;
+    std::set<std::string> jetCollections;
+    
+    for (const auto& member : members) {
+        if (member.name.find("ggHi_pho") != std::string::npos) {
+            if (member.type.find("ROOT::VecOps::RVec<float>*") != std::string::npos) {
+                photonVecMembers.push_back(member);
+            } else if (member.type.find("ROOT::VecOps::RVec<int>*") != std::string::npos) {
+                photonVecMembers.push_back(member);
+            }
+        } else if (member.name == "ggHi_nPho") {
+            photonIntMembers.push_back(member);
+        } else if (member.isArray && member.name.find("_jt") != std::string::npos) {
+            // Extract jet collection prefix (e.g., AK2Z1, AK3Z2, etc.)
+            size_t underscorePos = member.name.find("_");
+            if (underscorePos != std::string::npos) {
+                std::string prefix = member.name.substr(0, underscorePos);
+                jetCollections.insert(prefix);
+                jetArrayMembers.push_back(member);
+            }
+        }
+    }
+    
+    // Generate the header file
+    std::string outputHeaderPath = "../include/photonJet.h";
+    std::ofstream headerFile(outputHeaderPath);
+    
+    if (!headerFile.is_open()) {
+        std::cerr << "Error: Could not open " << outputHeaderPath << " for writing" << std::endl;
+        return;
+    }
+    
+    headerFile << "// This file is auto-generated based on the config and system." << std::endl;
+    headerFile << "// It provides maps from variable names to pointer-to-member for dynamic access in photonJet.C" << std::endl;
+    headerFile << "#pragma once" << std::endl;
+    headerFile << "#include \"" << className << ".h\"" << std::endl;
+    
+    if (cfg.dataType == "MC") {
+        headerFile << "#include \"GammaJet2023_PbPbData.h\"" << std::endl;
+    } else {
+        headerFile << "#include \"GammaJet2023_PbPbMC.h\"" << std::endl;
+    }
+    
+    headerFile << "#include <map>" << std::endl;
+    headerFile << "#include <string>" << std::endl;
+    headerFile << "#include <vector>" << std::endl;
+    headerFile << std::endl;
+    
+    // Generate type aliases
+    if (cfg.dataType == "MC") {
+        headerFile << "// Type aliases for pointer-to-member types" << std::endl;
+        headerFile << "using PhotonVecPtrMC = ROOT::VecOps::RVec<float>* " << className << "::*;" << std::endl;
+        headerFile << "using PhotonVecIntPtrMC = ROOT::VecOps::RVec<int>* " << className << "::*;" << std::endl;
+        headerFile << "using PhotonIntPtrMC = int " << className << "::*;" << std::endl;
+        
+        // Determine max array size for jet arrays
+        int maxArraySize = 0;
+        for (const auto& member : jetArrayMembers) {
+            if (member.arraySize > maxArraySize) {
+                maxArraySize = member.arraySize;
+            }
+        }
+        headerFile << "using JetArrPtrMC = float (" << className << "::*)[" << maxArraySize << "];" << std::endl;
+        headerFile << "using JetIntArrPtrMC = int (" << className << "::*)[" << maxArraySize << "];" << std::endl;
+        headerFile << std::endl;
+        
+        // Generate MC struct
+        headerFile << "// For MC analyzer" << std::endl;
+        headerFile << "struct PhotonJetMemberMapsMC {" << std::endl;
+        headerFile << "    std::map<std::string, PhotonVecPtrMC> photonVecMap;" << std::endl;
+        headerFile << "    std::map<std::string, PhotonVecIntPtrMC> photonVecIntMap;" << std::endl;
+        headerFile << "    std::map<std::string, PhotonIntPtrMC> photonIntMap;" << std::endl;
+        headerFile << "    std::map<std::string, JetArrPtrMC> jetArrMapMC;" << std::endl;
+        headerFile << "    std::map<std::string, JetIntArrPtrMC> jetIntArrMapMC;" << std::endl;
+        headerFile << "    " << std::endl;
+        headerFile << "    PhotonJetMemberMapsMC() {" << std::endl;
+        
+        // Add photon vector variables
+        headerFile << "        // Initialize photon vector variables" << std::endl;
+        for (const auto& member : photonVecMembers) {
+            if (member.type.find("float") != std::string::npos) {
+                headerFile << "        photonVecMap[\"" << member.name << "\"] = &" << className << "::" << member.name << ";" << std::endl;
+            } else if (member.type.find("int") != std::string::npos) {
+                headerFile << "        photonVecIntMap[\"" << member.name << "\"] = &" << className << "::" << member.name << ";" << std::endl;
+            }
+        }
+        
+        // Add photon integer variables
+        headerFile << "        " << std::endl;
+        headerFile << "        // Initialize photon integer variables" << std::endl;
+        for (const auto& member : photonIntMembers) {
+            headerFile << "        photonIntMap[\"" << member.name << "\"] = &" << className << "::" << member.name << ";" << std::endl;
+        }
+        
+        // Add jet array variables
+        headerFile << "        " << std::endl;
+        headerFile << "        // Initialize jet array variables" << std::endl;
+        for (const auto& member : jetArrayMembers) {
+            if (member.type == "float") {
+                headerFile << "        jetArrMapMC[\"" << member.name << "\"] = &" << className << "::" << member.name << ";" << std::endl;
+            } else if (member.type == "int") {
+                headerFile << "        jetIntArrMapMC[\"" << member.name << "\"] = &" << className << "::" << member.name << ";" << std::endl;
+            }
+        }
+        
+        headerFile << "    }" << std::endl;
+        headerFile << "};" << std::endl;
+        
+    } else {
+        // Generate similar for Data
+        headerFile << "// Type aliases for pointer-to-member types" << std::endl;
+        headerFile << "using PhotonVecPtrData = ROOT::VecOps::RVec<float>* " << className << "::*;" << std::endl;
+        headerFile << "using PhotonVecIntPtrData = ROOT::VecOps::RVec<int>* " << className << "::*;" << std::endl;
+        headerFile << "using PhotonIntPtrData = int " << className << "::*;" << std::endl;
+        
+        // Determine max array size for jet arrays
+        int maxArraySize = 0;
+        for (const auto& member : jetArrayMembers) {
+            if (member.arraySize > maxArraySize) {
+                maxArraySize = member.arraySize;
+            }
+        }
+        headerFile << "using JetArrPtrData = float (" << className << "::*)[" << maxArraySize << "];" << std::endl;
+        headerFile << "using JetIntArrPtrData = int (" << className << "::*)[" << maxArraySize << "];" << std::endl;
+        headerFile << std::endl;
+        
+        // Generate Data struct
+        headerFile << "// For Data analyzer" << std::endl;
+        headerFile << "struct PhotonJetMemberMapsData {" << std::endl;
+        headerFile << "    std::map<std::string, PhotonVecPtrData> photonVecMap;" << std::endl;
+        headerFile << "    std::map<std::string, PhotonVecIntPtrData> photonVecIntMap;" << std::endl;
+        headerFile << "    std::map<std::string, PhotonIntPtrData> photonIntMap;" << std::endl;
+        headerFile << "    std::map<std::string, JetArrPtrData> jetArrMapData;" << std::endl;
+        headerFile << "    std::map<std::string, JetIntArrPtrData> jetIntArrMapData;" << std::endl;
+        headerFile << "    " << std::endl;
+        headerFile << "    PhotonJetMemberMapsData() {" << std::endl;
+        
+        // Add photon vector variables
+        headerFile << "        // Initialize photon vector variables" << std::endl;
+        for (const auto& member : photonVecMembers) {
+            if (member.type.find("float") != std::string::npos) {
+                headerFile << "        photonVecMap[\"" << member.name << "\"] = &" << className << "::" << member.name << ";" << std::endl;
+            } else if (member.type.find("int") != std::string::npos) {
+                headerFile << "        photonVecIntMap[\"" << member.name << "\"] = &" << className << "::" << member.name << ";" << std::endl;
+            }
+        }
+        
+        // Add photon integer variables
+        headerFile << "        " << std::endl;
+        headerFile << "        // Initialize photon integer variables" << std::endl;
+        for (const auto& member : photonIntMembers) {
+            headerFile << "        photonIntMap[\"" << member.name << "\"] = &" << className << "::" << member.name << ";" << std::endl;
+        }
+        
+        // Add jet array variables
+        headerFile << "        " << std::endl;
+        headerFile << "        // Initialize jet array variables" << std::endl;
+        for (const auto& member : jetArrayMembers) {
+            if (member.type == "float") {
+                headerFile << "        jetArrMapData[\"" << member.name << "\"] = &" << className << "::" << member.name << ";" << std::endl;
+            } else if (member.type == "int") {
+                headerFile << "        jetIntArrMapData[\"" << member.name << "\"] = &" << className << "::" << member.name << ";" << std::endl;
+            }
+        }
+        
+        headerFile << "    }" << std::endl;
+        headerFile << "};" << std::endl;
+    }
+    
+    headerFile << std::endl;
+    headerFile << "// This file should be regenerated if the config or system changes." << std::endl;
+    
+    headerFile.close();
+    
+    std::cout << "Successfully generated photonJet.h for " << cfg.system << " " << cfg.dataType << std::endl;
+    std::cout << "Found " << photonVecMembers.size() << " photon vector variables" << std::endl;
+    std::cout << "Found " << photonIntMembers.size() << " photon integer variables" << std::endl;
+    std::cout << "Found " << jetArrayMembers.size() << " jet array variables" << std::endl;
+    std::cout << "Jet collections: ";
+    for (const auto& collection : jetCollections) {
+        std::cout << collection << " ";
+    }
+    std::cout << std::endl;
+}
+
+// Global verbosity level definition
+int g_verbosity = LOG_INFO; // Default verbosity level
+
+// Logging function implementation
+void log(LogLevel level, const std::string& message) {
+    if (level <= g_verbosity) {
+        std::string prefix;
+        switch (level) {
+            case LOG_ERROR: prefix = "[ERROR] "; break;
+            case LOG_INFO:  prefix = "[INFO]  "; break;
+            case LOG_DEBUG: prefix = "[DEBUG] "; break;
+            case LOG_TRACE: prefix = "[TRACE] "; break;
+        }
+        std::cout << prefix << message << std::endl;
     }
 }
 

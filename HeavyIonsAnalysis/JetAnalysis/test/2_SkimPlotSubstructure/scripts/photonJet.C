@@ -1,4 +1,5 @@
-// Helper function to plot and save a TH1D with CMS styleTChain.h>
+// ROOT includes
+#include <TChain.h>
 #include <TSystem.h>
 #include <TEnv.h>
 #include <TStyle.h>
@@ -16,15 +17,15 @@
 #include <TLatex.h>
 #include <TPaveText.h>
 #include <TLine.h>
+
+// C++ includes
 #include <iostream>
 #include <fstream>
 #include <cstdio>
-
-// C++ includes
+#include <sstream>
 #include <string>
 #include <vector>
 #include <map>
-#include <sstream>
 #include <algorithm>
 #include <cmath>  // For std::pow, std::isinf, std::isnan
 #include <stdexcept> // For std::runtime_error
@@ -255,7 +256,7 @@ void runPhotonAnalysis(AnalyzerType* analyzer) {
             outputFileName = configRef.outputDir + "/photonJet_" + configRef.system + "_" + configRef.dataType + "_histograms.root";
         }
         
-        std::cout << "Will save output to: " << outputFileName << std::endl;
+        log(LOG_INFO, "Will save output to: " + outputFileName);
         gSystem->mkdir(configRef.outputDir.c_str(), true);
         outputFile = new TFile(outputFileName.c_str(), "RECREATE");
         
@@ -280,19 +281,19 @@ void runPhotonAnalysis(AnalyzerType* analyzer) {
     }
     
     // Debug message
-    std::cout << "Starting photon analysis with Et min = " << configRef.photonEtMin
-              << " GeV and |eta| < " << configRef.photonEtaMax << std::endl;
+    log(LOG_INFO, "Starting photon analysis with Et min = " + std::to_string(configRef.photonEtMin) + 
+          " GeV and |eta| < " + std::to_string(configRef.photonEtaMax));
     
     // Process each event
     Long64_t nentries = analyzer->fChain->GetEntriesFast();
     // Limit number of events if maxEvents is set
     if (g_maxEvents > 0 && g_maxEvents < nentries) {
         nentries = g_maxEvents;
-        cout << "Limiting to " << nentries << " events" << endl;
+        log(LOG_INFO, "Limiting to " + std::to_string(nentries) + " events");
     }
     
     for (Long64_t jentry=0; jentry<nentries; jentry++) {
-        if (jentry % 1000 == 0) cout << "Processing entry " << jentry << "/" << nentries << endl;
+        if (jentry % 1000 == 0) log(LOG_DEBUG, "Processing entry " + std::to_string(jentry) + "/" + std::to_string(nentries));
         
         Long64_t ientry = analyzer->LoadTree(jentry);
         if (ientry < 0) break;
@@ -308,163 +309,113 @@ void runPhotonAnalysis(AnalyzerType* analyzer) {
 
         // Debug output for config parameters in first few events
         if (jentry < 5) {
-            std::cout << "Photon selection criteria:" << std::endl;
-            std::cout << "  ET min: " << configRef.photonEtMin << " GeV" << std::endl;
-            std::cout << "  |eta| max: " << configRef.photonEtaMax << std::endl;
-            std::cout << "  H/E max: " << configRef.photonHoverEMax << std::endl;
-            std::cout << "  SigmaIEtaIEta max: " << configRef.photonSigmaIEtaIEtaMax << std::endl;
-            std::cout << "  Isolation max: " << configRef.photonIsoMax << std::endl;
-            std::cout << "  R9 min: " << configRef.photonR9Min << std::endl;
+            log(LOG_DEBUG, "Photon selection criteria:");
+            log(LOG_DEBUG, "  ET min: " + std::to_string(configRef.photonEtMin) + " GeV");
+            log(LOG_DEBUG, "  |eta| max: " + std::to_string(configRef.photonEtaMax));
+            log(LOG_DEBUG, "  H/E max: " + std::to_string(configRef.photonHoverEMax));
+            log(LOG_DEBUG, "  SigmaIEtaIEta max: " + std::to_string(configRef.photonSigmaIEtaIEtaMax));
+            log(LOG_DEBUG, "  Isolation max: " + std::to_string(configRef.photonIsoMax));
+            log(LOG_DEBUG, "  R9 min: " + std::to_string(configRef.photonR9Min));
         }
         
-        // Manual photon selection with all criteria applied directly
-        vector<int> selectedPhotons;
+        // Step 1: Find the leading photon (highest Et)
+        int leadingPhotonIdx = -1;
+        float maxPhotonEt = -1.0;
         for (int i = 0; i < analyzer->ggHi_nPho; i++) {
-            // Apply all photon selection criteria
-            if ((*(analyzer->ggHi_phoEt))[i] <= configRef.photonEtMin) continue;
-            if (fabs((*(analyzer->ggHi_phoEta))[i]) >= configRef.photonEtaMax) continue;
-            if ((*(analyzer->ggHi_phoHoverE))[i] >= configRef.photonHoverEMax) continue;
-            if ((*(analyzer->ggHi_phoSigmaIEtaIEta))[i] >= configRef.photonSigmaIEtaIEtaMax) continue;
-            if ((*(analyzer->ggHi_pho_ecalClusterIsoR3))[i] >= configRef.photonIsoMax) continue;
-            if ((*(analyzer->ggHi_phoR9))[i] <= configRef.photonR9Min) continue;
-            
-            // Apply additional MC-specific gen-matching criteria for MC
-            if (configRef.dataType == "MC" && configRef.mcPhotonMatchRequired) {
-                // Type check - make sure the analyzer is MC type before accessing MC-specific branches
-                if (!isAnalyzerMC(analyzer)) {
-                    std::cerr << "Error: Trying to access MC branches with a non-MC analyzer!" << std::endl;
-                    continue; // Skip this photon
-                }
-                
-                // Now it's safe to cast to MC analyzer type
-                GammaJet2023_PbPbMC* mcAnalyzer = dynamic_cast<GammaJet2023_PbPbMC*>(analyzer);
-                
-                try {
-                    // Check if the photon is gen-matched
-                    int genMatchedIndex = (*(mcAnalyzer->ggHi_pho_genMatchedIndex))[i];
-                    if (genMatchedIndex < 0) continue; // Require gen-matched photon
-                    
-                    // Check if the matched particle is a photon (PID = 22 by default)
-                    int mcPID = (*(mcAnalyzer->ggHi_mcPID))[genMatchedIndex];
-                    if (abs(mcPID) != configRef.mcPhotonPID) continue; // Require gen particle to be the specified PID
-                    
-                    // Check the mother PID against the allowed list
-                    int mcMomPID = (*(mcAnalyzer->ggHi_mcMomPID))[genMatchedIndex];
-                    bool validMother = false;
-                    
-                    // If no mother PIDs are specified, accept all
-                    if (configRef.mcPhotonMomPIDs.empty()) {
-                        validMother = true;
-                    } else {
-                        // Check if the mother PID matches any in the allowed list
+            float et = (*(analyzer->ggHi_phoEt))[i];
+            if (et > maxPhotonEt) {
+                maxPhotonEt = et;
+                leadingPhotonIdx = i;
+            }
+        }
+        // If no photons found, skip event
+        if (leadingPhotonIdx < 0) continue;
+
+        // Step 2: In MC, require MC-matching and mother PID/isolation for leading photon
+        if (configRef.dataType == "MC" && configRef.mcPhotonMatchRequired) {
+            if (!isAnalyzerMC(analyzer)) {
+                std::cerr << "Error: Trying to access MC branches with a non-MC analyzer!" << std::endl;
+                continue;
+            }
+            GammaJet2023_PbPbMC* mcAnalyzer = dynamic_cast<GammaJet2023_PbPbMC*>(analyzer);
+            try {
+                int genMatchedIndex = (*(mcAnalyzer->ggHi_pho_genMatchedIndex))[leadingPhotonIdx];
+                if (genMatchedIndex < 0) continue;
+                int mcPID = (*(mcAnalyzer->ggHi_mcPID))[genMatchedIndex];
+                if (abs(mcPID) != configRef.mcPhotonPID) continue;
+                int mcMomPID = (*(mcAnalyzer->ggHi_mcMomPID))[genMatchedIndex];
+                bool validMother = false;
+                if (configRef.mcPhotonMomPIDs.empty()) {
+                    validMother = true;
+                } else {
+                    for (int allowedPID : configRef.mcPhotonMomPIDs) {
+                        if (mcMomPID == allowedPID || abs(mcMomPID) == abs(allowedPID)) {
+                            validMother = true;
+                            break;
+                        }
+                    }
+                    if (!validMother) {
                         for (int allowedPID : configRef.mcPhotonMomPIDs) {
-                            if (mcMomPID == allowedPID || abs(mcMomPID) == abs(allowedPID)) {
+                            if (allowedPID == 22 && abs(mcMomPID) <= 22) {
                                 validMother = true;
                                 break;
                             }
                         }
-                        
-                        // Special case: if 22 is in the list, also allow all light particles (PID <= 22)
-                        if (!validMother) {
-                            for (int allowedPID : configRef.mcPhotonMomPIDs) {
-                                if (allowedPID == 22 && abs(mcMomPID) <= 22) {
-                                    validMother = true;
-                                    break;
-                                }
-                            }
-                        }
                     }
-                    if (!validMother) continue;
-                    
-                    // Check isolation at generator level
-                    float mcCalIsoDR04 = (*(mcAnalyzer->ggHi_mcCalIsoDR04))[genMatchedIndex];
-                    if (!(mcCalIsoDR04 < configRef.mcPhotonCalIsoDR04Max)) continue; // Require isolated photon at gen level
-                } catch (const std::exception& e) {
-                    std::cerr << "Exception while accessing MC branches: " << e.what() << std::endl;
-                    continue; // Skip this photon
                 }
-            }
-            
-            // All criteria passed, add to selected photons
-            selectedPhotons.push_back(i);
-        }
-        
-        // Fill histograms for selected photons
-        for (int idx : selectedPhotons) {
-            // Use weight from analyzer class
-            float weight = getEventWeight(analyzer);
-            
-            h_photonEt->Fill((*(analyzer->ggHi_phoEt))[idx], weight);
-            h_photonEta->Fill((*(analyzer->ggHi_phoEta))[idx], weight);
-            h_photonPhi->Fill((*(analyzer->ggHi_phoPhi))[idx], weight);
-            h_photonHoverE->Fill((*(analyzer->ggHi_phoHoverE))[idx], weight);
-            h_photonSigma->Fill((*(analyzer->ggHi_phoSigmaIEtaIEta))[idx], weight);
-            h_photonR9->Fill((*(analyzer->ggHi_phoR9))[idx], weight);
-            
-            // Debug output for first few events
-            if (jentry < 5) {
-                std::cout << "Event " << jentry << " photon " << idx 
-                          << ": ET = " << (*(analyzer->ggHi_phoEt))[idx]
-                          << ", eta = " << (*(analyzer->ggHi_phoEta))[idx] 
-                          << ", phi = " << (*(analyzer->ggHi_phoPhi))[idx]
-                          << ", H/E = " << (*(analyzer->ggHi_phoHoverE))[idx]
-                          << ", sigma = " << (*(analyzer->ggHi_phoSigmaIEtaIEta))[idx]
-                          << ", R9 = " << (*(analyzer->ggHi_phoR9))[idx] << std::endl;
+                if (!validMother) continue;
+                float mcCalIsoDR04 = (*(mcAnalyzer->ggHi_mcCalIsoDR04))[genMatchedIndex];
+                if (!(mcCalIsoDR04 < configRef.mcPhotonCalIsoDR04Max)) continue;
+            } catch (const std::exception& e) {
+                std::cerr << "Exception while accessing MC branches: " << e.what() << std::endl;
+                continue;
             }
         }
-        
-        // Use weight from analyzer class
-        h_nPhotons->Fill(selectedPhotons.size(), weight);
-        
-        // Skip events with no selected photons
-        if (selectedPhotons.empty()) continue;
-        
-        // Sort photons by ET (highest first)
-        std::sort(selectedPhotons.begin(), selectedPhotons.end(),
-            [&](int a, int b) {
-                return (*(analyzer->ggHi_phoEt))[a] > (*(analyzer->ggHi_phoEt))[b];
-            });
-            
-        // Take highest ET photon as leading and fill output variables
-        int leadingPhotonIdx = selectedPhotons[0];
+        // Step 3: Apply all other photon selection criteria to the leading photon
+        if ((*(analyzer->ggHi_phoEt))[leadingPhotonIdx] <= configRef.photonEtMin) continue;
+        if (fabs((*(analyzer->ggHi_phoEta))[leadingPhotonIdx]) >= configRef.photonEtaMax) continue;
+        if ((*(analyzer->ggHi_phoHoverE))[leadingPhotonIdx] >= configRef.photonHoverEMax) continue;
+        if ((*(analyzer->ggHi_phoSigmaIEtaIEta))[leadingPhotonIdx] >= configRef.photonSigmaIEtaIEtaMax) continue;
+        if ((*(analyzer->ggHi_pho_ecalClusterIsoR3))[leadingPhotonIdx] >= configRef.photonIsoMax) continue;
+        if ((*(analyzer->ggHi_phoR9))[leadingPhotonIdx] <= configRef.photonR9Min) continue;
+
+        // All criteria passed, fill histograms and output variables for the leading photon
+        // Avoid variable redefinition: do not redeclare 'weight' here
+        weight = getEventWeight(analyzer);
+        h_photonEt->Fill((*(analyzer->ggHi_phoEt))[leadingPhotonIdx], weight);
+        h_photonEta->Fill((*(analyzer->ggHi_phoEta))[leadingPhotonIdx], weight);
+        h_photonPhi->Fill((*(analyzer->ggHi_phoPhi))[leadingPhotonIdx], weight);
+        h_photonHoverE->Fill((*(analyzer->ggHi_phoHoverE))[leadingPhotonIdx], weight);
+        h_photonSigma->Fill((*(analyzer->ggHi_phoSigmaIEtaIEta))[leadingPhotonIdx], weight);
+        h_photonR9->Fill((*(analyzer->ggHi_phoR9))[leadingPhotonIdx], weight);
+        h_nPhotons->Fill(1, weight);
         out_photonEt = (*(analyzer->ggHi_phoEt))[leadingPhotonIdx];
         out_photonEta = (*(analyzer->ggHi_phoEta))[leadingPhotonIdx];
         out_photonPhi = (*(analyzer->ggHi_phoPhi))[leadingPhotonIdx];
         out_photonHoverE = (*(analyzer->ggHi_phoHoverE))[leadingPhotonIdx];
         out_photonSigmaIEtaIEta = (*(analyzer->ggHi_phoSigmaIEtaIEta))[leadingPhotonIdx];
         out_photonR9 = (*(analyzer->ggHi_phoR9))[leadingPhotonIdx];
-        
-        // For simplicity, use ECAL isolation instead of summed isolation
         out_photonIso = (*(analyzer->ggHi_pho_ecalClusterIsoR3))[leadingPhotonIdx];
-        
-        // Fill gen-matched photon information
-        if (configRef.dataType == "MC") {
-            // Type check - make sure the analyzer is MC type before accessing MC-specific branches
-            if (isAnalyzerMC(analyzer)) {
-                GammaJet2023_PbPbMC* mcAnalyzer = dynamic_cast<GammaJet2023_PbPbMC*>(analyzer);
-                try {
-                    // Use the analyzer's gen-matched index
-                    int genMatchedIndex = (*(mcAnalyzer->ggHi_pho_genMatchedIndex))[leadingPhotonIdx];
-                    if (genMatchedIndex >= 0) {
-                        out_photonIsGenMatched = true;
-                        
-                        // Use the mc* variables instead of the incorrect genPho* variables
-                        out_photonGenPt = (*(mcAnalyzer->ggHi_mcPt))[genMatchedIndex];
-                        out_photonGenEta = (*(mcAnalyzer->ggHi_mcEta))[genMatchedIndex];
-                        out_photonGenPhi = (*(mcAnalyzer->ggHi_mcPhi))[genMatchedIndex];
-                    }
-                } catch (const std::exception& e) {
-                    std::cerr << "Exception while filling MC photon information: " << e.what() << std::endl;
+        // MC gen-matching output
+        out_photonIsGenMatched = false;
+        out_photonGenPt = 0.0;
+        out_photonGenEta = 0.0;
+        out_photonGenPhi = 0.0;
+        if (configRef.dataType == "MC" && isAnalyzerMC(analyzer)) {
+            GammaJet2023_PbPbMC* mcAnalyzer = dynamic_cast<GammaJet2023_PbPbMC*>(analyzer);
+            try {
+                int genMatchedIndex = (*(mcAnalyzer->ggHi_pho_genMatchedIndex))[leadingPhotonIdx];
+                if (genMatchedIndex >= 0) {
+                    out_photonIsGenMatched = true;
+                    out_photonGenPt = (*(mcAnalyzer->ggHi_mcPt))[genMatchedIndex];
+                    out_photonGenEta = (*(mcAnalyzer->ggHi_mcEta))[genMatchedIndex];
+                    out_photonGenPhi = (*(mcAnalyzer->ggHi_mcPhi))[genMatchedIndex];
                 }
-            } else {
-                std::cerr << "Warning: Data analyzer used with MC configuration. Skipping gen matching." << std::endl;
+            } catch (const std::exception& e) {
+                std::cerr << "Exception while filling MC photon information: " << e.what() << std::endl;
             }
         }
-        
-        // Fill the output tree if we have one
-        if (outputTree) {
-            outputTree->Fill();
-        }
+        if (outputTree) outputTree->Fill();
     }
     
     // Write histograms and clean up
@@ -518,7 +469,7 @@ void runPhotonAnalysis(AnalyzerType* analyzer) {
         delete outputFile;
     }
     
-    std::cout << "Finished processing " << nentries << " events" << std::endl;
+    log(LOG_INFO, "Finished processing " + std::to_string(nentries) + " events");
 }
 
 // Implementation of Loop method for GammaJet2023_PbPbMC
@@ -572,11 +523,11 @@ GammaJetAnalysis* createAnalyzer(const Config& cfg, TChain* chain) {
         // Create the appropriate analyzer based on system and dataType
         if (cfg.system == "2023_PbPb") {
             if (cfg.dataType == "MC") {
-                std::cout << "Creating 2023 PbPb MC analyzer" << std::endl;
+                log(LOG_INFO, "Creating 2023 PbPb MC analyzer");
                 analyzer = new GammaJet2023_PbPbMC(chain);
             } 
             else if (cfg.dataType == "Data") {
-                std::cout << "Creating 2023 PbPb Data analyzer" << std::endl;
+                log(LOG_INFO, "Creating 2023 PbPb Data analyzer");
                 analyzer = new GammaJet2023_PbPbData(chain);
             }
             else {
@@ -604,6 +555,9 @@ GammaJetAnalysis* createAnalyzer(const Config& cfg, TChain* chain) {
     return analyzer;
 }
 
+// ClassMember struct and parseHeaderFile function are now implemented in helpers.h
+// generatePhotonJetHeader function is also implemented in helpers.h
+
 // Main analysis function
 void photonJet(const char* configPath = "../../configs/photon_only.config",
                const char* histConfigPath = "../../configs/histParams.config",
@@ -618,6 +572,20 @@ void photonJet(const char* configPath = "../../configs/photon_only.config",
         return;
     }
     
+    // Set global verbosity level from config
+    g_verbosity = cfg.verbosity;
+    log(LOG_INFO, "Configuration loaded successfully from " + std::string(configPath));
+    log(LOG_DEBUG, "System: " + cfg.system + ", DataType: " + cfg.dataType);
+    log(LOG_DEBUG, "Verbosity level set to: " + std::to_string(g_verbosity));
+    
+    // Generate photonJet.h dynamically based on configuration
+    if (cfg.regenerateHeader) {
+        log(LOG_INFO, "Regenerating photonJet.h header file...");
+        generatePhotonJetHeader(cfg);
+    } else {
+        log(LOG_DEBUG, "Using existing photonJet.h header file");
+    }
+    
     // Parse centrality bins if provided as string
     std::string centBins = "CentralityBins";
     if (cfg.centBins.empty()) {
@@ -625,18 +593,19 @@ void photonJet(const char* configPath = "../../configs/photon_only.config",
         if (centBinsStr) {
             std::string centBinsValue(centBinsStr);
             cfg.centBins = parseVector(centBinsValue);
-            std::cout << "Using centrality bins from environment: ";
+            log(LOG_INFO, "Using centrality bins from environment");
         } else {
             // Default centrality bins
             cfg.centBins = {0, 30, 60, 180};
-            std::cout << "Using default centrality bins: ";
+            log(LOG_INFO, "Using default centrality bins");
         }
         
+        std::string binList = "";
         for (size_t i = 0; i < cfg.centBins.size(); i++) {
-            std::cout << cfg.centBins[i];
-            if (i < cfg.centBins.size() - 1) std::cout << ", ";
+            binList += std::to_string(cfg.centBins[i]);
+            if (i < cfg.centBins.size() - 1) binList += ", ";
         }
-        std::cout << std::endl;
+        log(LOG_INFO, "Centrality bins: " + binList);
     }
     
     // Add test mode indicator to output prefix if needed
@@ -650,7 +619,7 @@ void photonJet(const char* configPath = "../../configs/photon_only.config",
     
     // In test mode, only use the first file
     if (testMode && !files.empty()) {
-        std::cout << "TEST MODE: Using only the first input file" << std::endl;
+        log(LOG_INFO, "TEST MODE: Using only the first input file");
         chain->Add(files[0].c_str());
     } else {
         for (const auto& file : files) {
@@ -664,11 +633,11 @@ void photonJet(const char* configPath = "../../configs/photon_only.config",
         return;
     }
 
-    std::cout << "Number of events in chain: " << chain->GetEntries() << std::endl;
-    std::cout << "Running photon analysis with config: " << configPath << std::endl;
-    std::cout << "System: " << cfg.system << ", DataType: " << cfg.dataType << std::endl;
-    std::cout << "Input directory: " << cfg.inputDir << std::endl;
-    std::cout << "Output directory: " << cfg.outputDir << std::endl;
+    log(LOG_INFO, "Number of events in chain: " + std::to_string(chain->GetEntries()));
+    log(LOG_INFO, "Running photon analysis with config: " + std::string(configPath));
+    log(LOG_INFO, "System: " + cfg.system + ", DataType: " + cfg.dataType);
+    log(LOG_INFO, "Input directory: " + cfg.inputDir);
+    log(LOG_INFO, "Output directory: " + cfg.outputDir);
     
     // Enable auto loading of libraries
     gSystem->Load("libTree");
@@ -692,11 +661,14 @@ void photonJet(const char* configPath = "../../configs/photon_only.config",
         return;
     }
     
+    // Generate dynamic header file based on config
+    generatePhotonJetHeader(cfg);
+    
     try {
         // Run analysis
-        std::cout << "Starting analysis loop..." << std::endl;
+        log(LOG_INFO, "Starting analysis loop...");
         analyzer->Loop();
-        std::cout << "Analysis completed successfully" << std::endl;
+        log(LOG_INFO, "Analysis completed successfully");
     } catch (const std::exception& e) {
         std::cerr << "Exception during analysis: " << e.what() << std::endl;
     } catch (...) {
@@ -707,44 +679,72 @@ void photonJet(const char* configPath = "../../configs/photon_only.config",
     delete analyzer;
     delete chain;
     
-    std::cout << "Analysis finished." << std::endl;
+    log(LOG_INFO, "Analysis finished.");
 }
 
 int main(int argc, char* argv[]){
     bool testMode = true;
     Long64_t maxTestEvents = 10000; // Process only 10,000 events for testing by default
     
-    // Path to config files
+    // Default paths to config files
     const char* configPath = "../../configs/photon_only.config";
     const char* histConfigPath = "../../configs/histParams.config";
     
     // Parse command line options
-    if (argc > 1) {
-        std::string arg1 = argv[1];
-        if (arg1 == "--production" || arg1 == "-p") {
-            // Production mode - process all events
+    for (int i = 1; i < argc; i++) {
+        std::string arg = argv[i];
+        
+        if (arg == "--production" || arg == "-p") {
             testMode = false;
-            std::cout << "Running in production mode (all events)" << std::endl;
-        } else if (arg1 == "--test" || arg1 == "-t") {
-            // Explicit test mode
+            log(LOG_INFO, "Running in production mode (all events)");
+        } 
+        else if (arg == "--test" || arg == "-t") {
             testMode = true;
-            // If a number is provided, use it as max events
-            if (argc > 2) {
-                maxTestEvents = std::stoll(argv[2]);
+            // Check if next argument is a number for max events
+            if (i + 1 < argc) {
+                try {
+                    maxTestEvents = std::stoll(argv[i + 1]);
+                    i++; // Skip the next argument since we used it
+                } catch (const std::exception&) {
+                    // If conversion fails, use default and don't skip next arg
+                    maxTestEvents = 10000;
+                }
             }
-            std::cout << "Running in test mode with " << maxTestEvents << " events" << std::endl;
-        } else if (arg1 == "--help" || arg1 == "-h") {
+            log(LOG_INFO, "Running in test mode with " + std::to_string(maxTestEvents) + " events");
+        }
+        else if (arg == "--config" || arg == "-c") {
+            if (i + 1 < argc) {
+                configPath = argv[i + 1];
+                i++; // Skip the next argument since we used it
+                log(LOG_INFO, "Using config file: " + std::string(configPath));
+            } else {
+                log(LOG_ERROR, "--config requires a file path argument");
+                return 1;
+            }
+        }
+        else if (arg == "--hist" || arg == "-H") {
+            if (i + 1 < argc) {
+                histConfigPath = argv[i + 1];
+                i++; // Skip the next argument since we used it
+                log(LOG_INFO, "Using histogram config file: " + std::string(histConfigPath));
+            } else {
+                log(LOG_ERROR, "--hist requires a file path argument");
+                return 1;
+            }
+        }
+        else if (arg == "--help" || arg == "-h") {
             std::cout << "Usage: " << argv[0] << " [options]" << std::endl;
             std::cout << "Options:" << std::endl;
             std::cout << "  --production, -p     Run in production mode (all events)" << std::endl;
             std::cout << "  --test, -t [n]       Run in test mode with n events (default: 10,000)" << std::endl;
-            std::cout << "  --config, -c FILE    Specify config file (default: ../../configs/jetSubstructure.config)" << std::endl;
-            std::cout << "  --hist, -h FILE      Specify histogram config file (default: ../../configs/histParams.config)" << std::endl;
+            std::cout << "  --config, -c FILE    Specify config file (default: ../../configs/photon_only.config)" << std::endl;
+            std::cout << "  --hist, -H FILE      Specify histogram config file (default: ../../configs/histParams.config)" << std::endl;
             return 0;
-        } else if (arg1 == "--config" || arg1 == "-c") {
-            if (argc > 2) configPath = argv[2];
-        } else if (arg1 == "--hist" || arg1 == "-H") {
-            if (argc > 2) histConfigPath = argv[2];
+        }
+        else {
+            log(LOG_ERROR, "Unknown option: " + arg);
+            std::cout << "Use --help for usage information" << std::endl;
+            return 1;
         }
     }
     
