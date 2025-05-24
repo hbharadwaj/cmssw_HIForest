@@ -15,7 +15,10 @@ CLEAN=false
 BATCH_SYSTEM="condor"
 QUEUE=""
 OUTPUT_DIR=""
-OS_VERSION="el9"
+# Default configuration
+OS_VERSION="$(detect_os_version 2>/dev/null || echo el8)"
+DRY_RUN=false
+JOB_SUFFIX=""
 
 # Colors for output
 RED='\033[0;31m'
@@ -55,18 +58,26 @@ OPTIONS:
     -p, --production        Run in production mode (all events)
     -t, --test [N]          Run in test mode with N events (default: 10000)
     --clean                 Clean previous compilation artifacts
+    --dry-run               Show what would be executed without running it
     --batch-system SYS      Batch system: condor, lsf, slurm (default: condor)
     --queue QUEUE           Queue name for batch submission
     --output-dir DIR        Output directory for batch jobs
     --os-version VER        OS version for Condor: el8, el9 (default: el9)
+    --job-suffix SUFFIX     Suffix to append to job name for identification
     -h, --help              Show this help message
 
 EXAMPLES:
+    # Show what would be compiled and run locally
+    $0 --mode local --test 5000 --dry-run
+
     # Compile and run locally in test mode
     $0 --mode local --test 5000
 
     # Compile and run in production mode
     $0 --mode local --production
+
+    # Preview batch job submission to Condor
+    $0 --mode batch --output-dir /eos/user/b/bharikri/batch_output --dry-run
 
     # Submit batch job to Condor (default)
     $0 --mode batch --output-dir /eos/user/b/bharikri/batch_output
@@ -112,6 +123,82 @@ check_cmssw() {
     fi
 }
 
+# Function to detect OS version
+detect_os_version() {
+    local detected_os="el8"  # Default fallback
+    
+    if [[ -f "/etc/os-release" ]]; then
+        if grep -q "VERSION_ID.*9" /etc/os-release 2>/dev/null; then
+            detected_os="el9"
+        elif grep -q "VERSION_ID.*8" /etc/os-release 2>/dev/null; then
+            detected_os="el8"
+        elif grep -q "centos.*9\|almalinux.*9\|rocky.*9" /etc/os-release 2>/dev/null; then
+            detected_os="el9"
+        elif grep -q "centos.*8\|almalinux.*8\|rocky.*8" /etc/os-release 2>/dev/null; then
+            detected_os="el8"
+        fi
+    fi
+    
+    echo "$detected_os"
+}
+
+# Function to setup dynamic environment (ROOT + CMSSW if available)
+setup_environment() {
+    local target_os="${1:-$(detect_os_version)}"
+    local environment_type=""
+    
+    print_info "Setting up environment for OS: $target_os"
+    
+    # Check if we're in CMSSW environment
+    if [[ -n "$CMSSW_BASE" ]]; then
+        environment_type="CMSSW"
+        print_info "CMSSW environment detected: $CMSSW_BASE"
+        
+        # Set up CMSSW runtime
+        if command -v cmsenv &> /dev/null; then
+            print_info "Setting up CMSSW runtime environment..."
+            # CMSSW environment is already active
+        else
+            print_warning "CMSSW detected but cmsenv not available"
+        fi
+    else
+        environment_type="ROOT"
+        print_info "No CMSSW environment detected, setting up standalone ROOT"
+        
+        # Try LCG views based on OS version
+        local lcg_paths=(
+            "/cvmfs/sft.cern.ch/lcg/views/LCG_104/x86_64-${target_os}-gcc11-opt/setup.sh"
+            "/cvmfs/sft.cern.ch/lcg/views/LCG_104/x86_64-centos${target_os#el}-gcc11-opt/setup.sh"
+        )
+        
+        local setup_found=false
+        for lcg_path in "${lcg_paths[@]}"; do
+            if [[ -f "$lcg_path" ]]; then
+                print_info "Setting up LCG environment: $lcg_path"
+                source "$lcg_path"
+                setup_found=true
+                break
+            fi
+        done
+        
+        if [[ "$setup_found" == false ]]; then
+            print_warning "No LCG environment found, using system ROOT"
+        fi
+    fi
+    
+    # Verify ROOT is available
+    if command -v root-config &> /dev/null; then
+        local root_version=$(root-config --version)
+        local root_libdir=$(root-config --libdir)
+        print_success "ROOT setup successful - Version: $root_version"
+        print_info "ROOT libraries: $root_libdir"
+        return 0
+    else
+        print_error "ROOT not available after environment setup"
+        return 1
+    fi
+}
+
 # Function to check ROOT environment
 check_root() {
     if command -v root-config &> /dev/null; then
@@ -139,6 +226,16 @@ clean_artifacts() {
 # Function to compile the analysis
 compile_analysis() {
     print_info "Starting compilation..."
+    
+    # Ensure we're using the same environment as worker nodes for compilation
+    local compilation_os="${OS_VERSION:-$(detect_os_version)}"
+    print_info "Compiling for OS version: $compilation_os"
+    
+    # Set up matching environment for compilation
+    if ! setup_environment "$compilation_os"; then
+        print_error "Failed to set up compilation environment"
+        return 1
+    fi
     
     # Get ROOT flags
     ROOT_CFLAGS=$(root-config --cflags)
@@ -175,13 +272,18 @@ compile_analysis() {
     # Compilation command
     COMPILE_CMD="$CXX $CXXFLAGS $INCLUDES $DEFINES $SOURCES $LIBS -o $OUTPUT"
     
-    if [[ "$VERBOSE" == true ]]; then
+    if [[ "$VERBOSE" == true ]] || [[ "$DRY_RUN" == true ]]; then
         print_info "Compilation command:"
         echo "$COMPILE_CMD"
         echo ""
     fi
     
     # Execute compilation
+    if [[ "$DRY_RUN" == true ]]; then
+        print_info "[DRY RUN] Would execute compilation"
+        return 0
+    fi
+    
     if eval $COMPILE_CMD; then
         print_success "Compilation successful! Executable: $OUTPUT"
         return 0
@@ -215,6 +317,12 @@ run_local() {
     
     print_info "Starting analysis..."
     print_info "Running command: ./photonJet $run_args"
+    
+    if [[ "$DRY_RUN" == true ]]; then
+        print_info "[DRY RUN] Would execute: ./photonJet $run_args"
+        return 0
+    fi
+    
     ./photonJet $run_args
     
     if [[ $? -eq 0 ]]; then
@@ -241,25 +349,27 @@ create_job_directory() {
     # Create job directory structure
     local job_dir="batch/job_${job_timestamp}_${config_name}"
     mkdir -p "$job_dir"
-    mkdir -p "$job_dir/include"
-    mkdir -p "$job_dir/scripts"
     mkdir -p "$job_dir/logs"
     
-    print_info "Creating isolated job directory: $job_dir"
+    print_info "Creating isolated job directory: $job_dir" >&2
     
-    # Copy executable
-    if [[ -f "./photonJet" ]]; then
-        cp "./photonJet" "$job_dir/"
-        print_info "Copied executable to job directory"
+    # Copy source files for local compilation in job directory
+    if [[ -f "./scripts/photonJet.C" ]]; then
+        cp "./scripts/photonJet.C" "$job_dir/"
+        print_info "Copied main source file: photonJet.C" >&2
+        
+        # Fix include paths in the copied source file for job directory compilation
+        sed -i 's|#include "../include/|#include "|g' "$job_dir/photonJet.C"
+        print_info "Fixed include paths in photonJet.C for job directory" >&2
     else
-        print_error "Executable photonJet not found!"
+        print_error "Source file photonJet.C not found!" >&2
         return 1
     fi
     
     # Copy config file if specified
     if [[ -n "$config_file" && -f "$config_file" ]]; then
         cp "$config_file" "$job_dir/$(basename "$config_file")"
-        print_info "Copied config file: $(basename "$config_file")"
+        print_info "Copied config file: $(basename "$config_file")" >&2
     fi
     
     # Copy essential header files
@@ -270,28 +380,116 @@ create_job_directory() {
         "./include/photonJet.h"
     )
     
-    if [[ "$config_file" == *"MC"* ]]; then
-        header_files+=("./include/GammaJet2023_PbPbMC.h")
-        header_files+=("./include/GammaJet2023_PbPbMC.C")
-    else
-        header_files+=("./include/GammaJet2023_PbPbData.h")
-        header_files+=("./include/GammaJet2023_PbPbData.C")
-    fi
-    
     for header in "${header_files[@]}"; do
         if [[ -f "$header" ]]; then
-            cp "$header" "$job_dir/include/"
-            print_info "Copied header: $(basename "$header")"
+            cp "$header" "$job_dir/"
+            print_info "Copied header: $(basename "$header")" >&2
         fi
     done
     
-    # Copy the original source file for reference
-    if [[ -f "./scripts/photonJet.C" ]]; then
-        cp "./scripts/photonJet.C" "$job_dir/scripts/"
-        print_info "Copied source file for reference"
-    fi
+    # Dynamically copy all GammaJet*.h files from include directory
+    for gamma_header in ./include/GammaJet*.h; do
+        if [[ -f "$gamma_header" ]]; then
+            cp "$gamma_header" "$job_dir/"
+            print_info "Copied GammaJet header: $(basename "$gamma_header")" >&2
+        fi
+    done
+    
+    # Copy any additional compilation dependencies
+    local additional_files=(
+        "./bharikri.cc"
+    )
+    
+    for file in "${additional_files[@]}"; do
+        if [[ -f "$file" ]]; then
+            cp "$file" "$job_dir/"
+            print_info "Copied additional file: $(basename "$file")" >&2
+        fi
+    done
     
     echo "$job_dir"
+}
+
+# Function to compile executable in job directory
+compile_in_job_directory() {
+    local job_dir="$1"
+    local original_dir=$(pwd)
+    
+    print_info "Compiling photonJet executable in job directory: $job_dir"
+    
+    # Change to job directory for compilation
+    pushd "$job_dir" > /dev/null
+    
+    # Get ROOT flags
+    ROOT_CFLAGS=$(root-config --cflags)
+    ROOT_LIBS=$(root-config --libs)
+    
+    # Additional ROOT libraries needed
+    EXTRA_ROOT_LIBS="-lTree -lRIO -lNet -lHist -lGraf -lGraf3d -lGpad -lMathCore -lPhysics"
+    
+    # CMSSW flags (if available)
+    CMSSW_FLAGS=""
+    if check_cmssw; then
+        CMSSW_FLAGS="-I$CMSSW_BASE/src -I$CMSSW_RELEASE_BASE/src"
+    fi
+    
+    # Compiler settings
+    CXX="g++"
+    CXXFLAGS="-std=c++17 -O2 -Wall -Wextra"
+    
+    # Include paths (all files are in current directory)
+    INCLUDES="-I. $ROOT_CFLAGS $CMSSW_FLAGS"
+    
+    # Libraries with static linking for problematic dependencies
+    LIBS="$ROOT_LIBS $EXTRA_ROOT_LIBS"
+    
+    # Add static linking flags to avoid runtime library issues
+    STATIC_FLAGS="-static-libgcc -static-libstdc++"
+    
+    # Define macros
+    DEFINES="-DSTANDALONE_COMPILE"
+    
+    # Source file
+    SOURCE="photonJet.C"
+    OUTPUT="photonJet"
+    
+    # Compilation command with static linking
+    COMPILE_CMD="$CXX $CXXFLAGS $STATIC_FLAGS $INCLUDES $DEFINES $SOURCE $LIBS -o $OUTPUT"
+    
+    if [[ "$VERBOSE" == true ]] || [[ "$DRY_RUN" == true ]]; then
+        print_info "Job directory compilation command:"
+        echo "$COMPILE_CMD"
+        echo ""
+    fi
+    
+    # Execute compilation
+    if [[ "$DRY_RUN" == true ]]; then
+        print_info "[DRY RUN] Would compile executable in job directory"
+        popd > /dev/null
+        return 0
+    fi
+    
+    if eval $COMPILE_CMD; then
+        print_success "Compilation successful in job directory! Executable: $OUTPUT"
+        chmod +x "$OUTPUT"
+        print_info "Made executable: $OUTPUT"
+        
+        # Verify executable exists and get info
+        if [[ -f "$OUTPUT" ]]; then
+            print_info "Executable info: $(file $OUTPUT)"
+        else
+            print_error "Executable not found after compilation!"
+            popd > /dev/null
+            return 1
+        fi
+    else
+        print_error "Compilation failed in job directory!"
+        popd > /dev/null
+        return 1
+    fi
+    
+    popd > /dev/null
+    return 0
 }
 
 # Function to create batch submission script
@@ -299,11 +497,12 @@ create_batch_script() {
     local job_dir="$1"
     local config_file="$2"
     local batch_script="$job_dir/run_photonJet_batch.sh"
+    local target_os="${OS_VERSION:-$(detect_os_version)}"
     
     cat > $batch_script << EOF
 #!/bin/bash
 
-# Batch job script for photonJet analysis
+# Batch job script for photonJet analysis with pre-compiled executable
 # Auto-generated by compile.sh
 # Date: $(date)
 
@@ -324,35 +523,90 @@ echo "CONDOR_CLUSTER_ID: \$CONDOR_CLUSTER_ID"
 echo "CONDOR_PROCESS_ID: \$CONDOR_PROCESS_ID"
 echo "HTCondor slot: \$_CONDOR_SLOT"
 
-# Set up CMSSW environment if available
-if [[ -n "\$CMSSW_BASE" ]]; then
-    echo ""
-    echo "Setting up CMSSW environment..."
-    echo "CMSSW_BASE: \$CMSSW_BASE"
-    echo "CMSSW_VERSION: \$CMSSW_VERSION"
-    cd \$CMSSW_BASE/src
-    eval \`scramv1 runtime -sh\`
-    cd -
-    echo "CMSSW environment setup completed"
-else
-    echo ""
-    echo "No CMSSW environment found, continuing with system ROOT..."
-fi
+# Dynamic environment setup function
+detect_os_version() {
+    local detected_os="el8"  # Default fallback
+    
+    if [[ -f "/etc/os-release" ]]; then
+        if grep -q "VERSION_ID.*9" /etc/os-release 2>/dev/null; then
+            detected_os="el9"
+        elif grep -q "VERSION_ID.*8" /etc/os-release 2>/dev/null; then
+            detected_os="el8"
+        elif grep -q "centos.*9\|almalinux.*9\|rocky.*9" /etc/os-release 2>/dev/null; then
+            detected_os="el9"
+        elif grep -q "centos.*8\|almalinux.*8\|rocky.*8" /etc/os-release 2>/dev/null; then
+            detected_os="el8"
+        fi
+    fi
+    
+    echo "\$detected_os"
+}
 
-# Check if ROOT is available
-if command -v root-config &> /dev/null; then
-    echo "ROOT version: \$(root-config --version)"
-else
-    echo "ERROR: ROOT not found in PATH"
+setup_environment() {
+    local target_os="\${1:-\$(detect_os_version)}"
+    
+    echo ""
+    echo "Setting up environment for OS: \$target_os"
+    
+    # Check if we're in CMSSW environment
+    if [[ -n "\$CMSSW_BASE" ]]; then
+        echo "CMSSW environment detected: \$CMSSW_BASE"
+        echo "Using CMSSW runtime environment..."
+        # CMSSW environment should already be active from submission
+    else
+        echo "No CMSSW environment detected, setting up standalone ROOT"
+        
+        # Try LCG views based on OS version
+        local lcg_paths=(
+            "/cvmfs/sft.cern.ch/lcg/views/LCG_104/x86_64-\${target_os}-gcc11-opt/setup.sh"
+            "/cvmfs/sft.cern.ch/lcg/views/LCG_104/x86_64-centos\${target_os#el}-gcc11-opt/setup.sh"
+        )
+        
+        local setup_found=false
+        for lcg_path in "\${lcg_paths[@]}"; do
+            if [[ -f "\$lcg_path" ]]; then
+                echo "Setting up LCG environment: \$lcg_path"
+                source "\$lcg_path"
+                setup_found=true
+                break
+            fi
+        done
+        
+        if [[ "\$setup_found" == false ]]; then
+            echo "WARNING: No LCG environment found, using system ROOT"
+        fi
+    fi
+    
+    # Verify ROOT is available
+    if command -v root-config &> /dev/null; then
+        echo "ROOT version: \$(root-config --version)"
+        echo "ROOT libraries: \$(root-config --libdir)"
+        return 0
+    else
+        echo "ERROR: ROOT not found in PATH"
+        echo "PATH: \$PATH"
+        return 1
+    fi
+}
+
+# Set up environment
+if ! setup_environment; then
     exit 1
 fi
 
-# Make executable if it exists
+# Show current directory contents
+echo ""
+echo "Files available in working directory:"
+ls -la
+
+# Check for executable and make it executable
 if [[ -f "./photonJet" ]]; then
     chmod +x ./photonJet
     echo "PhotonJet executable found and made executable"
+    echo "Executable info: \$(file ./photonJet)"
 else
     echo "ERROR: PhotonJet executable not found"
+    echo "Current directory contents:"
     ls -la
     exit 1
 fi
@@ -363,17 +617,19 @@ echo "======================================"
 EOF
 
     # Add the actual run command
+    local run_cmd="./photonJet"
     if [[ "$PRODUCTION" == true ]]; then
-        echo "./photonJet --production" >> $batch_script
+        run_cmd="$run_cmd --production"
     else
-        echo "./photonJet --test $MAX_EVENTS" >> $batch_script
+        run_cmd="$run_cmd --test $MAX_EVENTS"
     fi
     
     if [[ -n "$config_file" ]]; then
+        run_cmd="$run_cmd --config $(basename "$config_file")"
         echo "# Config file: $(basename "$config_file")" >> $batch_script
-        # If config file is specified, add it to the command using just the basename
-        sed -i "s|./photonJet|./photonJet --config $(basename "$config_file")|" $batch_script
     fi
+    
+    echo "$run_cmd" >> $batch_script
     
     cat >> $batch_script << EOF
 
@@ -387,13 +643,39 @@ echo "======================================"
 EOF
 
     chmod +x $batch_script
-    print_success "Created batch script: $batch_script"
+    print_success "Created batch script for pre-compiled executable: $batch_script"
 }
 
 # Function to submit to LSF
 submit_lsf() {
     local config_file="$1"
     local job_timestamp="$(date +%Y%m%d_%H%M%S)"
+    local config_name=""
+    
+    # Extract config name from path
+    if [[ -n "$config_file" ]]; then
+        config_name=$(basename "$config_file" .config)
+    else
+        config_name="default"
+    fi
+    
+    local job_dir="batch/job_${job_timestamp}_${config_name}"
+    local job_name="photonJet_${job_timestamp}"
+    
+    # Handle dry-run mode
+    if [[ "$DRY_RUN" == true ]]; then
+        print_info "[DRY RUN] Would create job directory: $job_dir"
+        print_info "[DRY RUN] Would copy executable: ./photonJet"
+        if [[ -n "$config_file" ]]; then
+            print_info "[DRY RUN] Would copy config file: $config_file"
+        fi
+        print_info "[DRY RUN] Would copy header files to: $job_dir/include/"
+        print_info "[DRY RUN] Would create batch script: $job_dir/run_photonJet_batch.sh"
+        print_info "[DRY RUN] Job name: $job_name"
+        print_info "[DRY RUN] Queue: ${QUEUE:-8nh}"
+        print_info "[DRY RUN] Would execute: bsub -J $job_name -q ${QUEUE:-8nh} -o logs/${job_name}.out -e logs/${job_name}.err ./run_photonJet_batch.sh"
+        return 0
+    fi
     
     # Create isolated job directory
     local job_dir=$(create_job_directory "$config_file" "$job_timestamp")
@@ -418,7 +700,7 @@ submit_lsf() {
     print_info "Job directory: $job_dir"
     print_info "Logs will be in: $log_dir"
     
-    if [[ "$VERBOSE" == true ]]; then
+    if [[ "$VERBOSE" == true ]] || [[ "$DRY_RUN" == true ]]; then
         print_info "LSF command: $bsub_cmd"
     fi
     
@@ -440,11 +722,48 @@ submit_lsf() {
 submit_condor() {
     local config_file="$1"
     local job_timestamp="$(date +%Y%m%d_%H%M%S)"
+    local config_name=""
+    
+    # Extract config name from path
+    if [[ -n "$config_file" ]]; then
+        config_name=$(basename "$config_file" .config)
+    else
+        config_name="default"
+    fi
+    
+    local job_dir="batch/job_${job_timestamp}_${config_name}"
+    local job_name="photonJet_${job_timestamp}"
+    
+    # Handle dry-run mode
+    if [[ "$DRY_RUN" == true ]]; then
+        print_info "[DRY RUN] Would create job directory: $job_dir"
+        print_info "[DRY RUN] Would copy source files: photonJet.C and headers"
+        if [[ -n "$config_file" ]]; then
+            print_info "[DRY RUN] Would copy config file: $config_file"
+        fi
+        print_info "[DRY RUN] Would copy header files to job directory"
+        print_info "[DRY RUN] Would compile executable locally in job directory"
+        print_info "[DRY RUN] Would create batch script (execution only): $job_dir/run_photonJet_batch.sh"
+        print_info "[DRY RUN] Would create Condor submit file: $job_dir/${job_name}.sub"
+        print_info "[DRY RUN] Job name: $job_name"
+        print_info "[DRY RUN] OS version: $OS_VERSION"
+        print_info "[DRY RUN] Job flavour: ${QUEUE:-workday}"
+        print_info "[DRY RUN] Local compilation will happen before submission"
+        print_info "[DRY RUN] Would execute: condor_submit ${job_name}.sub"
+        return 0
+    fi
     
     # Create isolated job directory
     local job_dir=$(create_job_directory "$config_file" "$job_timestamp")
     if [[ $? -ne 0 ]]; then
         print_error "Failed to create job directory"
+        return 1
+    fi
+    
+    # Compile photonJet executable in the job directory (local compilation)
+    compile_in_job_directory "$job_dir"
+    if [[ $? -ne 0 ]]; then
+        print_error "Failed to compile executable in job directory"
         return 1
     fi
     
@@ -465,12 +784,11 @@ submit_condor() {
 
 universe = vanilla
 executable = run_photonJet_batch.sh
-output = logs/${job_name}.out
-error = logs/${job_name}.err
-log = logs/${job_name}.log
+output = logs/${job_name}_\$(Process).out
+error = logs/${job_name}_\$(Process).err
+log = logs/${job_name}_\$(Process).log
 
-# OS requirements
-OpSysAndVer = "$OS_VERSION"
+# OS requirements - CERN HTCondor specific
 MY.WantOS = "$OS_VERSION"
 
 # Job requirements
@@ -483,16 +801,13 @@ should_transfer_files = YES
 when_to_transfer_output = ON_EXIT
 EOF
 
-    # Build transfer input files list - all files are now local in job directory
-    local transfer_files="photonJet, run_photonJet_batch.sh, include/"
+    # Build transfer input files list - executable and config files only
+    local transfer_files="photonJet, run_photonJet_batch.sh"
+    
+    # Add config file if specified
     if [[ -n "$config_file" && -f "$(basename "$config_file")" ]]; then
         transfer_files="$transfer_files, $(basename "$config_file")"
         print_info "Including config file in transfer: $(basename "$config_file")"
-    fi
-    
-    # Add scripts directory if it exists
-    if [[ -d "scripts" ]]; then
-        transfer_files="$transfer_files, scripts/"
     fi
     
     echo "transfer_input_files = $transfer_files" >> $condor_file
@@ -507,7 +822,7 @@ EOF
     if [[ -n "$QUEUE" ]]; then
         echo "+JobFlavour = \"$QUEUE\"" >> $condor_file
     else
-        echo "+JobFlavour = \"espresso\"" >> $condor_file
+        echo "+JobFlavour = \"workday\"" >> $condor_file
     fi
     
     echo "queue" >> $condor_file
@@ -517,10 +832,10 @@ EOF
     print_info "Job directory: $job_dir"
     print_info "Submit file: $condor_file"
     print_info "OS version: $OS_VERSION"
-    print_info "Job flavour: ${QUEUE:-espresso}"
+    print_info "Job flavour: ${QUEUE:-workday}"
     print_info "Logs will be in: $log_dir"
     
-    if [[ "$VERBOSE" == true ]]; then
+    if [[ "$VERBOSE" == true ]] || [[ "$DRY_RUN" == true ]]; then
         print_info "Condor submit file contents:"
         cat $condor_file
         print_info "Job directory contents:"
@@ -547,6 +862,32 @@ EOF
 submit_slurm() {
     local config_file="$1"
     local job_timestamp="$(date +%Y%m%d_%H%M%S)"
+    local config_name=""
+    
+    # Extract config name from path
+    if [[ -n "$config_file" ]]; then
+        config_name=$(basename "$config_file" .config)
+    else
+        config_name="default"
+    fi
+    
+    local job_dir="batch/job_${job_timestamp}_${config_name}"
+    local job_name="photonJet_${job_timestamp}"
+    
+    # Handle dry-run mode
+    if [[ "$DRY_RUN" == true ]]; then
+        print_info "[DRY RUN] Would create job directory: $job_dir"
+        print_info "[DRY RUN] Would copy executable: ./photonJet"
+        if [[ -n "$config_file" ]]; then
+            print_info "[DRY RUN] Would copy config file: $config_file"
+        fi
+        print_info "[DRY RUN] Would copy header files to: $job_dir/include/"
+        print_info "[DRY RUN] Would create batch script: $job_dir/run_photonJet_batch.sh"
+        print_info "[DRY RUN] Job name: $job_name"
+        print_info "[DRY RUN] Partition: ${QUEUE:-batch}"
+        print_info "[DRY RUN] Would execute: sbatch --job-name=$job_name --partition=${QUEUE:-batch} --output=logs/${job_name}.out --error=logs/${job_name}.err ./run_photonJet_batch.sh"
+        return 0
+    fi
     
     # Create isolated job directory
     local job_dir=$(create_job_directory "$config_file" "$job_timestamp")
@@ -571,7 +912,7 @@ submit_slurm() {
     print_info "Job directory: $job_dir"
     print_info "Logs will be in: $log_dir"
     
-    if [[ "$VERBOSE" == true ]]; then
+    if [[ "$VERBOSE" == true ]] || [[ "$DRY_RUN" == true ]]; then
         print_info "SLURM command: $sbatch_cmd"
         print_info "Job directory contents:"
         ls -la
@@ -626,6 +967,10 @@ while [[ $# -gt 0 ]]; do
             CLEAN=true
             shift
             ;;
+        --dry-run)
+            DRY_RUN=true
+            shift
+            ;;
         --batch-system)
             BATCH_SYSTEM="$2"
             shift 2
@@ -640,6 +985,11 @@ while [[ $# -gt 0 ]]; do
             ;;
         --os-version)
             OS_VERSION="$2"
+            OS_VERSION_SET=true
+            shift 2
+            ;;
+        --job-suffix)
+            JOB_SUFFIX="$2"
             shift 2
             ;;
         -h|--help)
@@ -658,18 +1008,35 @@ done
 print_info "PhotonJet Analysis Compilation Script"
 print_info "======================================"
 
+# Auto-detect OS version if not explicitly set by user
+if [[ -z "${OS_VERSION_SET:-}" ]]; then
+    DETECTED_OS=$(detect_os_version)
+    if [[ "$OS_VERSION" != "$DETECTED_OS" ]]; then
+        print_info "Auto-detected OS version: $DETECTED_OS (overriding default: $OS_VERSION)"
+        OS_VERSION="$DETECTED_OS"
+    else
+        print_info "Auto-detected OS version: $OS_VERSION"
+    fi
+fi
+
+# Show dry run mode if enabled
+if [[ "$DRY_RUN" == true ]]; then
+    print_warning "DRY RUN MODE - No commands will be executed"
+    print_info "This will show what would be done without actually doing it"
+    print_info ""
+fi
+
 # Clean if requested
 if [[ "$CLEAN" == true ]]; then
     clean_artifacts
     exit 0
 fi
 
-# Check environments
-if ! check_root; then
+# Check environments and set up environment dynamically
+if ! setup_environment "$OS_VERSION"; then
+    print_error "Failed to set up environment"
     exit 1
 fi
-
-check_cmssw
 
 # Set default config if not provided
 if [[ -z "$CONFIG" ]]; then
@@ -735,17 +1102,18 @@ case $MODE in
         ;;
 esac
 
-# Compile the analysis
-if ! compile_analysis; then
-    exit 1
-fi
-
 # Execute based on mode
 case $MODE in
     local)
+        # Compile locally for local execution
+        if ! compile_analysis; then
+            exit 1
+        fi
         run_local "$CONFIG"
         ;;
     batch)
+        # For batch mode, compilation happens in job directory only
+        print_info "Batch mode: skipping local compilation, will compile in job directory"
         case $BATCH_SYSTEM in
             lsf)
                 submit_lsf "$CONFIG"

@@ -512,6 +512,12 @@ std::vector<ClassMember> parseHeaderFile(const std::string& headerPath, const st
 }
 
 void generatePhotonJetHeader(const Config& cfg) {
+    // Check if header regeneration is enabled
+    if (!cfg.regenerateHeader) {
+        std::cout << "[LOG] Header regeneration disabled by config. Skipping header generation." << std::endl;
+        return;
+    }
+    
     // Determine which header file to parse based on config
     std::string className, headerPath;
     
