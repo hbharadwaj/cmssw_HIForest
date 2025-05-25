@@ -38,11 +38,12 @@
 
 // Forward declarations
 void printUsage();
-void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager, TFile* outFile, Long64_t maxEvents = -1);
+void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager, TFile* outFile, 
+                  const PlottingConfiguration& plotConfig, Long64_t maxEvents = -1);
 bool setupInputChain(TChain* chain, const std::string& inputDir, bool testMode, int maxFiles = 1);
 void setupOutputTree(TTree* outTree, const std::vector<std::string>& jetCollections);
 void createHistograms(TFile* outFile, const std::vector<std::string>& jetCollections, 
-                     const std::vector<float>& centralityBins);
+                     const std::vector<float>& centralityBins, const PlottingConfiguration& plotConfig);
 float getDeltaPhi(float phi1, float phi2);
 float getXj(float jetPt, float photonPt);
 
@@ -154,6 +155,20 @@ int main(int argc, char* argv[]) {
         // Print configuration summary
         printConfig(config);
         
+        // Load plotting configuration
+        std::string plottingConfigPath = config->GetValue("PlottingConfig", "../configs/PlotJetSub_2023_PbPb_MC.config");
+        PlottingConfiguration plotConfig;
+        
+        log(LOG_INFO, "Loading plotting configuration from: " + plottingConfigPath);
+        if (!loadPlottingConfig(plottingConfigPath, plotConfig)) {
+            log(LOG_ERROR, "Failed to load plotting configuration, using defaults");
+            // Initialize with default configuration if loading fails
+            plotConfig = PlottingConfiguration(); // Uses default constructor
+        } else {
+            log(LOG_INFO, "Successfully loaded plotting configuration");
+            log(LOG_DEBUG, "Loaded " + std::to_string(plotConfig.histogramConfigs.size()) + " histogram configurations");
+        }
+        
         // Get basic parameters
         std::string outputDir = config->GetValue("OutputDir", "");
         std::string outputPrefix = config->GetValue("OutputPrefix", "output");
@@ -215,7 +230,7 @@ int main(int argc, char* argv[]) {
         
         // Process events
         Long64_t nEvents = testMode && maxEvents > 0 ? maxEvents : -1;
-        processEvents(chain, config, jetManager, outFile, nEvents);
+        processEvents(chain, config, jetManager, outFile, plotConfig, nEvents);
         
         // Clean up
         outFile->Close();
@@ -244,7 +259,8 @@ int main(int argc, char* argv[]) {
 /**
  * Process events in the chain
  */
-void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager, TFile* outFile, Long64_t maxEvents) {
+void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager, TFile* outFile, 
+                  const PlottingConfiguration& plotConfig, Long64_t maxEvents) {
     if (!chain || !outFile) return;
     
     // Initialize logging verbosity from config
@@ -290,7 +306,7 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
     setupOutputTree(outTree, jetCollections);
     
     // Create histograms
-    createHistograms(outFile, jetCollections, centralityBins);
+    createHistograms(outFile, jetCollections, centralityBins, plotConfig);
     
     // Variables for branch addresses
     int hiBin = 0;
@@ -488,7 +504,7 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
     
     for (Long64_t iEvent = 0; iEvent < nEvents; ++iEvent) {
         if (iEvent % 1000 == 0) {
-            log(LOG_DEBUG, "Processing event " + std::to_string(iEvent) + "/" + 
+            log(LOG_INFO, "Processing event " + std::to_string(iEvent) + "/" + 
                 std::to_string(nEvents) + " (" + 
                 std::to_string(static_cast<double>(iEvent) / nEvents * 100) + "%)");
         }
@@ -859,13 +875,14 @@ bool setupInputChain(TChain* chain, const std::string& inputDir, bool testMode, 
  * Create histograms for output
  */
 void createHistograms(TFile* outFile, const std::vector<std::string>& jetCollections, 
-                     const std::vector<float>& centralityBins) {
+                                 const std::vector<float>& centralityBins, const PlottingConfiguration& plotConfig) {
     if (!outFile) return;
     
     // Debug: Check input parameters
     log(LOG_DEBUG, "createHistograms called with:");
     log(LOG_DEBUG, "  jetCollections.size() = " + std::to_string(jetCollections.size()));
     log(LOG_DEBUG, "  centralityBins.size() = " + std::to_string(centralityBins.size()));
+    log(LOG_DEBUG, "  plotConfig.histogramConfigs.size() = " + std::to_string(plotConfig.histogramConfigs.size()));
     
     if (jetCollections.empty()) {
         log(LOG_INFO, "jetCollections is empty!");
@@ -907,59 +924,151 @@ void createHistograms(TFile* outFile, const std::vector<std::string>& jetCollect
             
             log(LOG_DEBUG, "Creating histograms in directory: " + collection + "/" + centName);
             
-            // Basic histograms - store pointers and ensure they're in the right directory
-            TH1F* hJetPt = new TH1F("hJetPt", "Jet p_{T};p_{T} [GeV/c];Entries", 100, 0, 500);
-            TH1F* hJetEta = new TH1F("hJetEta", "Jet #eta;#eta;Entries", 50, -2.5, 2.5);
-            TH1F* hDeltaPhi = new TH1F("hDeltaPhi", "#Delta#phi;#Delta#phi;Entries", 50, 0, M_PI);
-            TH1F* hXj = new TH1F("hXj", "x_{j} = p_{T}^{jet} / E_{T}^{#gamma};x_{j};Entries", 50, 0, 2.0);
+            // Vector to store all histogram pointers for writing
+            std::vector<TObject*> histograms;
+            
+            // Helper function to create a histogram using configuration if available,
+            // or use defaults if not found in the config
+            auto createHist1D = [&plotConfig, &centDir, &histograms](const std::string& name, const std::string& title, 
+                                                                  int bins, double xmin, double xmax) {
+                // Remove 'h' prefix if present for config lookup
+                std::string configName = name;
+                if (configName.size() > 1 && configName[0] == 'h') {
+                    configName = configName.substr(1);
+                }
+                
+                TH1F* hist = nullptr;
+                
+                // Check if this histogram has a config
+                auto configIter = plotConfig.histogramConfigs.find(configName);
+                if (configIter != plotConfig.histogramConfigs.end()) {
+                    // Create with config
+                    hist = createHistogram1D(configIter->second, name, "");
+                } else {
+                    // Create with provided defaults
+                    hist = new TH1F(name.c_str(), title.c_str(), bins, xmin, xmax);
+                }
+                
+                hist->SetDirectory(centDir);
+                histograms.push_back(hist);
+                return hist;
+            };
+            
+            // Similar helper for 2D histograms
+            auto createHist2D = [&plotConfig, &centDir, &histograms](const std::string& name, const std::string& title, 
+                                                                  int xbins, double xmin, double xmax,
+                                                                  int ybins, double ymin, double ymax) {
+                // Remove 'h2' prefix if present for config lookup
+                std::string configName = name;
+                if (configName.size() > 2 && configName[0] == 'h' && configName[1] == '2') {
+                    configName = configName.substr(2);
+                }
+                
+                TH2F* hist = nullptr;
+                
+                // Check if this histogram has a config
+                auto configIter = plotConfig.histogramConfigs.find(configName);
+                if (configIter != plotConfig.histogramConfigs.end()) {
+                    // Create with config
+                    hist = createHistogram2D(configIter->second, name, "");
+                } else {
+                    // Create with provided defaults
+                    hist = new TH2F(name.c_str(), title.c_str(), xbins, xmin, xmax, ybins, ymin, ymax);
+                }
+                
+                hist->SetDirectory(centDir);
+                histograms.push_back(hist);
+                return hist;
+            };
+            
+            // Helper for profile histograms
+            auto createHistProfile = [&plotConfig, &centDir, &histograms](const std::string& name, const std::string& title, 
+                                                                       int xbins, double xmin, double xmax,
+                                                                       double ymin, double ymax) {
+                // Remove 'p' prefix if present for config lookup
+                std::string configName = name;
+                if (configName.size() > 1 && configName[0] == 'p') {
+                    configName = configName.substr(1);
+                }
+                
+                TProfile* hist = nullptr;
+                
+                // Check if this histogram has a config
+                auto configIter = plotConfig.histogramConfigs.find(configName);
+                if (configIter != plotConfig.histogramConfigs.end()) {
+                    // Create with config
+                    hist = createProfile(configIter->second, name, "");
+                } else {
+                    // Create with provided defaults
+                    hist = new TProfile(name.c_str(), title.c_str(), xbins, xmin, xmax, ymin, ymax);
+                }
+                
+                hist->SetDirectory(centDir);
+                histograms.push_back(hist);
+                return hist;
+            };
+            
+            // Create all histograms using our helper functions
+            // Basic kinematic histograms
+            TH1F* hJetPt = createHist1D("hJetPt", "Jet p_{T};p_{T} [GeV/c];Entries", 100, 0, 500);
+            TH1F* hJetEta = createHist1D("hJetEta", "Jet #eta;#eta;Entries", 50, -2.5, 2.5);
+            TH1F* hDeltaPhi = createHist1D("hDeltaPhi", "#Delta#phi;#Delta#phi;Entries", 50, 0, M_PI);
+            TH1F* hXj = createHist1D("hXj", "x_{j} = p_{T}^{jet} / E_{T}^{#gamma};x_{j};Entries", 50, 0, 2.0);
+            
+            // Suppress unused variable warnings - histograms are created and stored in ROOT file automatically
+            (void)hJetPt; (void)hJetEta; (void)hDeltaPhi; (void)hXj;
             
             // Jet substructure histograms
-            TH1F* hJetMass = new TH1F("hJetMass", "Jet mass;m [GeV/c^{2}];Entries", 50, 0, 50);
-            TH1F* hDynSplit = new TH1F("hDynSplit", "Dynamical groomed splitting scale;#sqrt{z#theta} [GeV/c];Entries", 50, 0, 50);
-            TH1F* hDynKt = new TH1F("hDynKt", "Dynamical groomed k_{T};k_{T} [GeV/c];Entries", 50, 0, 50);
-            TH1F* hDynZ = new TH1F("hDynZ", "Dynamical groomed z;z;Entries", 50, 0, 0.5);
-            TH1F* hGirth = new TH1F("hGirth", "Jet girth;girth;Entries", 50, 0, 0.5);
-            TH1F* hThrust = new TH1F("hThrust", "Jet thrust;thrust;Entries", 50, 0, 1.0);
-            TH1F* hLHA = new TH1F("hLHA", "Jet LHA;LHA;Entries", 50, 0, 1.0);
-            TH1F* hPtD = new TH1F("hPtD", "Jet p_{T}D;p_{T}D;Entries", 50, 0, 1.0);
+            TH1F* hJetMass = createHist1D("hJetMass", "Jet mass;m [GeV/c^{2}];Entries", 50, 0, 50);
+            TH1F* hDynSplit = createHist1D("hDynSplit", "Dynamical groomed splitting scale;#sqrt{z#theta} [GeV/c];Entries", 50, 0, 50);
+            TH1F* hDynKt = createHist1D("hDynKt", "Dynamical groomed k_{T};k_{T} [GeV/c];Entries", 50, 0, 50);
+            TH1F* hDynZ = createHist1D("hDynZ", "Dynamical groomed z;z;Entries", 50, 0, 0.5);
+            TH1F* hGirth = createHist1D("hGirth", "Jet girth;girth;Entries", 50, 0, 0.5);
+            TH1F* hThrust = createHist1D("hThrust", "Jet thrust;thrust;Entries", 50, 0, 1.0);
+            TH1F* hLHA = createHist1D("hLHA", "Jet LHA;LHA;Entries", 50, 0, 1.0);
+            TH1F* hPtD = createHist1D("hPtD", "Jet p_{T}D;p_{T}D;Entries", 50, 0, 1.0);
+            
+            // Suppress unused variable warnings (histograms are retrieved by name later)
+            (void)hJetMass; (void)hDynSplit; (void)hDynKt; (void)hDynZ;
+            (void)hGirth; (void)hThrust; (void)hLHA; (void)hPtD;
             
             // Profiles and 2D histograms
-            TProfile* pDynSplitVsPt = new TProfile("pDynSplitVsPt", "Dynamical groomed splitting scale vs p_{T};p_{T} [GeV/c];<#sqrt{z#theta}> [GeV/c]", 
-                         10, 40, 240);
-            TH2F* h2DynSplitVsPt = new TH2F("h2DynSplitVsPt", "Dynamical groomed splitting scale vs p_{T};p_{T} [GeV/c];#sqrt{z#theta} [GeV/c]", 
-                     10, 40, 240, 50, 0, 50);
+            TProfile* pDynSplitVsPt = createHistProfile("pDynSplitVsPt", 
+                                                       "Dynamical groomed splitting scale vs p_{T};p_{T} [GeV/c];<#sqrt{z#theta}> [GeV/c]", 
+                                                       10, 40, 240, 0, 50);
             
-            // Explicitly set the directory for each histogram to ensure they're saved
-            hJetPt->SetDirectory(centDir);
-            hJetEta->SetDirectory(centDir);
-            hDeltaPhi->SetDirectory(centDir);
-            hXj->SetDirectory(centDir);
-            hJetMass->SetDirectory(centDir);
-            hDynSplit->SetDirectory(centDir);
-            hDynKt->SetDirectory(centDir);
-            hDynZ->SetDirectory(centDir);
-            hGirth->SetDirectory(centDir);
-            hThrust->SetDirectory(centDir);
-            hLHA->SetDirectory(centDir);
-            hPtD->SetDirectory(centDir);
-            pDynSplitVsPt->SetDirectory(centDir);
-            h2DynSplitVsPt->SetDirectory(centDir);
+            TH2F* h2DynSplitVsPt = createHist2D("h2DynSplitVsPt", 
+                                               "Dynamical groomed splitting scale vs p_{T};p_{T} [GeV/c];#sqrt{z#theta} [GeV/c]", 
+                                               10, 40, 240, 50, 0, 50);
             
-            // Write each histogram individually to ensure they're saved to the ROOT file
-            hJetPt->Write("", TObject::kWriteDelete);
-            hJetEta->Write("", TObject::kWriteDelete);
-            hDeltaPhi->Write("", TObject::kWriteDelete);
-            hXj->Write("", TObject::kWriteDelete);
-            hJetMass->Write("", TObject::kWriteDelete);
-            hDynSplit->Write("", TObject::kWriteDelete);
-            hDynKt->Write("", TObject::kWriteDelete);
-            hDynZ->Write("", TObject::kWriteDelete);
-            hGirth->Write("", TObject::kWriteDelete);
-            hThrust->Write("", TObject::kWriteDelete);
-            hLHA->Write("", TObject::kWriteDelete);
-            hPtD->Write("", TObject::kWriteDelete);
-            pDynSplitVsPt->Write("", TObject::kWriteDelete);
-            h2DynSplitVsPt->Write("", TObject::kWriteDelete);
+            // Suppress unused variable warnings (histograms are retrieved by name later)
+            (void)pDynSplitVsPt; (void)h2DynSplitVsPt;
+            
+            // Create any additional histograms defined in the config but not explicitly included above
+            for (const auto& histConfig : plotConfig.histogramConfigs) {
+                // Skip if we've already created this histogram
+                std::string histName = "h" + histConfig.first;
+                if (centDir->FindObject(histName.c_str()) != nullptr) continue;
+                
+                // Create the histogram based on its type
+                if (histConfig.second.type == "TH1F") {
+                    createHist1D(histName, histConfig.second.title, 
+                               histConfig.second.nBinsX, histConfig.second.xMin, histConfig.second.xMax);
+                } else if (histConfig.second.type == "TH2F") {
+                    createHist2D(histName, histConfig.second.title, 
+                               histConfig.second.nBinsX, histConfig.second.xMin, histConfig.second.xMax,
+                               histConfig.second.nBinsY, histConfig.second.yMin, histConfig.second.yMax);
+                } else if (histConfig.second.type == "TProfile") {
+                    createHistProfile(histName, histConfig.second.title, 
+                                    histConfig.second.nBinsX, histConfig.second.xMin, histConfig.second.xMax,
+                                    histConfig.second.yMin, histConfig.second.yMax);
+                }
+            }
+            
+            // Write histograms to the ROOT file
+            for (auto hist : histograms) {
+                hist->Write("", TObject::kWriteDelete);
+            }
             
             // Write directory metadata
             centDir->Write();
@@ -970,7 +1079,8 @@ void createHistograms(TFile* outFile, const std::vector<std::string>& jetCollect
     // Return to the main directory
     outFile->cd();
     
-    log(LOG_DEBUG, "Histogram creation complete.");
+    log(LOG_DEBUG, "Histogram creation complete with " + 
+        std::to_string(plotConfig.histogramConfigs.size()) + " histogram configurations.");
 }
 
 /**

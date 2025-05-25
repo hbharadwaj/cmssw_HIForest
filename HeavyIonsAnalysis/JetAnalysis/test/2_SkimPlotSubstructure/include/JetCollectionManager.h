@@ -64,7 +64,7 @@ public:
             return false;
         }
         
-        log(LOG_INFO, "Initializing jet collections: " + analysisCases);
+        log(LOG_DEBUG, "Initializing jet collections: " + analysisCases);
         
         // Split comma-separated list of jet collections
         std::stringstream ss(analysisCases);
@@ -97,7 +97,7 @@ public:
         
         log(LOG_INFO, "Initialized " + std::to_string(fCollections.size()) + " jet collections:");
         for (const auto& coll : fCollections) {
-            log(LOG_INFO, " - " + coll);
+            log(LOG_DEBUG, " - " + coll);
         }
         
         return true;
