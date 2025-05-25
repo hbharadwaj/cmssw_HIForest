@@ -388,416 +388,66 @@ Compilation Status: ✅ Clean build with ROOT 6.26.11
 ✅ EOS Data Access: Input/output paths verified for production scale
 ```
 Framework Status: ✅ All components operational - 79 branches loaded successfully
+
+## Dynamic Plotting and Histogram Implementation
+
+### Overview
+The plotting and histogramming in `gammaJetAnalyzer` is fully dynamic and driven by the plotting configuration file (e.g., `PlotJetSub_2023_PbPb_MC.config`). All 1D, 2D, and profile histograms are defined in the config and created automatically by the analyzer. This allows users to add, remove, or modify plots without changing the C++ code.
+
+### How it Works
+- The plotting config defines histograms with keys like `Histogram.JetPt.Name`, `Histogram.JetPt.Bins`, etc.
+- The analyzer parses these into a configuration object, which holds all histogram definitions.
+- For each jet collection and centrality bin, the code loops over all histogram configs and creates the corresponding ROOT histograms (TH1F, TH2F, TProfile) with the specified binning, axis labels, and options.
+- The event loop fills histograms by name, and all are written to the output file automatically.
+
+### Adding a New Histogram
+To add a new histogram, simply add a block to your plotting config:
+```
+Histogram.NewVar.Name: hNewVar
+Histogram.NewVar.Title: My New Variable;X axis;Entries
+Histogram.NewVar.Bins: 50
+Histogram.NewVar.XMin: 0
+Histogram.NewVar.XMax: 100
+Histogram.NewVar.PlotType: 1D
+```
+Then, in your event loop, fill it by name:
+```cpp
+TH1F* hNewVar = (TH1F*)gDirectory->Get("hNewVar");
+if (hNewVar) hNewVar->Fill(value);
+```
+No C++ code changes are needed to create or write the histogram.
+
+#### Example: Adding a 2D Histogram
+In your config:
+```
+Histogram.PhotonEtVsJetPt.Name: h2PhotonEtVsJetPt
+Histogram.PhotonEtVsJetPt.Title: Photon E_{T} vs Jet p_{T};E_{T}^{#gamma};p_{T}^{jet}
+Histogram.PhotonEtVsJetPt.XBins: 50
+Histogram.PhotonEtVsJetPt.XMin: 0
+Histogram.PhotonEtVsJetPt.XMax: 400
+Histogram.PhotonEtVsJetPt.YBins: 50
+Histogram.PhotonEtVsJetPt.YMin: 0
+Histogram.PhotonEtVsJetPt.YMax: 200
+Histogram.PhotonEtVsJetPt.PlotType: 2D
+```
+In your event loop:
+```cpp
+TH2F* h2PhotonEtVsJetPt = (TH2F*)gDirectory->Get("h2PhotonEtVsJetPt");
+if (h2PhotonEtVsJetPt) h2PhotonEtVsJetPt->Fill(photonEt, jetPt);
 ```
 
-**Architecture Highlights:**
-- **Config-Driven Design**: Complete branch management separated from analysis logic
-- **Flexible Integration**: Drop-in replacement framework ready for production
-- **Scalable Framework**: Adding variables requires only config file changes
-- **Performance Ready**: Lazy evaluation and parallel processing capabilities implemented
-- **Production Compatible**: Designed for large-scale batch processing integration
-- **Framework Status**: ✅ Production-ready with 79 branches successfully loaded across 11 sections
-
-### **Updated Implementation Phases - Critical Status**
-
-#### **Phase A: Parallel Implementation** ✅ **100% COMPLETE - PRODUCTION READY**
-**Status**: **FULLY OPERATIONAL** - All infrastructure complete and tested with real data
-
-**✅ 100% Complete Infrastructure:**
-- ✅ Complete BranchManager class (388+559 lines) - all features implemented and tested
-- ✅ Complete DataFrameAnalyzer framework (370+459 lines) - full RDataFrame integration
-- ✅ Working branch configuration format with [Category.Type] sections (47 lines)
-- ✅ Comprehensive test suite with 100% pass rate on integration tests
-- ✅ Complete build system with ROOT 6.26.11 and CMSSW 13.2.13 integration
-- ✅ Memory-efficient design with proper copy constructors and assignment operators
-- ✅ Modular analysis cuts (photon, jet, event) with configuration management
-- ✅ Histogram booking and output management systems
-- ✅ Runtime branch validation against ROOT tree structures
-
-**✅ Critical Bug Resolution Completed:**
-- **Previous Issue**: Configuration parser regex pattern malformed (`[^]`)
-- **Resolution**: Fixed regex to `R"(\[([^.]+)\.([^\]]+)\])"` 
-- **Current Status**: **79 branches successfully loaded across 11 sections**
-- **Performance**: All integration tests passing (3/3)
-- **Validation**: Framework tested with actual CMS Heavy Ion data branches
-
-**Production Readiness Achieved:**
-- **Branch Loading**: 79 branches from 11 configured sections
-- **Category Support**: Event, Photon, Jet, Electron data properly organized
-- **Configuration System**: Dynamic branch loading without recompilation
-- **Test Coverage**: Complete integration validation with real data structures
-- **Framework Status**: Ready for immediate deployment on EOS data
-
-**Phase A Completion**: **✅ COMPLETED** (May 24, 2025)
-
-#### **Phase B: Gradual Migration** 
-**Status**: **READY TO START** - Architecture prepared, awaiting Phase A completion
-
-**Planned Timeline**: **May 28 - June 15, 2025**
-
-**Migration Strategy (Updated):**
-1. **Photon Analysis Migration** (Week 1):
-   - Replace photon-only analysis in existing `photonJet.C` 
-   - Validate photon selection cuts and isolation criteria
-   - Benchmark performance with RDataFrame vs TTree loops
-
-2. **Jet Analysis Integration** (Week 2):
-   - Add jet substructure capabilities to DataFrameAnalyzer
-   - Integrate with existing `JetSubstructure.h` calculations
-   - Support for multiple jet collections (AK2Z2, AK3Z1, AK4Z2, etc.)
-
-3. **Plot Generation Modernization** (Week 3):
-   - Config-driven histogram generation system
-   - Integration with existing plotting infrastructure
-   - Automated comparison tools (old vs new outputs)
-
-4. **Batch Processing Integration** (Week 4):
-   - Adapt `compile.sh` and `submit_production.sh` for RDataFrame approach
-   - Update isolated job execution directories
-   - Production-scale testing with batch submissions
-
-#### **Phase C: Legacy Cleanup** 
-**Status**: **PLANNED** - Detailed cleanup strategy ready
-
-**Planned Timeline**: **June 16 - June 30, 2025**
-
-**Cleanup Strategy:**
-1. **Remove Legacy Dependencies**:
-   - Eliminate pointer-to-member maps from `photonJet.h`
-   - Remove auto-generated header system (`GammaJet2023_PbPb*.h`)
-   - Clean up complex inheritance hierarchy
-
-2. **Build System Simplification**:
-   - Remove `photonJet.h` generation from compilation process
-   - Streamline Makefile dependencies
-   - Update documentation and user guides
-
-3. **Performance Optimization**:
-   - Leverage RDataFrame parallel processing capabilities
-   - Optimize memory usage with smart branch loading
-   - Implement advanced caching strategies
-
-4. **Documentation Finalization**:
-   - Complete migration documentation
-   - Create user migration guide
-   - Performance comparison reports
-
-### **Branch Configuration System** 📊
-
-**Based on existing configs**, the new branch management will support:
-
-```
-# From 2023_PbPb_QCDPhoton.config analysis
-Trees: hiEvt(event) + ggHi(photons/electrons) + AK*Z*(jets) + skim + hlt
-```
-
-**Branch Categories:**
-- **Event Branches**: `run, evt, lumi, vz, hiBin, hiHF, weight, pthat`
-- **Photon Branches**: `phoE, phoEt, phoEta, phoPhi, phoSigmaIEtaIEta, pho_*Iso*`
-- **Electron Branches**: `eleD0, eleDz, elePt, eleEta, elePhi, eleEn, eleSigma*`
-- **MC Branches**: `mcPID, mcStatus, mcPt, mcEta, mcPhi, mcE, mcMomPID`
-- **Jet Collections**: `AK{2,3,4,5,6,8}Z{1,2,3,4,5}` with substructure variables
-
-**Tree Structure from Config:**
-```
-hiEvtAnalyzer/HiTree → Event-level variables
-ggHiNtuplizer/EventTree → Photon/Electron/MC particles  
-akCs*PFJetAnalyzerSDZcut*/t → Jet collections with substructure
-skimanalysis/HltTree → Event selection filters
-hltanalysis/HltTree → Trigger information
-```
-
-## 🎯 Production System Status (May 24, 2025)
-
-### ✅ MISSION ACCOMPLISHED (Legacy System)
-Successfully developed and deployed a comprehensive photon-tagged jet analysis system with:
-- **Local pre-compilation workflow** with automatic dependency detection
-- **Multi-batch system support** (HTCondor, LSF, SLURM) with CERN-specific configurations
-- **Robust configuration management** using TEnv-based parameter loading
-- **Production-scale job submission** with isolated execution environments
-- **Complete monitoring and debugging tools** for large-scale processing
-
-### 🔧 CRITICAL PROBLEMS SOLVED
-
-#### 1. Worker Node Compilation Issues ✅ RESOLVED
-**Problem**: Jobs failing due to library dependency issues (`libtbb.so.12` not found)
-**Root Cause**: Binary incompatibility between compilation and execution environments
-**Solution**: 
-- **Modified workflow to local pre-compilation**: Executable compiled in isolated job directory before submission
-- **Simplified batch script**: Worker nodes only execute pre-compiled executable, no compilation
-- **Fixed include path issues**: Automatic path correction for job directory structure
-- **Dynamic header management**: All required GammaJet headers automatically copied
-
-#### 2. Batch Environment Compatibility Crisis ✅ RESOLVED
-**Problem**: Jobs stuck at startup with 0 wall clock time on worker nodes
-**Root Cause**: Binary incompatibility between compilation environment (el8) and execution environment (el9)
-**Solution**: 
-- Automatic OS detection in compile script
-- Default el8 worker node targeting to match compilation environment
-- Simplified batch environment setup removing unnecessary CMSSW dependencies
-
-#### 3. Complex CMSSW Environment Overhead ✅ RESOLVED
-**Problem**: Batch jobs taking excessive time to start due to complex environment setup
-**Root Cause**: Unnecessary CMSSW environment initialization on worker nodes
-**Solution**:
-- Streamlined batch script using minimal ROOT-only environment
-- LCG software stack setup instead of full CMSSW reconstruction
-- Eliminated startup delays from 30+ minutes to seconds
-
-#### 4. Process ID Conflicts in Multi-Job Submissions ✅ RESOLVED
-**Problem**: Log file name conflicts when submitting multiple concurrent jobs
-**Root Cause**: Static log file naming without process identification
-**Solution**: 
-- Implemented `$(Process)` variable in HTCondor submit files
-- Unique log files for each job: `logs/${job_name}_$(Process).{out,err,log}`
-
-#### 5. Job Directory File Management ✅ RESOLVED
-**Problem**: Redundant file copies and compilation failures due to incorrect include paths
-**Root Cause**: Complex directory structure with unnecessary file duplication
-**Solution**:
-- **Eliminated scripts subdirectory**: Single photonJet.C copy in job root
-- **Dynamic GammaJet header detection**: Automatic copying of all GammaJet*.h files
-- **Include path correction**: Automatic sed replacement of include paths for job directory compilation
-- **Removed unnecessary .C files**: Only header files (.h) copied for compilation
-
-## Key Features
-
-### 1. Standalone Compilation Framework
-- **Automatic dependency detection** for ROOT and CMSSW environments
-- **Cross-platform compatibility** (el8/el9) with automatic OS detection
-- **Robust error handling** and compilation validation
-- **Worker node compilation** ensuring library compatibility
-
-### 2. Multi-Batch System Support
-- **HTCondor**: Primary system with CERN-specific settings, job flavours, OS selection
-- **LSF**: Queue-based submission with resource management  
-- **SLURM**: Partition-based execution for alternative clusters
-- **Isolated job directories** with complete dependency copying
-
-### 3. Configuration System (TEnv)
-```
-# System settings
-System 2023_PbPb
-DataType MC
-InputDir /path/to/input
-OutputDir /path/to/output
-
-# Selection criteria
-PhotonEtMin 30.0
-PhotonEtaMax 1.44
-JetPtMin 20.0
-JetEtaMax 2.0
-
-# Analysis parameters
-MaxEvents 1000000
-VerboseLevel INFO
-```
-
-### 4. Dynamic Branch Management
-- **Automatic detection** of input file structure
-- **System-specific branch handling** for different data periods
-- **Conditional MC truth handling** for Data/MC differences
-- **Runtime branch validation** without recompilation
-
-### 5. Production Monitoring Tools
-- **Real-time job status monitoring** with `monitor_jobs.sh`
-- **Log analysis and error detection** capabilities
-- **Large-scale submission management** with `submit_production.sh`
-- **Comprehensive error reporting** and debugging support
-
-### 6. Output Organization
-```
-output/
-├── 2023_PbPb/
-│   ├── Data/
-│   │   ├── plots/      # PNG/PDF files
-│   │   └── root/       # Histograms & trees
-│   └── MC/
-│       ├── plots/
-│       └── root/
-└── 2024_PbPb/
-    ├── Data/
-    └── MC/
-```
-
-## Quick Start Guide
-
-### Local Compilation and Execution
-```bash
-# Compile and run locally with test data
-./compile.sh --mode local --test 1000
-
-# Run with specific configuration
-./compile.sh --mode local --config ../configs/JetSub_2023_PbPb_MC.config --test 5000
-
-# Production run (all events)
-./compile.sh --mode local --production --config ../configs/JetSub_2023_PbPb_MC.config
-```
-
-### Batch Job Submission
-```bash
-# Submit test job to HTCondor
-./compile.sh --mode batch --test 1000 --config ../configs/JetSub_2023_PbPb_MC.config
-
-# Submit production job with specific OS
-./compile.sh --mode batch --production --os-version el8 --config ../configs/JetSub_2023_PbPb_MC.config
-
-# Submit to LSF queue
-./compile.sh --mode batch --batch-system lsf --queue 8nh --test 5000
-```
-
-### Job Monitoring
-```bash
-# Check job status
-condor_q
-
-# Monitor specific job continuously  
-./monitor_jobs.sh -c 5385693
-
-# Analyze job logs for errors
-./monitor_jobs.sh -l 5385693
-
-# Overview of all your jobs
-./monitor_jobs.sh -a
-```
-
-### Large-Scale Production
-```bash
-# Submit multiple jobs with file splitting
-./submit_production.sh -n 1000 -j 50 ../configs/JetSub_2023_PbPb_MC.config
-
-# Split large datasets across jobs
-./submit_production.sh -s --max-files 5 ../configs/JetSub_2023_PbPb_MC.config
-```
-
-## 🛠️ Development Tools
-
-### Monitoring and Debugging
-```bash
-# Real-time job monitoring
-./monitor_jobs.sh -c 5385719
-
-# Log analysis for troubleshooting  
-./monitor_jobs.sh -l 5385719
-
-# Batch job status overview
-./monitor_jobs.sh -a
-```
-
-### Large-Scale Production Tools
-```bash
-# Submit multiple configurations with automatic scaling
-./submit_production.sh -n 1000 -j 50 config1.config config2.config
-
-# File-based job splitting for massive datasets
-./submit_production.sh -s --max-files 5 config.config
-
-# Dry run testing for validation
-./submit_production.sh -d config.config
-```
-
-## 🔧 System Reliability
-
-### Error Handling and Recovery
-- **Automatic dependency detection** with fallback mechanisms
-- **Dry-run testing capabilities** for safe deployment validation
-- **Comprehensive logging infrastructure** with multiple verbosity levels
-- **Job monitoring and resubmission** capabilities for failed jobs
-- **Cross-platform compatibility** verified across el8/el9 systems
-
-### Quality Assurance
-- **Local pre-compilation validation** before batch submission
-- **Isolated job environments** preventing dependency conflicts
-- **Automatic include path correction** for different directory structures
-- **Dynamic header management** ensuring all required files are present
-- **Process ID separation** preventing log file conflicts in concurrent jobs
-
-## 🎯 Recent Achievements (May 24, 2025)
-
-### DELIVERABLES COMPLETED
-✅ Fully functional photon-tagged jet analysis executable  
-✅ Complete batch processing system with multi-platform support
-✅ Robust configuration management and parameter loading
-✅ Production-ready monitoring and debugging tools
-✅ Comprehensive documentation and user guides
-✅ Validated local and batch execution workflows
-✅ Optimized file management and compilation workflow
-
-### BUGS RESOLVED
-✅ Binary compatibility issues between compilation and execution environments
-✅ Batch job environment setup complexity causing startup delays  
-✅ Process ID conflicts in concurrent job submissions
-✅ Script generation logic errors affecting job execution
-✅ File transfer and dependency management in isolated job directories
-✅ Library dependency issues resolved with local pre-compilation
-✅ Include path errors fixed with automatic path correction
-✅ Redundant file copying eliminated with optimized directory structure
-
-### SYSTEM RELIABILITY IMPROVEMENTS
-✅ Error handling and recovery mechanisms implemented
-✅ Dry-run testing capabilities for safe deployment
-✅ Comprehensive logging and monitoring infrastructure
-✅ Cross-platform compatibility verified (el8/el9) with automatic OS detection
-✅ Production-scale testing completed successfully
-✅ Local pre-compilation workflow ensuring 100% success rate
-
-## 🏆 Development Achievement Summary
-
-### Deliverables Completed
-✅ **Fully functional photon-tagged jet analysis executable** with standalone compilation  
-✅ **Complete batch processing system** with multi-platform support (HTCondor, LSF, SLURM)
-✅ **Robust configuration management** using TEnv-based parameter loading
-✅ **Production-ready monitoring and debugging tools** for large-scale processing
-✅ **Comprehensive documentation** and user guides
-✅ **Validated local and batch execution workflows** with cross-platform compatibility
-
-### Critical Bugs Resolved
-✅ **Binary compatibility issues** between compilation and execution environments
-✅ **Batch job environment setup complexity** causing startup delays (30+ min → seconds)  
-✅ **Process ID conflicts** in concurrent job submissions with unique log file naming
-✅ **Script generation logic errors** affecting job execution and file transfers
-✅ **File transfer and dependency management** in isolated job directories
-✅ **Duplicate compilation issue** - fixed batch mode to compile only in job directory
-
-### System Reliability Achievements
-✅ **Error handling and recovery mechanisms** implemented throughout the workflow
-✅ **Dry-run testing capabilities** for safe deployment and debugging
-✅ **Comprehensive logging and monitoring infrastructure** with detailed progress tracking
-✅ **Cross-platform compatibility verified** (el8/el9) with automatic OS detection
-✅ **Production-scale testing completed successfully** with large-scale batch submissions
-
----
-
-## 🎉 **CRITICAL BREAKTHROUGH ACHIEVED** (May 24, 2025)
-
-### **✅ PHASE A COMPLETION - BUG FIXED**
-
-**🚨 MAJOR SUCCESS**: Critical configuration parsing bug **COMPLETELY RESOLVED!**
-
-#### **Bug Resolution Summary**
-- **Issue**: Regex pattern `([^]]+)` malformed in `parseSectionHeader()` method
-- **Root Cause**: Character class `[^]` not properly escaped - should be `[^\]]+`
-- **Fix Applied**: Updated regex to `R"(\[([^.]+)\.([^\]]+)\])"`
-- **Result**: **79 branches successfully loaded across 11 sections**
-
-#### **Current System Status**
-```
-🎯 PHASE A: ✅ 100% COMPLETE - PRODUCTION READY
-
-Branch Loading Performance:
-├── Total sections detected: 11 ✅
-├── Total branches loaded: 79 ✅
-├── Categories working: 4 (Event, Photon, Jet, Electron) ✅
-├── Integration tests: 3/3 passing ✅
-└── Build system: Clean compilation ✅
-
-Framework Readiness:
-├── BranchManager: Fully operational with real data ✅
-├── DataFrameAnalyzer: Complete integration validated ✅
-├── Configuration system: 47-line config file processing ✅
-├── Test suite: All tests passing with actual branch loading ✅
-└── Production compatibility: Ready for immediate deployment ✅
-```
+### Are Histograms Defined Dynamically?
+Yes. All histograms listed in the plotting config are created dynamically. You do not need to hardcode them in C++.
+
+### Advanced Options
+- You can control which plots are enabled/disabled using `EnabledPlots.*` keys in the config.
+- Overlay, ratio, and event-level plots are also controlled via config.
+- Centrality binning, color schemes, and output formats are all configurable.
+
+### TODOs (as of May 25, 2025)
+- [ ] Document advanced overlay and ratio plot configuration
+- [ ] Add more usage examples for profile and 2D histograms
+- [ ] Expand documentation for batch plotting and post-processing scripts
 
 ## Troubleshooting and Support
 

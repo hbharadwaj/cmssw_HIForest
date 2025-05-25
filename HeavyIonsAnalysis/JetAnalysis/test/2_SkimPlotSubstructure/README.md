@@ -88,3 +88,44 @@ See the [Implementation Plan](DOCUMENTATION.md) for upcoming development tasks:
 2. Add jet quality criteria
 3. Implement validation framework
 4. Set up production system for full dataset processing
+
+## Plotting Implementation
+
+The plotting system in `gammaJetAnalyzer` is fully dynamic and driven by the plotting configuration file (e.g., `configs/PlotJetSub_2023_PbPb_MC.config` or `configs/PlotJetSub_2023_PbPb_Data.config`). All 1D, 2D, and profile histograms are defined in the config and created automatically by the analyzer. To add or modify plots, simply update the config file—no C++ code changes are needed.
+
+**How to add a new histogram:**
+1. Add a new block to your config, for example:
+   ```
+   Histogram.NewVar.Name: hNewVar
+   Histogram.NewVar.Title: My New Variable;X axis;Entries
+   Histogram.NewVar.Bins: 50
+   Histogram.NewVar.XMin: 0
+   Histogram.NewVar.XMax: 100
+   Histogram.NewVar.PlotType: 1D
+   ```
+2. Fill this histogram in your event loop by name (e.g., `hNewVar`).
+3. The code will automatically create and write this histogram to the output.
+
+**Are histograms defined dynamically?**
+Yes. All histograms listed in the plotting config are created dynamically. You do not need to hardcode them in C++.
+
+**Example: Adding a 2D histogram**
+In your config:
+```
+Histogram.PhotonEtVsJetPt.Name: h2PhotonEtVsJetPt
+Histogram.PhotonEtVsJetPt.Title: Photon E_{T} vs Jet p_{T};E_{T}^{#gamma};p_{T}^{jet}
+Histogram.PhotonEtVsJetPt.XBins: 50
+Histogram.PhotonEtVsJetPt.XMin: 0
+Histogram.PhotonEtVsJetPt.XMax: 400
+Histogram.PhotonEtVsJetPt.YBins: 50
+Histogram.PhotonEtVsJetPt.YMin: 0
+Histogram.PhotonEtVsJetPt.YMax: 200
+Histogram.PhotonEtVsJetPt.PlotType: 2D
+```
+In your event loop, fill it by name:
+```cpp
+TH2F* h2PhotonEtVsJetPt = (TH2F*)gDirectory->Get("h2PhotonEtVsJetPt");
+if (h2PhotonEtVsJetPt) h2PhotonEtVsJetPt->Fill(photonEt, jetPt);
+```
+
+See the documentation for more details and advanced options.
