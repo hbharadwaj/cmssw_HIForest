@@ -19,6 +19,7 @@
 #include <regex>
 #include <cstring> // For std::memset
 #include <algorithm>
+#include "helpers.h" // Include for logging system
 
 class JetCollectionManager {
 public:
@@ -39,7 +40,10 @@ public:
     {
         if (fConfig) {
             fVerbosity = fConfig->GetValue("Verbosity", 0);
+            // Update global verbosity level for logging
+            g_verbosity = fVerbosity;
         }
+        log(LOG_DEBUG, "JetCollectionManager constructed with verbosity level: " + std::to_string(fVerbosity));
     }
     
     /**
@@ -49,20 +53,18 @@ public:
     bool initialize()
     {
         if (!fConfig || !fTree) {
-            std::cerr << "Error: Configuration or Tree not initialized." << std::endl;
+            log(LOG_ERROR, "Configuration or Tree not initialized.");
             return false;
         }
         
         // Get analysis cases from config
         std::string analysisCases = fConfig->GetValue("AnalysisCases", "");
         if (analysisCases.empty()) {
-            std::cerr << "Error: No AnalysisCases defined in configuration." << std::endl;
+            log(LOG_ERROR, "No AnalysisCases defined in configuration.");
             return false;
         }
         
-        if (fVerbosity > 0) {
-            std::cout << "Initializing jet collections: " << analysisCases << std::endl;
-        }
+        log(LOG_INFO, "Initializing jet collections: " + analysisCases);
         
         // Split comma-separated list of jet collections
         std::stringstream ss(analysisCases);
@@ -77,27 +79,25 @@ public:
             // Parse collection name to validate format
             int radius, zCut;
             if (!parseCollection(collection, radius, zCut)) {
-                std::cerr << "Warning: Invalid collection format: " << collection << ". Skipping." << std::endl;
+                log(LOG_ERROR, "Invalid collection format: " + collection + ". Skipping.");
                 continue;
             }
             
             // Store collection and setup branch addresses directly
             fCollections.push_back(collection);
             if (!setupBranchAddresses(collection)) {
-                std::cerr << "Warning: Failed to setup branches for collection: " << collection << std::endl;
+                log(LOG_ERROR, "Failed to setup branches for collection: " + collection);
             }
         }
         
         if (fCollections.empty()) {
-            std::cerr << "Error: No valid jet collections initialized." << std::endl;
+            log(LOG_ERROR, "No valid jet collections initialized.");
             return false;
         }
         
-        if (fVerbosity > 0) {
-            std::cout << "Initialized " << fCollections.size() << " jet collections:" << std::endl;
-            for (const auto& coll : fCollections) {
-                std::cout << " - " << coll << std::endl;
-            }
+        log(LOG_INFO, "Initialized " + std::to_string(fCollections.size()) + " jet collections:");
+        for (const auto& coll : fCollections) {
+            log(LOG_INFO, " - " + coll);
         }
         
         return true;
@@ -205,21 +205,21 @@ public:
      */
     void printBranchMappings(bool verbose = false) const
     {
-        std::cout << "=== Jet Collection Branch Mappings ===" << std::endl;
+        log(LOG_INFO, "=== Jet Collection Branch Mappings ===");
         for (const auto& collection : fCollections) {
-            std::cout << "Collection: " << collection << std::endl;
+            log(LOG_INFO, "Collection: " + collection);
             
             if (verbose) {
                 const auto& branches = fJetBranches.at(collection);
-                std::cout << "  Current nJets: " << branches.nJets << std::endl;
+                log(LOG_DEBUG, "  Current nJets: " + std::to_string(branches.nJets));
                 if (branches.nJets > 0) {
-                    std::cout << "  First jet pt: " << branches.pt[0] << std::endl;
-                    std::cout << "  First jet eta: " << branches.eta[0] << std::endl;
-                    std::cout << "  First jet phi: " << branches.phi[0] << std::endl;
+                    log(LOG_DEBUG, "  First jet pt: " + std::to_string(branches.pt[0]));
+                    log(LOG_DEBUG, "  First jet eta: " + std::to_string(branches.eta[0]));
+                    log(LOG_DEBUG, "  First jet phi: " + std::to_string(branches.phi[0]));
                 }
             }
         }
-        std::cout << "=====================================" << std::endl;
+        log(LOG_INFO, "=====================================");
     }
 
 private:
@@ -287,15 +287,13 @@ private:
             
             if (fTree->GetBranch(branchName.c_str())) {
                 fTree->SetBranchAddress(branchName.c_str(), branchDef.ptr);
-                if (fVerbosity > 1) {
-                    std::cout << "  Connected branch: " << branchName << " (" << branchDef.type << ")" << std::endl;
-                }
+                log(LOG_TRACE, "  Connected branch: " + branchName + " (" + branchDef.type + ")");
             } else {
                 if (branchDef.required) {
-                    std::cerr << "Warning: Required branch '" << branchName << "' not found." << std::endl;
+                    log(LOG_ERROR, "Required branch '" + branchName + "' not found.");
                     success = false;
-                } else if (fVerbosity > 0) {
-                    std::cerr << "Info: Optional branch '" << branchName << "' not found." << std::endl;
+                } else {
+                    log(LOG_DEBUG, "Optional branch '" + branchName + "' not found.");
                 }
             }
         }

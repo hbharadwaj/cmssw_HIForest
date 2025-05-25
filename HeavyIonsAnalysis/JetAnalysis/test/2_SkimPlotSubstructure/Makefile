@@ -14,7 +14,7 @@ ROOTLIBS = $(shell root-config --libs)
 INCLUDES = -I. -I$(ROOTSYS)/include
 
 # Target executables
-TARGETS = test_BranchManager test_DataFrameAnalyzer_simple test_DataFrameAnalyzer gammaJetAnalyzer
+TARGETS = gammaJetAnalyzer
 
 # Source files
 SOURCES = include/BranchManager.cpp include/DataFrameAnalyzer.cpp
@@ -25,17 +25,17 @@ GAMMA_JET_HEADERS = include/JetCollectionManager.h
 # Default target
 all: $(TARGETS)
 
-# Test executable
-test_BranchManager: test_BranchManager.cpp $(SOURCES) $(HEADERS)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) $(ROOTCFLAGS) -o $@ test_BranchManager.cpp include/BranchManager.cpp $(ROOTLIBS)
+# # Test executable
+# test_BranchManager: test_BranchManager.cpp $(SOURCES) $(HEADERS)
+# 	$(CXX) $(CXXFLAGS) $(INCLUDES) $(ROOTCFLAGS) -o $@ test_BranchManager.cpp include/BranchManager.cpp $(ROOTLIBS)
 
-# Simple DataFrameAnalyzer test executable  
-test_DataFrameAnalyzer_simple: test_DataFrameAnalyzer_simple.cpp $(SOURCES) $(HEADERS)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) $(ROOTCFLAGS) -o $@ test_DataFrameAnalyzer_simple.cpp include/BranchManager.cpp $(ROOTLIBS)
+# # Simple DataFrameAnalyzer test executable  
+# test_DataFrameAnalyzer_simple: test_DataFrameAnalyzer_simple.cpp $(SOURCES) $(HEADERS)
+# 	$(CXX) $(CXXFLAGS) $(INCLUDES) $(ROOTCFLAGS) -o $@ test_DataFrameAnalyzer_simple.cpp include/BranchManager.cpp $(ROOTLIBS)
 
-# Full DataFrameAnalyzer test executable
-test_DataFrameAnalyzer: test_DataFrameAnalyzer.cpp $(SOURCES) $(HEADERS)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) $(ROOTCFLAGS) -o $@ test_DataFrameAnalyzer.cpp $(SOURCES) $(ROOTLIBS)
+# # Full DataFrameAnalyzer test executable
+# test_DataFrameAnalyzer: test_DataFrameAnalyzer.cpp $(SOURCES) $(HEADERS)
+# 	$(CXX) $(CXXFLAGS) $(INCLUDES) $(ROOTCFLAGS) -o $@ test_DataFrameAnalyzer.cpp $(SOURCES) $(ROOTLIBS)
 
 # Gamma Jet Analyzer executable (standalone C++ executable)
 gammaJetAnalyzer: gammaJetAnalyzer.cpp $(GAMMA_JET_SOURCES) $(GAMMA_JET_HEADERS)

@@ -25,6 +25,8 @@
 #include <set>
 #include <sstream>
 #include <algorithm>
+#include <stdexcept>
+#include <cstring>  // Add this for std::memcpy
 
 // Logging system
 enum LogLevel { LOG_ERROR = 0, LOG_INFO = 1, LOG_DEBUG = 2, LOG_TRACE = 3 };
@@ -160,6 +162,17 @@ struct Config {
 // Header generation function declarations (after Config is defined)
 std::vector<ClassMember> parseHeaderFile(const std::string& headerPath, const std::string& className);
 void generatePhotonJetHeader(const Config& cfg);
+
+// Helper functions for header generation
+std::pair<std::string, std::string> generateStructureContent(const Config& cfg, const std::string& className, 
+                                   const std::vector<ClassMember>& photonVecMembers,
+                                   const std::vector<ClassMember>& photonIntMembers,
+                                   const std::vector<ClassMember>& jetArrayMembers);
+void updateExistingHeader(std::ofstream& headerFile, const std::string& existingContent,
+                         const Config& cfg, const std::string& className, 
+                         const std::string& typeAliases, const std::string& structContent);
+void createNewHeader(std::ofstream& headerFile, const Config& cfg, const std::string& className,
+                    const std::string& typeAliases, const std::string& structContent);
 
 struct HistConfig {
     std::string title;
@@ -518,239 +531,142 @@ void generatePhotonJetHeader(const Config& cfg) {
         return;
     }
     
-    // Determine which header file to parse based on config
+    // Determine class name and header path based on config
     std::string className, headerPath;
     
     if (cfg.system.find("2023_PbPb") != std::string::npos) {
         if (cfg.dataType == "MC") {
             className = "GammaJet2023_PbPbMC";
-            // Try multiple possible paths for the header file
-            std::vector<std::string> possiblePaths = {
-                "./include/GammaJet2023_PbPbMC.h",
-                "../include/GammaJet2023_PbPbMC.h",
-                "include/GammaJet2023_PbPbMC.h",
-                "/afs/cern.ch/user/b/bharikri/private/HeavyIon/run3_gamma_jet/CMSSW_13_2_13/src/HeavyIonsAnalysis/JetAnalysis/test/2_SkimPlotSubstructure/include/GammaJet2023_PbPbMC.h"
-            };
-            
-            for (const auto& path : possiblePaths) {
-                std::ifstream testFile(path);
-                if (testFile.good()) {
-                    headerPath = path;
-                    break;
-                }
-            }
         } else {
             className = "GammaJet2023_PbPbData";
-            // Try multiple possible paths for the header file
-            std::vector<std::string> possiblePaths = {
-                "./include/GammaJet2023_PbPbData.h",
-                "../include/GammaJet2023_PbPbData.h", 
-                "include/GammaJet2023_PbPbData.h",
-                "/afs/cern.ch/user/b/bharikri/private/HeavyIon/run3_gamma_jet/CMSSW_13_2_13/src/HeavyIonsAnalysis/JetAnalysis/test/2_SkimPlotSubstructure/include/GammaJet2023_PbPbData.h"
-            };
-            
-            for (const auto& path : possiblePaths) {
-                std::ifstream testFile(path);
-                if (testFile.good()) {
-                    headerPath = path;
-                    break;
-                }
+        }
+        
+        // Try multiple possible paths for the header file
+        std::vector<std::string> possiblePaths = {
+            "./include/" + className + ".h",
+            "../include/" + className + ".h",
+            "include/" + className + ".h",
+            "/afs/cern.ch/user/b/bharikri/private/HeavyIon/run3_gamma_jet/CMSSW_13_2_13/src/HeavyIonsAnalysis/JetAnalysis/test/2_SkimPlotSubstructure/include/" + className + ".h"
+        };
+        
+        for (const auto& path : possiblePaths) {
+            std::ifstream testFile(path);
+            if (testFile.good()) {
+                headerPath = path;
+                break;
+            }
+        }
+    } else if (cfg.system.find("2024_ppRef") != std::string::npos) {
+        // Example of adding support for a new collision system
+        if (cfg.dataType == "MC") {
+            className = "GammaJet2024_ppRefMC";
+        } else {
+            className = "GammaJet2024_ppRefData";
+        }
+        
+        // Try multiple possible paths for the header file
+        std::vector<std::string> possiblePaths = {
+            "./include/" + className + ".h",
+            "../include/" + className + ".h",
+            "include/" + className + ".h",
+            "/afs/cern.ch/user/b/bharikri/private/HeavyIon/run3_gamma_jet/CMSSW_13_2_13/src/HeavyIonsAnalysis/JetAnalysis/test/2_SkimPlotSubstructure/include/" + className + ".h"
+        };
+        
+        for (const auto& path : possiblePaths) {
+            std::ifstream testFile(path);
+            if (testFile.good()) {
+                headerPath = path;
+                break;
             }
         }
     } else {
-        std::cerr << "Unsupported system: " << cfg.system << std::endl;
-        return;
+        std::string errorMsg = "Unsupported system: " + cfg.system;
+        std::cerr << errorMsg << std::endl;
+        throw std::runtime_error(errorMsg);
     }
     
     if (headerPath.empty()) {
-        std::cerr << "Could not find header file for " << className << std::endl;
-        return;
+        std::string errorMsg = "Could not find header file for " + className;
+        std::cerr << errorMsg << std::endl;
+        throw std::runtime_error(errorMsg);
     }
     
     // Parse the header file
     std::vector<ClassMember> members = parseHeaderFile(headerPath, className);
     
     if (members.empty()) {
-        std::cerr << "No members found in header file: " << headerPath << std::endl;
-        return;
+        std::string errorMsg = "No members found in header file: " + headerPath;
+        std::cerr << errorMsg << std::endl;
+        throw std::runtime_error(errorMsg);
     }
     
-    // Categorize members
+    // Categorize members by data type only, not by name
     std::vector<ClassMember> photonVecMembers, photonIntMembers, jetArrayMembers;
     std::set<std::string> jetCollections;
     
     for (const auto& member : members) {
-        if (member.name.find("ggHi_pho") != std::string::npos) {
-            if (member.type.find("ROOT::VecOps::RVec<float>*") != std::string::npos) {
-                photonVecMembers.push_back(member);
-            } else if (member.type.find("ROOT::VecOps::RVec<int>*") != std::string::npos) {
-                photonVecMembers.push_back(member);
-            }
-        } else if (member.name == "ggHi_nPho") {
+        if (member.type.find("ROOT::VecOps::RVec<float>*") != std::string::npos) {
+            photonVecMembers.push_back(member);
+        } else if (member.type.find("ROOT::VecOps::RVec<int>*") != std::string::npos) {
+            photonVecMembers.push_back(member);
+        } else if ((member.type == "int" || member.type == "unsigned int" || 
+                   member.type == "unsigned long long") && !member.isArray) {
             photonIntMembers.push_back(member);
-        } else if (member.isArray && member.name.find("_jt") != std::string::npos) {
-            // Extract jet collection prefix (e.g., AK2Z1, AK3Z2, etc.)
+        } else if (member.isArray) {
+            // Extract jet collection prefix if it exists
             size_t underscorePos = member.name.find("_");
             if (underscorePos != std::string::npos) {
                 std::string prefix = member.name.substr(0, underscorePos);
                 jetCollections.insert(prefix);
-                jetArrayMembers.push_back(member);
             }
+            jetArrayMembers.push_back(member);
         }
     }
     
-    // Generate the header file
+    // Check if photonJet.h already exists and read existing content
     std::string outputHeaderPath = "../include/photonJet.h";
+    std::string existingContent;
+    bool headerExists = false;
+    
+    std::ifstream existingFile(outputHeaderPath);
+    if (existingFile.is_open()) {
+        headerExists = true;
+        std::string line;
+        while (std::getline(existingFile, line)) {
+            existingContent += line + "\n";
+        }
+        existingFile.close();
+    }
+    
+    // Generate new structure content
+    // Create system-specific struct name by replacing non-alphanumeric chars with underscores
+    std::string systemSuffix = cfg.system;
+    std::replace(systemSuffix.begin(), systemSuffix.end(), '-', '_');
+    std::replace(systemSuffix.begin(), systemSuffix.end(), ' ', '_');
+    
+    // Include both system and data type in the structure name
+    std::string structName = "PhotonJetMemberMaps_" + systemSuffix + "_" + cfg.dataType;
+    auto [typeAliases, structContent] = generateStructureContent(cfg, className, photonVecMembers, photonIntMembers, jetArrayMembers);
+    
+    // Write the header file
     std::ofstream headerFile(outputHeaderPath);
-    
     if (!headerFile.is_open()) {
-        std::cerr << "Error: Could not open " << outputHeaderPath << " for writing" << std::endl;
-        return;
+        std::string errorMsg = "Error: Could not open " + outputHeaderPath + " for writing";
+        std::cerr << errorMsg << std::endl;
+        throw std::runtime_error(errorMsg);
     }
     
-    headerFile << "// This file is auto-generated based on the config and system." << std::endl;
-    headerFile << "// It provides maps from variable names to pointer-to-member for dynamic access in photonJet.C" << std::endl;
-    headerFile << "#pragma once" << std::endl;
-    headerFile << "#include \"" << className << ".h\"" << std::endl;
-    
-    if (cfg.dataType == "MC") {
-        headerFile << "#include \"GammaJet2023_PbPbData.h\"" << std::endl;
+    if (headerExists) {
+        // Parse existing content and update/add the specific structure
+        updateExistingHeader(headerFile, existingContent, cfg, className, typeAliases, structContent);
     } else {
-        headerFile << "#include \"GammaJet2023_PbPbMC.h\"" << std::endl;
+        // Create new header from scratch
+        createNewHeader(headerFile, cfg, className, typeAliases, structContent);
     }
-    
-    headerFile << "#include <map>" << std::endl;
-    headerFile << "#include <string>" << std::endl;
-    headerFile << "#include <vector>" << std::endl;
-    headerFile << std::endl;
-    
-    // Generate type aliases
-    if (cfg.dataType == "MC") {
-        headerFile << "// Type aliases for pointer-to-member types" << std::endl;
-        headerFile << "using PhotonVecPtrMC = ROOT::VecOps::RVec<float>* " << className << "::*;" << std::endl;
-        headerFile << "using PhotonVecIntPtrMC = ROOT::VecOps::RVec<int>* " << className << "::*;" << std::endl;
-        headerFile << "using PhotonIntPtrMC = int " << className << "::*;" << std::endl;
-        
-        // Determine max array size for jet arrays
-        int maxArraySize = 0;
-        for (const auto& member : jetArrayMembers) {
-            if (member.arraySize > maxArraySize) {
-                maxArraySize = member.arraySize;
-            }
-        }
-        headerFile << "using JetArrPtrMC = float (" << className << "::*)[" << maxArraySize << "];" << std::endl;
-        headerFile << "using JetIntArrPtrMC = int (" << className << "::*)[" << maxArraySize << "];" << std::endl;
-        headerFile << std::endl;
-        
-        // Generate MC struct
-        headerFile << "// For MC analyzer" << std::endl;
-        headerFile << "struct PhotonJetMemberMapsMC {" << std::endl;
-        headerFile << "    std::map<std::string, PhotonVecPtrMC> photonVecMap;" << std::endl;
-        headerFile << "    std::map<std::string, PhotonVecIntPtrMC> photonVecIntMap;" << std::endl;
-        headerFile << "    std::map<std::string, PhotonIntPtrMC> photonIntMap;" << std::endl;
-        headerFile << "    std::map<std::string, JetArrPtrMC> jetArrMapMC;" << std::endl;
-        headerFile << "    std::map<std::string, JetIntArrPtrMC> jetIntArrMapMC;" << std::endl;
-        headerFile << "    " << std::endl;
-        headerFile << "    PhotonJetMemberMapsMC() {" << std::endl;
-        
-        // Add photon vector variables
-        headerFile << "        // Initialize photon vector variables" << std::endl;
-        for (const auto& member : photonVecMembers) {
-            if (member.type.find("float") != std::string::npos) {
-                headerFile << "        photonVecMap[\"" << member.name << "\"] = &" << className << "::" << member.name << ";" << std::endl;
-            } else if (member.type.find("int") != std::string::npos) {
-                headerFile << "        photonVecIntMap[\"" << member.name << "\"] = &" << className << "::" << member.name << ";" << std::endl;
-            }
-        }
-        
-        // Add photon integer variables
-        headerFile << "        " << std::endl;
-        headerFile << "        // Initialize photon integer variables" << std::endl;
-        for (const auto& member : photonIntMembers) {
-            headerFile << "        photonIntMap[\"" << member.name << "\"] = &" << className << "::" << member.name << ";" << std::endl;
-        }
-        
-        // Add jet array variables
-        headerFile << "        " << std::endl;
-        headerFile << "        // Initialize jet array variables" << std::endl;
-        for (const auto& member : jetArrayMembers) {
-            if (member.type == "float") {
-                headerFile << "        jetArrMapMC[\"" << member.name << "\"] = &" << className << "::" << member.name << ";" << std::endl;
-            } else if (member.type == "int") {
-                headerFile << "        jetIntArrMapMC[\"" << member.name << "\"] = &" << className << "::" << member.name << ";" << std::endl;
-            }
-        }
-        
-        headerFile << "    }" << std::endl;
-        headerFile << "};" << std::endl;
-        
-    } else {
-        // Generate similar for Data
-        headerFile << "// Type aliases for pointer-to-member types" << std::endl;
-        headerFile << "using PhotonVecPtrData = ROOT::VecOps::RVec<float>* " << className << "::*;" << std::endl;
-        headerFile << "using PhotonVecIntPtrData = ROOT::VecOps::RVec<int>* " << className << "::*;" << std::endl;
-        headerFile << "using PhotonIntPtrData = int " << className << "::*;" << std::endl;
-        
-        // Determine max array size for jet arrays
-        int maxArraySize = 0;
-        for (const auto& member : jetArrayMembers) {
-            if (member.arraySize > maxArraySize) {
-                maxArraySize = member.arraySize;
-            }
-        }
-        headerFile << "using JetArrPtrData = float (" << className << "::*)[" << maxArraySize << "];" << std::endl;
-        headerFile << "using JetIntArrPtrData = int (" << className << "::*)[" << maxArraySize << "];" << std::endl;
-        headerFile << std::endl;
-        
-        // Generate Data struct
-        headerFile << "// For Data analyzer" << std::endl;
-        headerFile << "struct PhotonJetMemberMapsData {" << std::endl;
-        headerFile << "    std::map<std::string, PhotonVecPtrData> photonVecMap;" << std::endl;
-        headerFile << "    std::map<std::string, PhotonVecIntPtrData> photonVecIntMap;" << std::endl;
-        headerFile << "    std::map<std::string, PhotonIntPtrData> photonIntMap;" << std::endl;
-        headerFile << "    std::map<std::string, JetArrPtrData> jetArrMapData;" << std::endl;
-        headerFile << "    std::map<std::string, JetIntArrPtrData> jetIntArrMapData;" << std::endl;
-        headerFile << "    " << std::endl;
-        headerFile << "    PhotonJetMemberMapsData() {" << std::endl;
-        
-        // Add photon vector variables
-        headerFile << "        // Initialize photon vector variables" << std::endl;
-        for (const auto& member : photonVecMembers) {
-            if (member.type.find("float") != std::string::npos) {
-                headerFile << "        photonVecMap[\"" << member.name << "\"] = &" << className << "::" << member.name << ";" << std::endl;
-            } else if (member.type.find("int") != std::string::npos) {
-                headerFile << "        photonVecIntMap[\"" << member.name << "\"] = &" << className << "::" << member.name << ";" << std::endl;
-            }
-        }
-        
-        // Add photon integer variables
-        headerFile << "        " << std::endl;
-        headerFile << "        // Initialize photon integer variables" << std::endl;
-        for (const auto& member : photonIntMembers) {
-            headerFile << "        photonIntMap[\"" << member.name << "\"] = &" << className << "::" << member.name << ";" << std::endl;
-        }
-        
-        // Add jet array variables
-        headerFile << "        " << std::endl;
-        headerFile << "        // Initialize jet array variables" << std::endl;
-        for (const auto& member : jetArrayMembers) {
-            if (member.type == "float") {
-                headerFile << "        jetArrMapData[\"" << member.name << "\"] = &" << className << "::" << member.name << ";" << std::endl;
-            } else if (member.type == "int") {
-                headerFile << "        jetIntArrMapData[\"" << member.name << "\"] = &" << className << "::" << member.name << ";" << std::endl;
-            }
-        }
-        
-        headerFile << "    }" << std::endl;
-        headerFile << "};" << std::endl;
-    }
-    
-    headerFile << std::endl;
-    headerFile << "// This file should be regenerated if the config or system changes." << std::endl;
     
     headerFile.close();
     
-    std::cout << "Successfully generated photonJet.h for " << cfg.system << " " << cfg.dataType << std::endl;
+    std::cout << "Successfully updated photonJet.h for " << cfg.system << " " << cfg.dataType << std::endl;
     std::cout << "Found " << photonVecMembers.size() << " photon vector variables" << std::endl;
     std::cout << "Found " << photonIntMembers.size() << " photon integer variables" << std::endl;
     std::cout << "Found " << jetArrayMembers.size() << " jet array variables" << std::endl;
@@ -759,6 +675,265 @@ void generatePhotonJetHeader(const Config& cfg) {
         std::cout << collection << " ";
     }
     std::cout << std::endl;
+}
+
+// Helper function implementations for header generation
+// Split the structure content generation into two parts: type aliases and struct definition
+std::pair<std::string, std::string> generateStructureContent(const Config& cfg, const std::string& className, 
+                                   const std::vector<ClassMember>& photonVecMembers,
+                                   const std::vector<ClassMember>& photonIntMembers,
+                                   const std::vector<ClassMember>& jetArrayMembers) {
+    std::ostringstream typeAliases;
+    std::ostringstream structContent;
+    
+    // Create system-specific suffix by replacing non-alphanumeric chars with underscores
+    std::string systemSuffix = cfg.system;
+    std::replace(systemSuffix.begin(), systemSuffix.end(), '-', '_');
+    std::replace(systemSuffix.begin(), systemSuffix.end(), ' ', '_');
+    
+    // Combined suffix for both system and data type
+    std::string combinedSuffix = systemSuffix + "_" + cfg.dataType;
+    
+    // Generate type aliases with proper array handling
+    typeAliases << "// Type aliases for " << cfg.system << " " << cfg.dataType << " pointer-to-member types" << std::endl;
+    typeAliases << "using PhotonVecPtr_" << combinedSuffix << " = ROOT::VecOps::RVec<float>* " << className << "::*;" << std::endl;
+    typeAliases << "using PhotonVecIntPtr_" << combinedSuffix << " = ROOT::VecOps::RVec<int>* " << className << "::*;" << std::endl;
+    typeAliases << "// Using void* to safely handle all integer types (int, unsigned int, unsigned long long)" << std::endl;
+    typeAliases << "using PhotonIntPtr_" << combinedSuffix << " = void* " << className << "::*;" << std::endl;
+    
+    // Use void* for arrays to handle different array sizes safely
+    typeAliases << "// Using void* for jet arrays to handle different array sizes safely" << std::endl;
+    typeAliases << "using JetArrPtr_" << combinedSuffix << " = void* " << className << "::*;" << std::endl;
+    
+    // Generate structure with corrected map types
+    structContent << "struct PhotonJetMemberMaps_" << combinedSuffix << " {" << std::endl;
+    structContent << "    std::map<std::string, PhotonVecPtr_" << combinedSuffix << "> photonVecMap;" << std::endl;
+    structContent << "    std::map<std::string, PhotonVecIntPtr_" << combinedSuffix << "> photonVecIntMap;" << std::endl;
+    structContent << "    std::map<std::string, void*> photonIntMap; // stores pointer-to-member as void*" << std::endl;
+    structContent << "    std::map<std::string, void*> jetArrMap; // handles arrays of all sizes as void*" << std::endl;
+    structContent << "    " << std::endl;
+    
+    // Add helper methods for type-safe array access using union technique
+    structContent << "    // Helper union for safe pointer-to-member-array casting" << std::endl;
+    structContent << "    union PtrToMemberCaster {" << std::endl;
+    structContent << "        void* voidPtr;" << std::endl;
+    structContent << "        // Template constructor for arrays" << std::endl;
+    structContent << "        template<typename T, int N>" << std::endl;
+    structContent << "        PtrToMemberCaster(T (" << className << "::*ptr)[N]) {" << std::endl;
+    structContent << "            // Store the bit pattern as a void* - safe for storage only" << std::endl;
+    structContent << "            static_assert(sizeof(ptr) <= sizeof(void*), \"Pointer-to-member too large\");" << std::endl;
+    structContent << "            voidPtr = nullptr;" << std::endl;
+    structContent << "            std::memcpy(&voidPtr, &ptr, sizeof(ptr));" << std::endl;
+    structContent << "        }" << std::endl;
+    structContent << "    };" << std::endl;
+    structContent << "    " << std::endl;
+    
+    // Add helper methods for type-safe array access
+    structContent << "    // Helper methods for type-safe array access" << std::endl;
+    structContent << "    template<typename T, int N>" << std::endl;
+    structContent << "    bool setArrayPtr(const std::string& name, T (" << className << "::*ptr)[N]) {" << std::endl;
+    structContent << "        PtrToMemberCaster caster(ptr);" << std::endl;
+    structContent << "        jetArrMap[name] = caster.voidPtr;" << std::endl;
+    structContent << "        return true;" << std::endl;
+    structContent << "    }" << std::endl;
+    structContent << "    " << std::endl;
+    
+    structContent << "    PhotonJetMemberMaps_" << combinedSuffix << "() {" << std::endl;
+    
+    // Add photon vector variables
+    structContent << "        // Initialize photon vector variables" << std::endl;
+    for (const auto& member : photonVecMembers) {
+        if (member.type.find("float") != std::string::npos) {
+            structContent << "        photonVecMap[\"" << member.name << "\"] = &" << className << "::" << member.name << ";" << std::endl;
+        } else if (member.type.find("int") != std::string::npos) {
+            structContent << "        photonVecIntMap[\"" << member.name << "\"] = &" << className << "::" << member.name << ";" << std::endl;
+        }
+    }
+    
+    // Add photon integer variables
+    structContent << "        " << std::endl;
+    structContent << "        // Initialize photon integer variables" << std::endl;
+    for (const auto& member : photonIntMembers) {
+        structContent << "        photonIntMap[\"" << member.name << "\"] = reinterpret_cast<void*>(&" << className << "::" << member.name << ");" << std::endl;
+    }
+    
+    // Add jet array variables using template helper method
+    structContent << "        " << std::endl;
+    structContent << "        // Initialize jet array variables using template helper" << std::endl;
+    for (const auto& member : jetArrayMembers) {
+        structContent << "        setArrayPtr(\"" << member.name << "\", &" << className << "::" << member.name << ");" << std::endl;
+    }
+    
+    structContent << "    }" << std::endl;
+    structContent << "};" << std::endl;
+    
+    return std::make_pair(typeAliases.str(), structContent.str());
+}
+
+void updateExistingHeader(std::ofstream& headerFile, const std::string& existingContent,
+                         const Config& cfg, const std::string& className, 
+                         const std::string& typeAliases, const std::string& structContent) {
+    // Create system-specific struct name by replacing non-alphanumeric chars with underscores
+    std::string systemSuffix = cfg.system;
+    std::replace(systemSuffix.begin(), systemSuffix.end(), '-', '_');
+    std::replace(systemSuffix.begin(), systemSuffix.end(), ' ', '_');
+    
+    // Include both system and data type in the structure name
+    std::string structName = "PhotonJetMemberMaps_" + systemSuffix + "_" + cfg.dataType;
+    
+    // Create a combined suffix for type alias check
+    std::string combinedSuffix = systemSuffix + "_" + cfg.dataType;
+    
+    // Check if type aliases already exist
+    bool hasTypeAliases = existingContent.find("using PhotonVecPtr_" + combinedSuffix) != std::string::npos;
+    
+    // Check if all necessary includes are present, specifically both MC and Data headers
+    std::string mcClassName, dataClassName;
+    if (cfg.system.find("2023_PbPb") != std::string::npos) {
+        mcClassName = "GammaJet2023_PbPbMC";
+        dataClassName = "GammaJet2023_PbPbData";
+    } else if (cfg.system.find("2024_ppRef") != std::string::npos) {
+        mcClassName = "GammaJet2024_ppRefMC";
+        dataClassName = "GammaJet2024_ppRefData";
+    } else {
+        // Use the provided className and derive the complementary one
+        if (cfg.dataType == "MC") {
+            mcClassName = className;
+            dataClassName = className.substr(0, className.size() - 2) + "Data";
+        } else {
+            dataClassName = className;
+            mcClassName = className.substr(0, className.size() - 4) + "MC";
+        }
+    }
+    
+    // Check if includes are properly present
+    bool hasMcInclude = existingContent.find("#include \"" + mcClassName + ".h\"") != std::string::npos;
+    bool hasDataInclude = existingContent.find("#include \"" + dataClassName + ".h\"") != std::string::npos;
+    
+    // Create a working copy of the content that we can modify
+    std::string workingContent = existingContent;
+    
+    // First, let's update the includes if needed
+    if (!hasMcInclude || !hasDataInclude) {
+        // We need to update the includes section
+        size_t pragmaEnd = workingContent.find("#pragma once");
+        if (pragmaEnd != std::string::npos) {
+            pragmaEnd = workingContent.find("\n", pragmaEnd) + 1; // Move to after the newline
+            
+            // Build the new includes section
+            std::string newIncludes = "";
+            if (!hasMcInclude) {
+                newIncludes += "#include \"" + mcClassName + ".h\"\n";
+            }
+            if (!hasDataInclude) {
+                newIncludes += "#include \"" + dataClassName + ".h\"\n";
+            }
+            
+            // Insert the new includes after #pragma once
+            workingContent = workingContent.substr(0, pragmaEnd) + 
+                           newIncludes + 
+                           workingContent.substr(pragmaEnd);
+        }
+    }
+    
+    // Check if the type aliases already exist
+    size_t typeAliasStart = std::string::npos;
+    if (hasTypeAliases) {
+        // Find the position of the type alias to determine where to add the struct
+        typeAliasStart = workingContent.find("using PhotonVecPtr_" + combinedSuffix);
+    }
+    
+    // Check if the structure already exists
+    size_t structStart = workingContent.find("struct " + structName);
+    
+    if (structStart != std::string::npos) {
+        // Structure exists, replace it
+        size_t structEnd = workingContent.find("};", structStart);
+        if (structEnd != std::string::npos) {
+            structEnd += 2; // Include the "};"
+            
+            // Write content before the old structure
+            headerFile << workingContent.substr(0, structStart);
+            
+            // Write just the struct content since type aliases already exist
+            headerFile << structContent << std::endl;
+            
+            // Write content after the old structure
+            headerFile << workingContent.substr(structEnd + 1);
+        } else {
+            // Couldn't find structure end, append new structure
+            headerFile << workingContent << std::endl;
+            
+            // Add type aliases only if needed
+            if (!hasTypeAliases) {
+                headerFile << typeAliases << std::endl;
+            }
+            
+            headerFile << structContent << std::endl;
+        }
+    } else {
+        // Structure doesn't exist, add it
+        size_t insertPos = workingContent.find("// This file should be regenerated");
+        if (insertPos != std::string::npos) {
+            headerFile << workingContent.substr(0, insertPos);
+            
+            // Add type aliases only if needed
+            if (!hasTypeAliases) {
+                headerFile << typeAliases << std::endl;
+            }
+            
+            headerFile << structContent << std::endl << std::endl;
+            headerFile << workingContent.substr(insertPos);
+        } else {
+            // Just append at the end
+            headerFile << workingContent << std::endl;
+            
+            // Add type aliases only if needed
+            if (!hasTypeAliases) {
+                headerFile << typeAliases << std::endl;
+            }
+            
+            headerFile << structContent << std::endl;
+        }
+    }
+}
+
+void createNewHeader(std::ofstream& headerFile, const Config& cfg, const std::string& className,
+                    const std::string& typeAliases, const std::string& structContent) {
+    headerFile << "// This file is auto-generated based on the config and system." << std::endl;
+    headerFile << "// It provides maps from variable names to pointer-to-member for dynamic access in photonJet.C" << std::endl;
+    headerFile << "#pragma once" << std::endl;
+    
+    // Always include both MC and Data headers for the current system
+    std::string mcClassName, dataClassName;
+    if (cfg.system.find("2023_PbPb") != std::string::npos) {
+        mcClassName = "GammaJet2023_PbPbMC";
+        dataClassName = "GammaJet2023_PbPbData";
+    } else if (cfg.system.find("2024_ppRef") != std::string::npos) {
+        mcClassName = "GammaJet2024_ppRefMC";
+        dataClassName = "GammaJet2024_ppRefData";
+    } else {
+        // Use the provided className and derive the complementary one
+        if (cfg.dataType == "MC") {
+            mcClassName = className;
+            dataClassName = className.substr(0, className.size() - 2) + "Data";
+        } else {
+            dataClassName = className;
+            mcClassName = className.substr(0, className.size() - 4) + "MC";
+        }
+    }
+    
+    headerFile << "#include \"" << mcClassName << ".h\"" << std::endl;
+    headerFile << "#include \"" << dataClassName << ".h\"" << std::endl;
+    headerFile << "#include <map>" << std::endl;
+    headerFile << "#include <string>" << std::endl;
+    headerFile << "#include <vector>" << std::endl;
+    headerFile << std::endl;
+    
+    headerFile << typeAliases << std::endl << std::endl;
+    headerFile << structContent << std::endl;
+    headerFile << std::endl;
+    headerFile << "// This file should be regenerated if the config or system changes." << std::endl;
 }
 
 // Global verbosity level definition

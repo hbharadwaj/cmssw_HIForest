@@ -14,6 +14,7 @@
 
 // Include headers
 #include "include/JetCollectionManager.h"
+#include "include/helpers.h"
 #include <TFile.h>
 #include <TTree.h>
 #include <TChain.h>
@@ -32,40 +33,54 @@
 #include <algorithm>
 #include <sstream>
 #include <getopt.h>
+#include <unistd.h>
+#include <cstdlib>
 
 // Forward declarations
 void printUsage();
-void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager, TFile* outFile);
+void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager, TFile* outFile, Long64_t maxEvents = -1);
 bool setupInputChain(TChain* chain, const std::string& inputDir, bool testMode, int maxFiles = 1);
 void setupOutputTree(TTree* outTree, const std::vector<std::string>& jetCollections);
-bool createOutputDirectories(const std::string& outputDir);
-void printConfig(TEnv* config);
-std::vector<float> getFloatVector(TEnv* config, const std::string& key, const std::vector<float>& defaultValues);
-std::vector<std::string> getStringVector(TEnv* config, const std::string& key, const std::vector<std::string>& defaultValues);
-void runAnalysis(const std::string& configFile, bool testMode = false, int maxEvents = -1);
-void createHistograms(TFile* outFile, const std::vector<std::string>& jetCollections, const std::vector<float>& centralityBins);
+void createHistograms(TFile* outFile, const std::vector<std::string>& jetCollections, 
+                     const std::vector<float>& centralityBins);
 float getDeltaPhi(float phi1, float phi2);
 float getXj(float jetPt, float photonPt);
+
+// Utility functions for config and directory management
+bool createOutputDirectories(const std::string& outputDir);
+void printConfig(TEnv* config);
+std::vector<float> getFloatVector(TEnv* config, const std::string& param);
+std::vector<std::string> getStringVector(TEnv* config, const std::string& param);
 
 /**
  * Main function - entry point for standalone executable
  */
 int main(int argc, char* argv[]) {
-    std::string configFile = "";
-    bool testMode = false;
-    int maxEvents = -1;
+    log(LOG_DEBUG, "=== Command Line Debug ===");
+    log(LOG_DEBUG, "argc: " + std::to_string(argc));
+    for (int i = 0; i < argc; ++i) {
+        log(LOG_DEBUG, "argv[" + std::to_string(i) + "]: " + std::string(argv[i]));
+    }
+    log(LOG_DEBUG, "=========================");
     
-    // Parse command line arguments
-    int opt;
+    std::string configFile = "../configs/JetSub_2023_PbPb_Data.config";
+    bool testMode = false;
+    int maxEvents = 1000;
+    
+    // Parse command line arguments using getopt_long
     static struct option long_options[] = {
-        {"config", required_argument, 0, 'c'},
-        {"test", optional_argument, 0, 't'},
-        {"help", no_argument, 0, 'h'},
+        {"config",     required_argument, 0, 'c'},
+        {"test",       optional_argument, 0, 't'},
+        {"production", no_argument,       0, 'p'},
+        {"help",       no_argument,       0, 'h'},
         {0, 0, 0, 0}
     };
     
-    while ((opt = getopt_long(argc, argv, "c:t::h", long_options, nullptr)) != -1) {
-        switch (opt) {
+    int option_index = 0;
+    int c;
+    
+    while ((c = getopt_long(argc, argv, "c:t::ph", long_options, &option_index)) != -1) {
+        switch (c) {
             case 'c':
                 configFile = optarg;
                 break;
@@ -74,29 +89,152 @@ int main(int argc, char* argv[]) {
                 if (optarg) {
                     maxEvents = std::atoi(optarg);
                 } else {
-                    maxEvents = 1000; // Default test events
+                    // Check if next argument is a number
+                    if (optind < argc && argv[optind][0] != '-' && std::isdigit(argv[optind][0])) {
+                        maxEvents = std::atoi(argv[optind]);
+                        optind++;
+                    }
                 }
+                break;
+            case 'p':
+                testMode = false;
                 break;
             case 'h':
                 printUsage();
                 return 0;
+            case '?':
+                // Invalid option
+                printUsage();
+                return 1;
             default:
                 printUsage();
                 return 1;
         }
     }
     
-    // Validate arguments
-    if (configFile.empty()) {
-        std::cerr << "Error: Configuration file must be specified with -c option" << std::endl;
-        printUsage();
-        return 1;
-    }
+    // Debug output
+    log(LOG_DEBUG, "Command line parsing complete:");
+    log(LOG_DEBUG, "  Config file: " + configFile);
+    log(LOG_DEBUG, "  Test mode: " + std::string(testMode ? "true" : "false"));
+    log(LOG_DEBUG, "  Max events: " + std::to_string(maxEvents));
     
-    // Run the analysis
     try {
-        runAnalysis(configFile, testMode, maxEvents);
+        // Start timer
+        TStopwatch timer;
+        timer.Start();
+        
+        // Print information
+        log(LOG_INFO, "==================================================");
+        log(LOG_INFO, "=== PhotonJet Analysis: Jet Substructure v1.0 ===");
+        log(LOG_INFO, "==================================================");
+        log(LOG_INFO, "Config file: " + configFile);
+        if (testMode) {
+            log(LOG_INFO, "Running in TEST mode with " + std::to_string(maxEvents) + " events");
+        } else {
+            log(LOG_INFO, "Running in PRODUCTION mode (all events)");
+        }
+        
+        // Load configuration
+        TEnv* config = new TEnv();
+        if (gSystem->AccessPathName(configFile.c_str())) {
+            std::cerr << "Error: Configuration file not found: " << configFile << std::endl;
+            delete config;
+            return 1;
+        }
+        
+        int readStatus = config->ReadFile(configFile.c_str(), kEnvLocal);
+        if (readStatus != 0) {
+            std::cerr << "Error: Failed to read configuration file: " << configFile << std::endl;
+            delete config;
+            return 1;
+        }
+        
+        log(LOG_INFO, "Loaded configuration from " + configFile);
+        
+        // Print configuration summary
+        printConfig(config);
+        
+        // Get basic parameters
+        std::string outputDir = config->GetValue("OutputDir", "");
+        std::string outputPrefix = config->GetValue("OutputPrefix", "output");
+        std::string inputDir = config->GetValue("InputDir", "");
+        
+        // Check essential parameters
+        if (outputDir.empty()) {
+            std::cerr << "Error: Output directory not specified in configuration" << std::endl;
+            delete config;
+            return 1;
+        }
+        
+        if (inputDir.empty()) {
+            std::cerr << "Error: Input directory not specified in configuration" << std::endl;
+            delete config;
+            return 1;
+        }
+        
+        // Create output directories
+        if (!createOutputDirectories(outputDir)) {
+            std::cerr << "Error: Failed to create output directories" << std::endl;
+            delete config;
+            return 1;
+        }
+        
+        // Setup input files
+        TChain* chain = new TChain("jet_tree");
+        if (!setupInputChain(chain, inputDir, testMode)) {
+            std::cerr << "Error: Failed to setup input chain" << std::endl;
+            delete chain;
+            delete config;
+            return 1;
+        }
+        
+        // Setup output file
+        std::string outputFile = outputDir + "/" + outputPrefix + "_output.root";
+        
+        TFile* outFile = new TFile(outputFile.c_str(), "RECREATE");
+        if (!outFile || outFile->IsZombie()) {
+            std::cerr << "Error: Failed to create output file: " << outputFile << std::endl;
+            delete outFile;
+            delete chain;
+            delete config;
+            return 1;
+        }
+        
+        // Initialize jet collection manager
+        JetCollectionManager jetManager(config, chain);
+        if (!jetManager.initialize()) {
+            std::cerr << "Error: Failed to initialize jet collections" << std::endl;
+            delete outFile;
+            delete chain;
+            delete config;
+            return 1;
+        }
+        
+        // Print jet collection information
+        jetManager.printBranchMappings();
+        
+        // Process events
+        Long64_t nEvents = testMode && maxEvents > 0 ? maxEvents : -1;
+        processEvents(chain, config, jetManager, outFile, nEvents);
+        
+        // Clean up
+        outFile->Close();
+        delete outFile;
+        delete chain;
+        delete config;
+        
+        // Print timing information
+        timer.Stop();
+        double realTime = timer.RealTime();
+        double cpuTime = timer.CpuTime();
+        
+        log(LOG_INFO, "==================================================");
+        log(LOG_INFO, "Analysis complete. Output written to: " + outputFile);
+        log(LOG_INFO, "Real time: " + std::to_string(realTime) + " seconds, CPU time: " + std::to_string(cpuTime) + " seconds");
+        log(LOG_INFO, "==================================================");
+        
         return 0;
+        
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << std::endl;
         return 1;
@@ -104,238 +242,18 @@ int main(int argc, char* argv[]) {
 }
 
 /**
- * Print usage information
- */
-void printUsage() {
-    std::cout << "Usage: gammaJetAnalyzer [OPTIONS]" << std::endl;
-    std::cout << std::endl;
-    std::cout << "Options:" << std::endl;
-    std::cout << "  -c, --config FILE     Configuration file (required)" << std::endl;
-    std::cout << "  -t, --test [N]        Test mode (optional max events, default: 1000)" << std::endl;
-    std::cout << "  -h, --help            Show this help message" << std::endl;
-    std::cout << std::endl;
-    std::cout << "Examples:" << std::endl;
-    std::cout << "  ./gammaJetAnalyzer -c ../configs/JetSub_2023_PbPb_MC.config" << std::endl;
-    std::cout << "  ./gammaJetAnalyzer -c ../configs/JetSub_2023_PbPb_MC.config -t 1000" << std::endl;
-    std::cout << "  ./gammaJetAnalyzer -c ../configs/JetSub_2023_PbPb_MC.config -t" << std::endl;
-}
-
-/**
- * Utility function to create output directories
- */
-bool createOutputDirectories(const std::string& outputDir) {
-    if (gSystem->mkdir(outputDir.c_str(), kTRUE) != 0) {
-        // Check if directory already exists
-        if (gSystem->AccessPathName(outputDir.c_str()) == 0) {
-            std::cout << "Output directory already exists: " << outputDir << std::endl;
-            return true;
-        } else {
-            std::cerr << "Failed to create output directory: " << outputDir << std::endl;
-            return false;
-        }
-    }
-    std::cout << "Created output directory: " << outputDir << std::endl;
-    return true;
-}
-
-/**
- * Utility function to print configuration parameters
- */
-void printConfig(TEnv* config) {
-    if (!config) return;
-    
-    std::cout << std::endl;
-    std::cout << "=== Configuration Parameters ===" << std::endl;
-    std::cout << "Analysis Cases: " << config->GetValue("AnalysisCases", "") << std::endl;
-    std::cout << "Input Directory: " << config->GetValue("InputDir", "") << std::endl;
-    std::cout << "Output Directory: " << config->GetValue("OutputDir", "") << std::endl;
-    std::cout << "Output Prefix: " << config->GetValue("OutputPrefix", "output") << std::endl;
-    std::cout << "IsMC: " << (config->GetValue("IsMC", 0) ? "true" : "false") << std::endl;
-    std::cout << "Verbosity: " << config->GetValue("Verbosity", 0) << std::endl;
-    std::cout << "===============================" << std::endl;
-    std::cout << std::endl;
-}
-
-/**
- * Utility function to parse float vectors from config
- */
-std::vector<float> getFloatVector(TEnv* config, const std::string& key, const std::vector<float>& defaultValues) {
-    std::string valueStr = config->GetValue(key.c_str(), "");
-    if (valueStr.empty()) {
-        return defaultValues;
-    }
-    
-    std::vector<float> values;
-    std::stringstream ss(valueStr);
-    std::string item;
-    
-    while (std::getline(ss, item, ',')) {
-        // Trim whitespace
-        item.erase(0, item.find_first_not_of(" \t\n\r\f\v"));
-        item.erase(item.find_last_not_of(" \t\n\r\f\v") + 1);
-        
-        if (!item.empty()) {
-            values.push_back(std::stof(item));
-        }
-    }
-    
-    return values.empty() ? defaultValues : values;
-}
-
-/**
- * Utility function to parse string vectors from config
- */
-std::vector<std::string> getStringVector(TEnv* config, const std::string& key, const std::vector<std::string>& defaultValues) {
-    std::string valueStr = config->GetValue(key.c_str(), "");
-    if (valueStr.empty()) {
-        return defaultValues;
-    }
-    
-    std::vector<std::string> values;
-    std::stringstream ss(valueStr);
-    std::string item;
-    
-    while (std::getline(ss, item, ',')) {
-        // Trim whitespace
-        item.erase(0, item.find_first_not_of(" \t\n\r\f\v"));
-        item.erase(item.find_last_not_of(" \t\n\r\f\v") + 1);
-        
-        if (!item.empty()) {
-            values.push_back(item);
-        }
-    }
-    
-    return values.empty() ? defaultValues : values;
-}
-
-/**
- * Main analysis function
- */
-void runAnalysis(const std::string& configFile, bool testMode, int maxEvents) {
-    // Start timer
-    TStopwatch timer;
-    timer.Start();
-    
-    // Print information
-    std::cout << "==================================================" << std::endl;
-    std::cout << "=== PhotonJet Analysis: Jet Substructure v1.0 ===" << std::endl;
-    std::cout << "==================================================" << std::endl;
-    std::cout << "Config file: " << configFile << std::endl;
-    if (testMode) {
-        std::cout << "Running in TEST mode with " << maxEvents << " events" << std::endl;
-    } else {
-        std::cout << "Running in PRODUCTION mode (all events)" << std::endl;
-    }
-    
-    // Load configuration
-    TEnv* config = new TEnv();
-    if (gSystem->AccessPathName(configFile.c_str())) {
-        throw std::runtime_error("Configuration file not found: " + configFile);
-    }
-    
-    int readStatus = config->ReadFile(configFile.c_str(), kEnvLocal);
-    if (readStatus != 0) {
-        delete config;
-        throw std::runtime_error("Error reading configuration file: " + configFile);
-    }
-    
-    std::cout << "Loaded configuration from " << configFile << std::endl;
-    
-    // Print configuration summary
-    printConfig(config);
-    
-    // Get basic parameters
-    std::string outputDir = config->GetValue("OutputDir", "");
-    std::string outputPrefix = config->GetValue("OutputPrefix", "output");
-    std::string inputDir = config->GetValue("InputDir", "");
-    
-    // Check essential parameters
-    if (outputDir.empty()) {
-        delete config;
-        throw std::runtime_error("Output directory not specified in configuration");
-    }
-    
-    if (inputDir.empty()) {
-        delete config;
-        throw std::runtime_error("Input directory not specified in configuration");
-    }
-    
-    // Create output directories
-    if (!createOutputDirectories(outputDir)) {
-        delete config;
-        throw std::runtime_error("Failed to create output directories");
-    }
-    
-    // Setup input files
-    TChain* chain = new TChain("jet_tree");
-    if (!setupInputChain(chain, inputDir, testMode)) {
-        delete chain;
-        delete config;
-        throw std::runtime_error("Failed to setup input chain");
-    }
-    
-    // Configure max events if in test mode
-    Long64_t nEvents = chain->GetEntries();
-    if (testMode && maxEvents > 0 && maxEvents < nEvents) {
-        nEvents = maxEvents;
-        std::cout << "Test mode: processing " << nEvents << " events" << std::endl;
-    } else {
-        std::cout << "Production mode: processing all " << nEvents << " events" << std::endl;
-    }
-    
-    // Setup output file
-    std::string outputFile = outputDir + "/" + outputPrefix + "_output.root";
-    
-    TFile* outFile = new TFile(outputFile.c_str(), "RECREATE");
-    if (!outFile || outFile->IsZombie()) {
-        delete outFile;
-        delete chain;
-        delete config;
-        throw std::runtime_error("Failed to create output file: " + outputFile);
-    }
-    
-    // Initialize jet collection manager
-    JetCollectionManager jetManager(config, chain);
-    if (!jetManager.initialize()) {
-        delete outFile;
-        delete chain;
-        delete config;
-        throw std::runtime_error("Failed to initialize jet collections");
-    }
-    
-    // Print jet collection information
-    jetManager.printBranchMappings();
-    
-    // Process events
-    processEvents(chain, config, jetManager, outFile);
-    
-    // Clean up
-    outFile->Close();
-    delete outFile;
-    delete chain;
-    delete config;
-    
-    // Print timing information
-    timer.Stop();
-    double realTime = timer.RealTime();
-    double cpuTime = timer.CpuTime();
-    
-    std::cout << "==================================================" << std::endl;
-    std::cout << "Analysis complete. Output written to: " << outputFile << std::endl;
-    std::cout << "Processed " << nEvents << " events" << std::endl;
-    std::cout << "Real time: " << realTime << " seconds, CPU time: " << cpuTime << " seconds" << std::endl;
-    std::cout << "Events per second: " << nEvents / realTime << std::endl;
-    std::cout << "==================================================" << std::endl;
-}
-
-/**
  * Process events in the chain
  */
-void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager, TFile* outFile) {
+void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager, TFile* outFile, Long64_t maxEvents) {
     if (!chain || !outFile) return;
     
+    // Initialize logging verbosity from config
+    g_verbosity = config->GetValue("Verbosity", LOG_INFO);
+    log(LOG_INFO, "Starting event processing...");
+    
     // Get parameters from config
-    bool isMC = config->GetValue("IsMC", 0);
+    std::string dataType = config->GetValue("DataType", "Data");
+    bool isMC = (dataType == "MC" || dataType == "mc");
     float vzCut = config->GetValue("VzCut", 15.0);
     float hiHFCutMin = config->GetValue("HiHFCutMin", 0.0);
     float hiHFCutMax = config->GetValue("HiHFCutMax", 7000.0);
@@ -348,8 +266,24 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
     float jetPtMin = config->GetValue("JetPtMin", 40.0);
     float jetEtaMax = config->GetValue("JetEtaMax", 2.0);
     float deltaPhiMin = config->GetValue("DeltaPhiMin", 2.094);
-    std::vector<float> centralityBins = getFloatVector(config, "CentralityBins", {0, 20, 60, 100, 200});
+    std::vector<float> centralityBins = getFloatVector(config, "CentralityBins");
     std::vector<std::string> jetCollections = jetManager.getCollections();
+    
+    log(LOG_DEBUG, "Configuration loaded:");
+    log(LOG_DEBUG, "  DataType: " + dataType);
+    log(LOG_DEBUG, "  isMC: " + std::to_string(isMC));
+    log(LOG_DEBUG, "  vzCut: " + std::to_string(vzCut));
+    log(LOG_DEBUG, "  photonEtMin: " + std::to_string(photonEtMin));
+    log(LOG_DEBUG, "  jetPtMin: " + std::to_string(jetPtMin));
+    
+    // Debug: Print centrality bins right after loading
+    log(LOG_DEBUG, "centralityBins loaded from config:");
+    log(LOG_DEBUG, "  centralityBins.size() = " + std::to_string(centralityBins.size()));
+    std::string binContents = "  centralityBins contents: ";
+    for (float bin : centralityBins) {
+        binContents += std::to_string(bin) + " ";
+    }
+    log(LOG_DEBUG, binContents);
     
     // Setup output tree
     TTree* outTree = new TTree("gammaJetTree", "Gamma-Jet Analysis");
@@ -381,6 +315,9 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
     std::vector<float> *mcEta = nullptr;
     std::vector<float> *mcPhi = nullptr;
     
+    // Event weight for MC
+    float eventWeight = 1.0;
+    
     // Setup branch addresses for event variables
     chain->SetBranchAddress("hiBin", &hiBin);
     chain->SetBranchAddress("vz", &vz);
@@ -398,12 +335,64 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
     
     // MC specific branch addresses
     if (isMC) {
-        chain->SetBranchAddress("ggHi_genMatchedIndex", &phoGenMatchedIndex);
-        chain->SetBranchAddress("ggHi_mcPID", &mcPID);
-        chain->SetBranchAddress("ggHi_mcMomPID", &mcMomPID);
-        chain->SetBranchAddress("ggHi_mcPt", &mcPt);
-        chain->SetBranchAddress("ggHi_mcEta", &mcEta);
-        chain->SetBranchAddress("ggHi_mcPhi", &mcPhi);
+        // Check and set up MC branches only if they exist
+        TBranch* genMatchedBranch = chain->GetBranch("ggHi_pho_genMatchedIndex");
+        TBranch* mcPIDBranch = chain->GetBranch("ggHi_mcPID");
+        TBranch* mcMomPIDBranch = chain->GetBranch("ggHi_mcMomPID");
+        TBranch* mcPtBranch = chain->GetBranch("ggHi_mcPt");
+        TBranch* mcEtaBranch = chain->GetBranch("ggHi_mcEta");
+        TBranch* mcPhiBranch = chain->GetBranch("ggHi_mcPhi");
+        
+        if (genMatchedBranch) {
+            chain->SetBranchAddress("ggHi_pho_genMatchedIndex", &phoGenMatchedIndex);
+            log(LOG_DEBUG, "MC branch connected: ggHi_pho_genMatchedIndex");
+        } else {
+            log(LOG_INFO, "MC branch not found: ggHi_pho_genMatchedIndex");
+        }
+        
+        if (mcPIDBranch) {
+            chain->SetBranchAddress("ggHi_mcPID", &mcPID);
+            log(LOG_DEBUG, "MC branch connected: ggHi_mcPID");
+        } else {
+            log(LOG_INFO, "MC branch not found: ggHi_mcPID");
+        }
+        
+        if (mcMomPIDBranch) {
+            chain->SetBranchAddress("ggHi_mcMomPID", &mcMomPID);
+            log(LOG_DEBUG, "MC branch connected: ggHi_mcMomPID");
+        } else {
+            log(LOG_INFO, "MC branch not found: ggHi_mcMomPID");
+        }
+        
+        if (mcPtBranch) {
+            chain->SetBranchAddress("ggHi_mcPt", &mcPt);
+            log(LOG_DEBUG, "MC branch connected: ggHi_mcPt");
+        } else {
+            log(LOG_INFO, "MC branch not found: ggHi_mcPt");
+        }
+        
+        if (mcEtaBranch) {
+            chain->SetBranchAddress("ggHi_mcEta", &mcEta);
+            log(LOG_DEBUG, "MC branch connected: ggHi_mcEta");
+        } else {
+            log(LOG_INFO, "MC branch not found: ggHi_mcEta");
+        }
+        
+        if (mcPhiBranch) {
+            chain->SetBranchAddress("ggHi_mcPhi", &mcPhi);
+            log(LOG_DEBUG, "MC branch connected: ggHi_mcPhi");
+        } else {
+            log(LOG_INFO, "MC branch not found: ggHi_mcPhi");
+        }
+        
+        // Try to set up weight branch - check if it exists
+        TBranch* weightBranch = chain->GetBranch("weight");
+        if (weightBranch) {
+            chain->SetBranchAddress("weight", &eventWeight);
+            log(LOG_INFO, "Weight branch found and connected for MC events");
+        } else {
+            log(LOG_INFO, "No weight branch found, using weight = 1.0 for all events");
+        }
     }
     
     // Output variables
@@ -486,7 +475,12 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
     }
     
     // Process events
-    Long64_t nEvents = chain->GetEntries();
+    Long64_t totalEntries = chain->GetEntries();
+    Long64_t nEvents = (maxEvents > 0 && maxEvents < totalEntries) ? maxEvents : totalEntries;
+    
+    log(LOG_INFO, "Total entries in chain: " + std::to_string(totalEntries));
+    log(LOG_INFO, "Will process: " + std::to_string(nEvents) + " events");
+    
     int nProcessed = 0;
     int nWithPhoton = 0;
     int nWithJet = 0;
@@ -494,18 +488,27 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
     
     for (Long64_t iEvent = 0; iEvent < nEvents; ++iEvent) {
         if (iEvent % 1000 == 0) {
-            std::cout << "Processing event " << iEvent << "/" << nEvents << " (" 
-                      << static_cast<double>(iEvent) / nEvents * 100 << "%)" << std::endl;
+            log(LOG_DEBUG, "Processing event " + std::to_string(iEvent) + "/" + 
+                std::to_string(nEvents) + " (" + 
+                std::to_string(static_cast<double>(iEvent) / nEvents * 100) + "%)");
         }
         
         chain->GetEntry(iEvent);
         nProcessed++;
         
+        // Reset event weight for each event (important for MC)
+        if (!isMC) {
+            eventWeight = 1.0;
+        }
+        
+        log(LOG_TRACE, "Event " + std::to_string(iEvent) + " weight: " + std::to_string(eventWeight));
+        
         // Event selection
         if (std::abs(vz) > vzCut) continue;
         if (hiHF < hiHFCutMin || hiHF > hiHFCutMax) continue;
         
-        // Photon selection using two-stage approach
+        // FIXED: Photon selection using two-stage approach
+        // Stage 1: First apply only kinematic cuts and find leading photon
         std::vector<int> kinematicCandidates;
         
         for (int iPho = 0; iPho < nPhotons; ++iPho) {
@@ -517,7 +520,7 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
             kinematicCandidates.push_back(iPho);
         }
         
-        // Find the highest ET photon among kinematic candidates
+        // Stage 2: Find the highest ET photon among kinematic candidates
         selectedPhotonIndex = -1;
         float maxPhotonEt = 0;
         
@@ -528,7 +531,7 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
             }
         }
         
-        // Apply photon ID criteria to the leading photon
+        // Stage 3: Apply photon ID criteria to the leading photon
         if (selectedPhotonIndex >= 0) {
             // Check shower shape, isolation and other ID criteria
             if (phoHoverE->at(selectedPhotonIndex) > photonHoverEMax ||
@@ -540,50 +543,57 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
             
             // MC-specific photon requirements (only if passed previous checks)
             if (selectedPhotonIndex >= 0 && isMC && config->GetValue("MCPhotonMatchRequired", 1)) {
-                int genMatchedIndex = phoGenMatchedIndex->at(selectedPhotonIndex);
-                if (genMatchedIndex < 0) {
-                    selectedPhotonIndex = -1;
+                // Check if MC branches are available before using them
+                if (!phoGenMatchedIndex) {
+                    log(LOG_INFO, "MC photon matching required but ggHi_pho_genMatchedIndex branch not available. Skipping MC checks.");
                 } else {
-                    // Check particle ID
-                    std::string pidStr = config->GetValue("MCPhotonPID", "22");
-                    std::vector<int> validPIDs;
-                    std::stringstream ss(pidStr);
-                    int pid;
-                    while (ss >> pid) {
-                        validPIDs.push_back(pid);
-                        if (ss.peek() == ',') ss.ignore();
-                    }
-                    
-                    // Check if mcPID matches any valid PID
-                    bool validPID = false;
-                    for (int pid : validPIDs) {
-                        if (mcPID->at(genMatchedIndex) == pid) {
-                            validPID = true;
-                            break;
-                        }
-                    }
-                    if (!validPID) selectedPhotonIndex = -1;
-                    
-                    // Check mother particle ID if specified
-                    if (selectedPhotonIndex >= 0) {
-                        std::string momPidStr = config->GetValue("MCPhotonMomPID", "22,-999");
-                        std::vector<int> validMomPIDs;
-                        std::stringstream momSS(momPidStr);
-                        int momPid;
-                        while (momSS >> momPid) {
-                            validMomPIDs.push_back(momPid);
-                            if (momSS.peek() == ',') momSS.ignore();
+                    int genMatchedIndex = phoGenMatchedIndex->at(selectedPhotonIndex);
+                    if (genMatchedIndex < 0) {
+                        selectedPhotonIndex = -1;
+                    } else {
+                        // Check particle ID (only if mcPID branch is available)
+                        if (mcPID) {
+                            std::string pidStr = config->GetValue("MCPhotonPID", "22");
+                            std::vector<int> validPIDs;
+                            std::stringstream ss(pidStr);
+                            int pid;
+                            while (ss >> pid) {
+                                validPIDs.push_back(pid);
+                                if (ss.peek() == ',') ss.ignore();
+                            }
+                            
+                            // Check if mcPID matches any valid PID
+                            bool validPID = false;
+                            for (int pid : validPIDs) {
+                                if (mcPID->at(genMatchedIndex) == pid) {
+                                    validPID = true;
+                                    break;
+                                }
+                            }
+                            if (!validPID) selectedPhotonIndex = -1;
                         }
                         
-                        // Check if mcMomPID matches any valid Mom PID
-                        bool validMomPID = false;
-                        for (int momPid : validMomPIDs) {
-                            if (mcMomPID->at(genMatchedIndex) == momPid) {
-                                validMomPID = true;
-                                break;
+                        // Check mother particle ID if specified (only if mcMomPID branch is available)
+                        if (selectedPhotonIndex >= 0 && mcMomPID) {
+                            std::string momPidStr = config->GetValue("MCPhotonMomPID", "22,-999");
+                            std::vector<int> validMomPIDs;
+                            std::stringstream momSS(momPidStr);
+                            int momPid;
+                            while (momSS >> momPid) {
+                                validMomPIDs.push_back(momPid);
+                                if (momSS.peek() == ',') momSS.ignore();
                             }
+                            
+                            // Check if mcMomPID matches any valid Mom PID
+                            bool validMomPID = false;
+                            for (int momPid : validMomPIDs) {
+                                if (mcMomPID->at(genMatchedIndex) == momPid) {
+                                    validMomPID = true;
+                                    break;
+                                }
+                            }
+                            if (!validMomPID) selectedPhotonIndex = -1;
                         }
-                        if (!validMomPID) selectedPhotonIndex = -1;
                     }
                 }
             }
@@ -683,51 +693,55 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
                     std::string centName = "cent" + std::to_string(static_cast<int>(centralityBins[centBin])) + 
                                          "to" + std::to_string(static_cast<int>(centralityBins[centBin+1]));
                     
-                    std::string histDir = collection + "/" + centName;
-                    if (outFile->cd(histDir.c_str())) {
+                    log(LOG_TRACE, "Filling histograms for " + collection + "/" + centName + 
+                        " with weight: " + std::to_string(eventWeight));
+                    
+                    // Navigate to subdirectory and fill histograms with weights
+                    outFile->cd();
+                    if (outFile->cd((collection + "/" + centName).c_str())) {
                         TH1F* hJetPt = (TH1F*)gDirectory->Get("hJetPt");
-                        if (hJetPt) hJetPt->Fill(selectedJetPts[collection]);
+                        if (hJetPt) hJetPt->Fill(selectedJetPts[collection], eventWeight);
                         
                         TH1F* hJetEta = (TH1F*)gDirectory->Get("hJetEta");
-                        if (hJetEta) hJetEta->Fill(selectedJetEtas[collection]);
+                        if (hJetEta) hJetEta->Fill(selectedJetEtas[collection], eventWeight);
                         
                         TH1F* hDeltaPhi = (TH1F*)gDirectory->Get("hDeltaPhi");
-                        if (hDeltaPhi) hDeltaPhi->Fill(selectedJetDeltaPhis[collection]);
+                        if (hDeltaPhi) hDeltaPhi->Fill(selectedJetDeltaPhis[collection], eventWeight);
                         
                         TH1F* hXj = (TH1F*)gDirectory->Get("hXj");
-                        if (hXj) hXj->Fill(selectedJetXjs[collection]);
+                        if (hXj) hXj->Fill(selectedJetXjs[collection], eventWeight);
                         
                         // Jet substructure histograms
                         TH1F* hJetMass = (TH1F*)gDirectory->Get("hJetMass");
-                        if (hJetMass) hJetMass->Fill(selectedJetMasses[collection]);
+                        if (hJetMass) hJetMass->Fill(selectedJetMasses[collection], eventWeight);
                         
                         TH1F* hDynSplit = (TH1F*)gDirectory->Get("hDynSplit");
-                        if (hDynSplit) hDynSplit->Fill(selectedJetDynSplits[collection]);
+                        if (hDynSplit) hDynSplit->Fill(selectedJetDynSplits[collection], eventWeight);
                         
                         TH1F* hDynKt = (TH1F*)gDirectory->Get("hDynKt");
-                        if (hDynKt) hDynKt->Fill(selectedJetDynKts[collection]);
+                        if (hDynKt) hDynKt->Fill(selectedJetDynKts[collection], eventWeight);
                         
                         TH1F* hDynZ = (TH1F*)gDirectory->Get("hDynZ");
-                        if (hDynZ) hDynZ->Fill(selectedJetDynZs[collection]);
+                        if (hDynZ) hDynZ->Fill(selectedJetDynZs[collection], eventWeight);
                         
                         TH1F* hGirth = (TH1F*)gDirectory->Get("hGirth");
-                        if (hGirth) hGirth->Fill(selectedJetGirths[collection]);
+                        if (hGirth) hGirth->Fill(selectedJetGirths[collection], eventWeight);
                         
                         TH1F* hThrust = (TH1F*)gDirectory->Get("hThrust");
-                        if (hThrust) hThrust->Fill(selectedJetThrusts[collection]);
+                        if (hThrust) hThrust->Fill(selectedJetThrusts[collection], eventWeight);
                         
                         TH1F* hLHA = (TH1F*)gDirectory->Get("hLHA");
-                        if (hLHA) hLHA->Fill(selectedJetLHAs[collection]);
+                        if (hLHA) hLHA->Fill(selectedJetLHAs[collection], eventWeight);
                         
                         TH1F* hPtD = (TH1F*)gDirectory->Get("hPtD");
-                        if (hPtD) hPtD->Fill(selectedJetPtDs[collection]);
+                        if (hPtD) hPtD->Fill(selectedJetPtDs[collection], eventWeight);
                         
-                        // Profiles and 2D histograms
+                        // Profiles and 2D histograms with weights
                         TProfile* pDynSplitVsPt = (TProfile*)gDirectory->Get("pDynSplitVsPt");
-                        if (pDynSplitVsPt) pDynSplitVsPt->Fill(selectedJetPts[collection], selectedJetDynSplits[collection]);
+                        if (pDynSplitVsPt) pDynSplitVsPt->Fill(selectedJetPts[collection], selectedJetDynSplits[collection], eventWeight);
                         
                         TH2F* h2DynSplitVsPt = (TH2F*)gDirectory->Get("h2DynSplitVsPt");
-                        if (h2DynSplitVsPt) h2DynSplitVsPt->Fill(selectedJetPts[collection], selectedJetDynSplits[collection]);
+                        if (h2DynSplitVsPt) h2DynSplitVsPt->Fill(selectedJetPts[collection], selectedJetDynSplits[collection], eventWeight);
                     }
                 }
             }
@@ -746,14 +760,29 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
     outFile->cd();
     outTree->Write();
     
+    // Write all histograms explicitly
+    log(LOG_INFO, "Writing histograms to file...");
+    for (const auto& collection : jetCollections) {
+        TDirectory* collectionDir = outFile->GetDirectory(collection.c_str());
+        if (collectionDir) {
+            log(LOG_DEBUG, "Writing histograms for collection: " + collection);
+            collectionDir->Write("", TObject::kOverwrite);
+        }
+    }
+    
+    // Force write everything
+    outFile->Write("", TObject::kOverwrite);
+    
+    log(LOG_INFO, "All histograms written successfully.");
+    
     // Print summary
-    std::cout << "==================================================" << std::endl;
-    std::cout << "Analysis Summary:" << std::endl;
-    std::cout << "  Total events processed: " << nProcessed << std::endl;
-    std::cout << "  Events with selected photon: " << nWithPhoton << std::endl;
-    std::cout << "  Events with selected jet: " << nWithJet << std::endl;
-    std::cout << "  Events passing all selections: " << nPassed << std::endl;
-    std::cout << "==================================================" << std::endl;
+    log(LOG_INFO, "==================================================");
+    log(LOG_INFO, "Analysis Summary:");
+    log(LOG_INFO, "  Total events processed: " + std::to_string(nProcessed));
+    log(LOG_INFO, "  Events with selected photon: " + std::to_string(nWithPhoton));
+    log(LOG_INFO, "  Events with selected jet: " + std::to_string(nWithJet));
+    log(LOG_INFO, "  Events passing all selections: " + std::to_string(nPassed));
+    log(LOG_INFO, "==================================================");
 }
 
 /**
@@ -769,7 +798,7 @@ bool setupInputChain(TChain* chain, const std::string& inputDir, bool testMode, 
     
     // Check if inputDir is a single file (ends with .root)
     if (inputDir.size() > 5 && inputDir.substr(inputDir.size() - 5) == ".root") {
-        std::cout << "Adding single file: " << inputDir << std::endl;
+        log(LOG_INFO, "Adding single file: " + inputDir);
         if (chain->AddFile(inputDir.c_str()) <= 0) {
             std::cerr << "Error: Failed to add file to chain: " << inputDir << std::endl;
             return false;
@@ -779,7 +808,7 @@ bool setupInputChain(TChain* chain, const std::string& inputDir, bool testMode, 
     
     // Find all ROOT files in the directory
     std::string cmd = "find " + inputDir + " -name \"*.root\" -type f";
-    std::cout << "Executing: " << cmd << std::endl;
+    log(LOG_DEBUG, "Executing: " + cmd);
     
     FILE* pipe = popen(cmd.c_str(), "r");
     if (!pipe) {
@@ -804,13 +833,13 @@ bool setupInputChain(TChain* chain, const std::string& inputDir, bool testMode, 
     // Limit number of files in test mode
     if (testMode && files.size() > static_cast<size_t>(maxFiles)) {
         maxFiles = 1;
-        std::cout << "Test mode: limiting to " << maxFiles << " files out of " << files.size() << std::endl;
+        log(LOG_INFO, "Test mode: limiting to " + std::to_string(maxFiles) + " files out of " + std::to_string(files.size()));
         files.resize(maxFiles);
     }
     
     // Add files to chain
     for (const auto& file : files) {
-        std::cout << "Adding file: " << file << std::endl;
+        log(LOG_DEBUG, "Adding file: " + file);
         if (chain->AddFile(file.c_str()) <= 0) {
             std::cerr << "Warning: Failed to add file to chain: " << file << std::endl;
             continue;
@@ -822,7 +851,7 @@ bool setupInputChain(TChain* chain, const std::string& inputDir, bool testMode, 
         return false;
     }
     
-    std::cout << "Added " << files.size() << " files with " << chain->GetEntries() << " entries." << std::endl;
+    log(LOG_INFO, "Added " + std::to_string(files.size()) + " files with " + std::to_string(chain->GetEntries()) + " entries.");
     return true;
 }
 
@@ -833,52 +862,252 @@ void createHistograms(TFile* outFile, const std::vector<std::string>& jetCollect
                      const std::vector<float>& centralityBins) {
     if (!outFile) return;
     
+    // Debug: Check input parameters
+    log(LOG_DEBUG, "createHistograms called with:");
+    log(LOG_DEBUG, "  jetCollections.size() = " + std::to_string(jetCollections.size()));
+    log(LOG_DEBUG, "  centralityBins.size() = " + std::to_string(centralityBins.size()));
+    
+    if (jetCollections.empty()) {
+        log(LOG_INFO, "jetCollections is empty!");
+        return;
+    }
+    
+    if (centralityBins.size() < 2) {
+        log(LOG_INFO, "centralityBins has < 2 elements, cannot create bins!");
+        std::string binContents = "centralityBins contents: ";
+        for (float bin : centralityBins) {
+            binContents += std::to_string(bin) + " ";
+        }
+        log(LOG_INFO, binContents);
+        return;
+    }
+    
     // Create histograms for each jet collection and centrality bin
     for (const auto& collection : jetCollections) {
-        outFile->mkdir(collection.c_str());
+        outFile->cd();
+        TDirectory* collectionDir = outFile->mkdir(collection.c_str());
+        if (!collectionDir) {
+            std::cerr << "Error: Failed to create directory for collection: " << collection << std::endl;
+            continue;
+        }
+        log(LOG_DEBUG, "Creating directory: " + collection);
         
         for (size_t i = 0; i < centralityBins.size() - 1; ++i) {
             std::string centName = "cent" + std::to_string(static_cast<int>(centralityBins[i])) + 
                                  "to" + std::to_string(static_cast<int>(centralityBins[i+1]));
             
-            std::string histDir = collection + "/" + centName;
-            outFile->mkdir(histDir.c_str());
-            outFile->cd(histDir.c_str());
+            // Create subdirectory within the collection directory
+            collectionDir->cd();
+            TDirectory* centDir = collectionDir->mkdir(centName.c_str());
+            if (!centDir) {
+                std::cerr << "Error: Failed to create directory: " << centName << " in " << collection << std::endl;
+                continue;
+            }
+            centDir->cd();
             
-            // Basic histograms
-            new TH1F("hJetPt", "Jet p_{T};p_{T} [GeV/c];Entries", 100, 0, 500);
-            new TH1F("hJetEta", "Jet #eta;#eta;Entries", 50, -2.5, 2.5);
-            new TH1F("hDeltaPhi", "#Delta#phi;#Delta#phi;Entries", 50, 0, M_PI);
-            new TH1F("hXj", "x_{j} = p_{T}^{jet} / E_{T}^{#gamma};x_{j};Entries", 50, 0, 2.0);
+            log(LOG_DEBUG, "Creating histograms in directory: " + collection + "/" + centName);
+            
+            // Basic histograms - store pointers and ensure they're in the right directory
+            TH1F* hJetPt = new TH1F("hJetPt", "Jet p_{T};p_{T} [GeV/c];Entries", 100, 0, 500);
+            TH1F* hJetEta = new TH1F("hJetEta", "Jet #eta;#eta;Entries", 50, -2.5, 2.5);
+            TH1F* hDeltaPhi = new TH1F("hDeltaPhi", "#Delta#phi;#Delta#phi;Entries", 50, 0, M_PI);
+            TH1F* hXj = new TH1F("hXj", "x_{j} = p_{T}^{jet} / E_{T}^{#gamma};x_{j};Entries", 50, 0, 2.0);
             
             // Jet substructure histograms
-            new TH1F("hJetMass", "Jet mass;m [GeV/c^{2}];Entries", 50, 0, 50);
-            new TH1F("hDynSplit", "Dynamical groomed splitting scale;#sqrt{z#theta} [GeV/c];Entries", 50, 0, 50);
-            new TH1F("hDynKt", "Dynamical groomed k_{T};k_{T} [GeV/c];Entries", 50, 0, 50);
-            new TH1F("hDynZ", "Dynamical groomed z;z;Entries", 50, 0, 0.5);
-            new TH1F("hGirth", "Jet girth;girth;Entries", 50, 0, 0.5);
-            new TH1F("hThrust", "Jet thrust;thrust;Entries", 50, 0, 1.0);
-            new TH1F("hLHA", "Jet LHA;LHA;Entries", 50, 0, 1.0);
-            new TH1F("hPtD", "Jet p_{T}D;p_{T}D;Entries", 50, 0, 1.0);
+            TH1F* hJetMass = new TH1F("hJetMass", "Jet mass;m [GeV/c^{2}];Entries", 50, 0, 50);
+            TH1F* hDynSplit = new TH1F("hDynSplit", "Dynamical groomed splitting scale;#sqrt{z#theta} [GeV/c];Entries", 50, 0, 50);
+            TH1F* hDynKt = new TH1F("hDynKt", "Dynamical groomed k_{T};k_{T} [GeV/c];Entries", 50, 0, 50);
+            TH1F* hDynZ = new TH1F("hDynZ", "Dynamical groomed z;z;Entries", 50, 0, 0.5);
+            TH1F* hGirth = new TH1F("hGirth", "Jet girth;girth;Entries", 50, 0, 0.5);
+            TH1F* hThrust = new TH1F("hThrust", "Jet thrust;thrust;Entries", 50, 0, 1.0);
+            TH1F* hLHA = new TH1F("hLHA", "Jet LHA;LHA;Entries", 50, 0, 1.0);
+            TH1F* hPtD = new TH1F("hPtD", "Jet p_{T}D;p_{T}D;Entries", 50, 0, 1.0);
             
             // Profiles and 2D histograms
-            new TProfile("pDynSplitVsPt", "Dynamical groomed splitting scale vs p_{T};p_{T} [GeV/c];<#sqrt{z#theta}> [GeV/c]", 
+            TProfile* pDynSplitVsPt = new TProfile("pDynSplitVsPt", "Dynamical groomed splitting scale vs p_{T};p_{T} [GeV/c];<#sqrt{z#theta}> [GeV/c]", 
                          10, 40, 240);
-            new TH2F("h2DynSplitVsPt", "Dynamical groomed splitting scale vs p_{T};p_{T} [GeV/c];#sqrt{z#theta} [GeV/c]", 
+            TH2F* h2DynSplitVsPt = new TH2F("h2DynSplitVsPt", "Dynamical groomed splitting scale vs p_{T};p_{T} [GeV/c];#sqrt{z#theta} [GeV/c]", 
                      10, 40, 240, 50, 0, 50);
+            
+            // Explicitly set the directory for each histogram to ensure they're saved
+            hJetPt->SetDirectory(centDir);
+            hJetEta->SetDirectory(centDir);
+            hDeltaPhi->SetDirectory(centDir);
+            hXj->SetDirectory(centDir);
+            hJetMass->SetDirectory(centDir);
+            hDynSplit->SetDirectory(centDir);
+            hDynKt->SetDirectory(centDir);
+            hDynZ->SetDirectory(centDir);
+            hGirth->SetDirectory(centDir);
+            hThrust->SetDirectory(centDir);
+            hLHA->SetDirectory(centDir);
+            hPtD->SetDirectory(centDir);
+            pDynSplitVsPt->SetDirectory(centDir);
+            h2DynSplitVsPt->SetDirectory(centDir);
+            
+            // Write each histogram individually to ensure they're saved to the ROOT file
+            hJetPt->Write("", TObject::kWriteDelete);
+            hJetEta->Write("", TObject::kWriteDelete);
+            hDeltaPhi->Write("", TObject::kWriteDelete);
+            hXj->Write("", TObject::kWriteDelete);
+            hJetMass->Write("", TObject::kWriteDelete);
+            hDynSplit->Write("", TObject::kWriteDelete);
+            hDynKt->Write("", TObject::kWriteDelete);
+            hDynZ->Write("", TObject::kWriteDelete);
+            hGirth->Write("", TObject::kWriteDelete);
+            hThrust->Write("", TObject::kWriteDelete);
+            hLHA->Write("", TObject::kWriteDelete);
+            hPtD->Write("", TObject::kWriteDelete);
+            pDynSplitVsPt->Write("", TObject::kWriteDelete);
+            h2DynSplitVsPt->Write("", TObject::kWriteDelete);
+            
+            // Write directory metadata
+            centDir->Write();
+            outFile->cd();
         }
     }
     
+    // Return to the main directory
     outFile->cd();
+    
+    log(LOG_DEBUG, "Histogram creation complete.");
 }
 
 /**
  * Setup output tree branches
  */
-void setupOutputTree(TTree* outTree, [[maybe_unused]] const std::vector<std::string>& jetCollections) {
+void setupOutputTree(TTree* outTree, const std::vector<std::string>& jetCollections) {
     if (!outTree) return;
     
+    // Suppress unused parameter warning
+    (void)jetCollections;
+    
     // Basic tree structure is set up in processEvents
+}
+
+/**
+ * Create output directories using ROOT's TSystem
+ */
+bool createOutputDirectories(const std::string& outputDir) {
+    if (outputDir.empty()) {
+        std::cerr << "Error: Empty output directory path" << std::endl;
+        return false;
+    }
+    
+    // Check if directory exists, create if it doesn't
+    if (gSystem->AccessPathName(outputDir.c_str())) {
+        if (gSystem->mkdir(outputDir.c_str(), kTRUE) != 0) {
+            std::cerr << "Error: Failed to create output directory: " << outputDir << std::endl;
+            return false;
+        }
+        log(LOG_INFO, "Created output directory: " + outputDir);
+    } else {
+        log(LOG_INFO, "Output directory exists: " + outputDir);
+    }
+    
+    return true;
+}
+
+/**
+ * Print configuration summary
+ */
+void printConfig(TEnv* config) {
+    if (!config) {
+        std::cerr << "Error: Configuration is null" << std::endl;
+        return;
+    }
+    
+    // Get DataType and compute isMC status
+    std::string dataType = config->GetValue("DataType", "Data");
+    bool isMC = (dataType == "MC" || dataType == "mc");
+    
+    log(LOG_INFO, "=== Configuration Summary ===");
+    log(LOG_INFO, "System: " + std::string(config->GetValue("System", "Unknown")));
+    log(LOG_INFO, "DataType: " + dataType);
+    log(LOG_INFO, "IsMC: " + std::to_string(isMC) + " (computed from DataType)");
+    log(LOG_INFO, "InputDir: " + std::string(config->GetValue("InputDir", "")));
+    log(LOG_INFO, "OutputDir: " + std::string(config->GetValue("OutputDir", "")));
+    log(LOG_INFO, "OutputPrefix: " + std::string(config->GetValue("OutputPrefix", "")));
+    log(LOG_INFO, "AnalysisCases: " + std::string(config->GetValue("AnalysisCases", "")));
+    log(LOG_INFO, "PhotonEtMin: " + std::to_string(config->GetValue("PhotonEtMin", 60.0)));
+    log(LOG_INFO, "JetPtMin: " + std::to_string(config->GetValue("JetPtMin", 40.0)));
+    log(LOG_INFO, "VzCut: " + std::to_string(config->GetValue("VzCut", 15.0)));
+    log(LOG_INFO, "===========================");
+}
+
+/**
+ * Parse comma-separated float values from config
+ */
+std::vector<float> getFloatVector(TEnv* config, const std::string& param) {
+    std::vector<float> result;
+    std::string valueStr = config->GetValue(param.c_str(), "");
+    
+    if (valueStr.empty()) {
+        // Return default centrality bins if not specified
+        return {0, 10, 30, 50, 70, 100, 200};
+    }
+    
+    // Handle both space and comma separated values
+    std::stringstream ss(valueStr);
+    std::string item;
+    
+    // First try comma-separated parsing
+    if (valueStr.find(',') != std::string::npos) {
+        while (std::getline(ss, item, ',')) {
+            // Trim whitespace
+            item.erase(0, item.find_first_not_of(" \t\n\r\f\v"));
+            item.erase(item.find_last_not_of(" \t\n\r\f\v") + 1);
+            
+            if (!item.empty()) {
+                try {
+                    float value = std::stof(item);
+                    result.push_back(value);
+                } catch (const std::exception& e) {
+                    std::cerr << "Warning: Failed to parse float value '" << item 
+                             << "' in parameter " << param << std::endl;
+                }
+            }
+        }
+    } else {
+        // Space-separated parsing
+        while (ss >> item) {
+            try {
+                float value = std::stof(item);
+                result.push_back(value);
+            } catch (const std::exception& e) {
+                std::cerr << "Warning: Failed to parse float value '" << item 
+                         << "' in parameter " << param << std::endl;
+            }
+        }
+    }
+    
+    return result;
+}
+
+/**
+ * Parse comma-separated string values from config
+ */
+std::vector<std::string> getStringVector(TEnv* config, const std::string& param) {
+    std::vector<std::string> result;
+    std::string valueStr = config->GetValue(param.c_str(), "");
+    
+    if (valueStr.empty()) {
+        return result;
+    }
+    
+    std::stringstream ss(valueStr);
+    std::string item;
+    while (std::getline(ss, item, ',')) {
+        // Trim whitespace
+        item.erase(0, item.find_first_not_of(" \t\n\r\f\v"));
+        item.erase(item.find_last_not_of(" \t\n\r\f\v") + 1);
+        
+        if (!item.empty()) {
+            result.push_back(item);
+        }
+    }
+    
+    return result;
 }
 
 /**
@@ -896,4 +1125,21 @@ float getDeltaPhi(float phi1, float phi2) {
 float getXj(float jetPt, float photonPt) {
     if (photonPt <= 0) return 0;
     return jetPt / photonPt;
+}
+
+/**
+ * Print usage information
+ */
+void printUsage() {
+    std::cout << "Usage: gammaJetAnalyzer [options]" << std::endl;
+    std::cout << "Options:" << std::endl;
+    std::cout << "  --config, -c FILE      Config file path" << std::endl;
+    std::cout << "  --test, -t [N]         Run in test mode with N events (default: 1000)" << std::endl;
+    std::cout << "  --production, -p       Run in production mode (all events)" << std::endl;
+    std::cout << "  --help, -h             Print this help message" << std::endl;
+    std::cout << std::endl;
+    std::cout << "Examples:" << std::endl;
+    std::cout << "  ./gammaJetAnalyzer -c config.config -t 10000" << std::endl;
+    std::cout << "  ./gammaJetAnalyzer --config config.config --test 5000" << std::endl;
+    std::cout << "  ./gammaJetAnalyzer -c config.config -p" << std::endl;
 }
