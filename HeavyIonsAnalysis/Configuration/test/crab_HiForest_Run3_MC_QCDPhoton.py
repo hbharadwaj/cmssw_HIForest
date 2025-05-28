@@ -3,7 +3,7 @@ from WMCore.Configuration import Configuration
 config = Configuration()
 
 config.section_('General')
-config.General.requestName = '2025_May_18_QCDPhoton30_test_substructure'
+config.General.requestName = '2025_May_26_QCDPhoton30_test_substructure'
 config.General.workArea = 'crab_projects'
 config.General.transferOutputs = True
 config.General.transferLogs = False

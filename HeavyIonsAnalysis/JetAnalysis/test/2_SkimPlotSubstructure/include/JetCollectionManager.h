@@ -19,6 +19,7 @@
 #include <regex>
 #include <cstring> // For std::memset
 #include <algorithm>
+#include <memory> // For std::unique_ptr
 #include "helpers.h" // Include for logging system
 
 class JetCollectionManager {
@@ -114,6 +115,14 @@ public:
         if (it == fJetBranches.end()) {
             return 0;
         }
+        
+        // Add bounds checking to prevent buffer overflow
+        if (it->second.nJets > MAX_JETS) {
+            log(LOG_ERROR, "Collection " + collection + " has " + std::to_string(it->second.nJets) + 
+                " jets, exceeding MAX_JETS=" + std::to_string(MAX_JETS) + ". Clamping to MAX_JETS.");
+            return MAX_JETS;
+        }
+        
         return it->second.nJets;
     }
     
@@ -131,21 +140,28 @@ public:
             return (property == DYN_SPLIT) ? -999 : -999.0;
         }
         
+        // Add additional bounds checking against MAX_JETS to prevent buffer overflow
+        if (it->second.nJets > MAX_JETS) {
+            log(LOG_ERROR, "Collection " + collection + " has " + std::to_string(it->second.nJets) + 
+                " jets, exceeding MAX_JETS=" + std::to_string(MAX_JETS) + ". Data may be corrupted!");
+            return (property == DYN_SPLIT) ? -999 : -999.0;
+        }
+        
         const auto& branches = it->second;
         
         switch (property) {
-            case PT:        return branches.pt[jetIndex];
-            case ETA:       return branches.eta[jetIndex];
-            case PHI:       return branches.phi[jetIndex];
-            case MASS:      return branches.mass[jetIndex];
-            case AREA:      return branches.area[jetIndex];
-            case DYN_SPLIT: return static_cast<float>(branches.dyn_split[jetIndex]);
-            case DYN_KT:    return branches.dyn_kt[jetIndex];
-            case DYN_Z:     return branches.dyn_z[jetIndex];
-            case GIRTH:     return branches.girth[jetIndex];
-            case THRUST:    return branches.thrust[jetIndex];
-            case LHA:       return branches.lha[jetIndex];
-            case PTD:       return branches.ptd[jetIndex];
+            case PT:        return branches.pt.get()[jetIndex];
+            case ETA:       return branches.eta.get()[jetIndex];
+            case PHI:       return branches.phi.get()[jetIndex];
+            case MASS:      return branches.mass.get()[jetIndex];
+            case AREA:      return branches.area.get()[jetIndex];
+            case DYN_SPLIT: return static_cast<float>(branches.dyn_split.get()[jetIndex]);
+            case DYN_KT:    return branches.dyn_kt.get()[jetIndex];
+            case DYN_Z:     return branches.dyn_z.get()[jetIndex];
+            case GIRTH:     return branches.girth.get()[jetIndex];
+            case THRUST:    return branches.thrust.get()[jetIndex];
+            case LHA:       return branches.lha.get()[jetIndex];
+            case PTD:       return branches.ptd.get()[jetIndex];
             default:        return -999.0;
         }
     }
@@ -267,18 +283,18 @@ private:
         
         BranchInfo branchDefs[] = {
             {"_nref", &branches.nJets, true, "int"},
-            {"_jtpt", branches.pt, true, "float[]"},
-            {"_jteta", branches.eta, true, "float[]"},
-            {"_jtphi", branches.phi, true, "float[]"},
-            {"_jtm", branches.mass, false, "float[]"},
-            {"_jtarea", branches.area, false, "float[]"},
-            {"_jtdyn_split", branches.dyn_split, false, "int[]"},
-            {"_jtdyn_kt", branches.dyn_kt, false, "float[]"},
-            {"_jtdyn_z", branches.dyn_z, false, "float[]"},
-            {"_jt_girth", branches.girth, false, "float[]"},
-            {"_jt_thrust", branches.thrust, false, "float[]"},
-            {"_jt_LHA", branches.lha, false, "float[]"},
-            {"_jt_pTD", branches.ptd, false, "float[]"}
+            {"_jtpt", branches.pt.get(), true, "float[]"},
+            {"_jteta", branches.eta.get(), true, "float[]"},
+            {"_jtphi", branches.phi.get(), true, "float[]"},
+            {"_jtm", branches.mass.get(), false, "float[]"},
+            {"_jtarea", branches.area.get(), false, "float[]"},
+            {"_jtdyn_split", branches.dyn_split.get(), false, "int[]"},
+            {"_jtdyn_kt", branches.dyn_kt.get(), false, "float[]"},
+            {"_jtdyn_z", branches.dyn_z.get(), false, "float[]"},
+            {"_jt_girth", branches.girth.get(), false, "float[]"},
+            {"_jt_thrust", branches.thrust.get(), false, "float[]"},
+            {"_jt_LHA", branches.lha.get(), false, "float[]"},
+            {"_jt_pTD", branches.ptd.get(), false, "float[]"}
         };
         
         // Setup all branches using loop
@@ -312,36 +328,100 @@ private:
     std::vector<std::string> fCollections;
     
     // Branch addresses for each collection
-    static const int MAX_JETS = 100;
+    static const int MAX_JETS = 200; // Increased from 100 for safety
     struct JetBranches {
         int nJets;
-        float pt[MAX_JETS];
-        float eta[MAX_JETS];
-        float phi[MAX_JETS];
-        float mass[MAX_JETS];
-        float area[MAX_JETS];
-        int dyn_split[MAX_JETS];
-        float dyn_kt[MAX_JETS];
-        float dyn_z[MAX_JETS];
-        float girth[MAX_JETS];
-        float thrust[MAX_JETS];
-        float lha[MAX_JETS];
-        float ptd[MAX_JETS];
+        // Use heap-allocated arrays to avoid stack overflow
+        std::unique_ptr<float[]> pt;
+        std::unique_ptr<float[]> eta;
+        std::unique_ptr<float[]> phi;
+        std::unique_ptr<float[]> mass;
+        std::unique_ptr<float[]> area;
+        std::unique_ptr<int[]> dyn_split;
+        std::unique_ptr<float[]> dyn_kt;
+        std::unique_ptr<float[]> dyn_z;
+        std::unique_ptr<float[]> girth;
+        std::unique_ptr<float[]> thrust;
+        std::unique_ptr<float[]> lha;
+        std::unique_ptr<float[]> ptd;
         
-        // Initialize arrays to zero
+        // Initialize arrays on heap
         JetBranches() : nJets(0) {
-            std::memset(pt, 0, MAX_JETS * sizeof(float));
-            std::memset(eta, 0, MAX_JETS * sizeof(float));
-            std::memset(phi, 0, MAX_JETS * sizeof(float));
-            std::memset(mass, 0, MAX_JETS * sizeof(float));
-            std::memset(area, 0, MAX_JETS * sizeof(float));
-            std::memset(dyn_split, 0, MAX_JETS * sizeof(int));
-            std::memset(dyn_kt, 0, MAX_JETS * sizeof(float));
-            std::memset(dyn_z, 0, MAX_JETS * sizeof(float));
-            std::memset(girth, 0, MAX_JETS * sizeof(float));
-            std::memset(thrust, 0, MAX_JETS * sizeof(float));
-            std::memset(lha, 0, MAX_JETS * sizeof(float));
-            std::memset(ptd, 0, MAX_JETS * sizeof(float));
+            pt = std::make_unique<float[]>(MAX_JETS);
+            eta = std::make_unique<float[]>(MAX_JETS);
+            phi = std::make_unique<float[]>(MAX_JETS);
+            mass = std::make_unique<float[]>(MAX_JETS);
+            area = std::make_unique<float[]>(MAX_JETS);
+            dyn_split = std::make_unique<int[]>(MAX_JETS);
+            dyn_kt = std::make_unique<float[]>(MAX_JETS);
+            dyn_z = std::make_unique<float[]>(MAX_JETS);
+            girth = std::make_unique<float[]>(MAX_JETS);
+            thrust = std::make_unique<float[]>(MAX_JETS);
+            lha = std::make_unique<float[]>(MAX_JETS);
+            ptd = std::make_unique<float[]>(MAX_JETS);
+            
+            // Initialize to zero
+            std::memset(pt.get(), 0, MAX_JETS * sizeof(float));
+            std::memset(eta.get(), 0, MAX_JETS * sizeof(float));
+            std::memset(phi.get(), 0, MAX_JETS * sizeof(float));
+            std::memset(mass.get(), 0, MAX_JETS * sizeof(float));
+            std::memset(area.get(), 0, MAX_JETS * sizeof(float));
+            std::memset(dyn_split.get(), 0, MAX_JETS * sizeof(int));
+            std::memset(dyn_kt.get(), 0, MAX_JETS * sizeof(float));
+            std::memset(dyn_z.get(), 0, MAX_JETS * sizeof(float));
+            std::memset(girth.get(), 0, MAX_JETS * sizeof(float));
+            std::memset(thrust.get(), 0, MAX_JETS * sizeof(float));
+            std::memset(lha.get(), 0, MAX_JETS * sizeof(float));
+            std::memset(ptd.get(), 0, MAX_JETS * sizeof(float));
+        }
+        
+        // Copy constructor
+        JetBranches(const JetBranches& other) : nJets(other.nJets) {
+            pt = std::make_unique<float[]>(MAX_JETS);
+            eta = std::make_unique<float[]>(MAX_JETS);
+            phi = std::make_unique<float[]>(MAX_JETS);
+            mass = std::make_unique<float[]>(MAX_JETS);
+            area = std::make_unique<float[]>(MAX_JETS);
+            dyn_split = std::make_unique<int[]>(MAX_JETS);
+            dyn_kt = std::make_unique<float[]>(MAX_JETS);
+            dyn_z = std::make_unique<float[]>(MAX_JETS);
+            girth = std::make_unique<float[]>(MAX_JETS);
+            thrust = std::make_unique<float[]>(MAX_JETS);
+            lha = std::make_unique<float[]>(MAX_JETS);
+            ptd = std::make_unique<float[]>(MAX_JETS);
+            
+            std::memcpy(pt.get(), other.pt.get(), MAX_JETS * sizeof(float));
+            std::memcpy(eta.get(), other.eta.get(), MAX_JETS * sizeof(float));
+            std::memcpy(phi.get(), other.phi.get(), MAX_JETS * sizeof(float));
+            std::memcpy(mass.get(), other.mass.get(), MAX_JETS * sizeof(float));
+            std::memcpy(area.get(), other.area.get(), MAX_JETS * sizeof(float));
+            std::memcpy(dyn_split.get(), other.dyn_split.get(), MAX_JETS * sizeof(int));
+            std::memcpy(dyn_kt.get(), other.dyn_kt.get(), MAX_JETS * sizeof(float));
+            std::memcpy(dyn_z.get(), other.dyn_z.get(), MAX_JETS * sizeof(float));
+            std::memcpy(girth.get(), other.girth.get(), MAX_JETS * sizeof(float));
+            std::memcpy(thrust.get(), other.thrust.get(), MAX_JETS * sizeof(float));
+            std::memcpy(lha.get(), other.lha.get(), MAX_JETS * sizeof(float));
+            std::memcpy(ptd.get(), other.ptd.get(), MAX_JETS * sizeof(float));
+        }
+        
+        // Assignment operator
+        JetBranches& operator=(const JetBranches& other) {
+            if (this != &other) {
+                nJets = other.nJets;
+                std::memcpy(pt.get(), other.pt.get(), MAX_JETS * sizeof(float));
+                std::memcpy(eta.get(), other.eta.get(), MAX_JETS * sizeof(float));
+                std::memcpy(phi.get(), other.phi.get(), MAX_JETS * sizeof(float));
+                std::memcpy(mass.get(), other.mass.get(), MAX_JETS * sizeof(float));
+                std::memcpy(area.get(), other.area.get(), MAX_JETS * sizeof(float));
+                std::memcpy(dyn_split.get(), other.dyn_split.get(), MAX_JETS * sizeof(int));
+                std::memcpy(dyn_kt.get(), other.dyn_kt.get(), MAX_JETS * sizeof(float));
+                std::memcpy(dyn_z.get(), other.dyn_z.get(), MAX_JETS * sizeof(float));
+                std::memcpy(girth.get(), other.girth.get(), MAX_JETS * sizeof(float));
+                std::memcpy(thrust.get(), other.thrust.get(), MAX_JETS * sizeof(float));
+                std::memcpy(lha.get(), other.lha.get(), MAX_JETS * sizeof(float));
+                std::memcpy(ptd.get(), other.ptd.get(), MAX_JETS * sizeof(float));
+            }
+            return *this;
         }
     };
     

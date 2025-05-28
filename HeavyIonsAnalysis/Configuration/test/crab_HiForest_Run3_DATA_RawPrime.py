@@ -4,7 +4,7 @@ config = Configuration()
 
 # ── General ────────────────────────────────────────────────────────────────────
 config.section_('General')
-config.General.requestName    = '2025_May_19_HIRawPrime0_test_substructure'
+config.General.requestName    = '2025_May_25_HIRawPrime0_test_substructure'
 config.General.workArea       = 'crab_projects'
 config.General.transferOutputs= True
 config.General.transferLogs   = False
