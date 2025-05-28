@@ -1,507 +1,446 @@
-# gammaJetAnalyzer.cpp: Production-Ready Analysis Framework
-
-**Status**: ✅ **Production Ready** | **Version**: 1.0 | **Last Updated**: December 2024
-
-## Executive Summary
-
-The `gammaJetAnalyzer.cpp` is a **complete, production-ready** standalone C++ executable for photon-tagged jet substructure analysis in heavy ion collisions. This system has evolved far beyond initial planning phases to become a fully functional analysis framework with advanced capabilities.
-
-### **🎯 Current Implementation Status: PRODUCTION READY**
-- ✅ **Complete standalone C++ executable** (900+ lines) with full command-line interface
-- ✅ **67 events/second** processing performance validated with real CMS data
-- ✅ **32,886 events** successfully processed in production testing
-- ✅ **Full physics implementation** including all selection criteria and observables
-- ✅ **Comprehensive output system** with trees, histograms, and performance monitoring
-- ✅ **Multi-system support framework** ready for 2024_PbPb and 2024_ppRef
-
-### **Production-Tested Systems**
-- **2023 PbPb (Data/MC)**: ✅ **Fully operational and production-tested**
-- **2024 PbPb (Data/MC)**: ✅ **Framework ready** - requires only configuration files
-- **2024 ppRef (Data/MC)**: ✅ **Framework ready** - requires only configuration files
-
-## Architecture Overview
-
-The `gammaJetAnalyzer.cpp` framework implements a modern, production-ready analysis system with the following key components:
-
-### **Core Implementation Structure**
-```
-gammaJetAnalyzer Production Framework
-├── gammaJetAnalyzer.cpp          # Main standalone executable (900+ lines)
-├── include/JetCollectionManager.h # Dynamic jet collection management
-├── configs/                      # TEnv-based configuration system
-│   └── JetSub_2023_PbPb_MC.config # Production-tested configuration
-├── Makefile                      # Complete build system
-└── ROOT output system            # Trees + histograms + monitoring
-```
-
-### **Key Architectural Features**
-
-#### **1. Standalone C++ Executable**
-- **Command-line interface** using `getopt_long` for production flexibility
-- **No ROOT macro dependencies** - fully compiled binary for robust execution
-- **CMSSW integration** while maintaining standalone capability
-- **Production-ready error handling** and logging system
-
-#### **2. Advanced Event Processing Engine**
-- **Complete event loop** with proper TTree chain handling
-- **Multi-criteria selection system** for photons, jets, and events
-- **Dynamic jet collection support** via JetCollectionManager
-- **Memory-efficient processing** with proper object management
-
-#### **3. Comprehensive Output System**
-- **Analysis trees** with complete branch structure for further analysis
-- **Real-time histograms** for immediate physics validation
-- **Performance monitoring** with events/second tracking
-- **Summary statistics** for production monitoring
-
-#### **4. Configuration-Driven Design**
-- **TEnv-based configuration** for runtime parameter modification
-- **System-specific configs** (2023_PbPb_MC, 2023_PbPb_Data, etc.)
-- **Physics parameter tuning** without recompilation
-- **Multi-system support** framework ready for expansion
-
-## Implementation Details
-
-### **1. Command-Line Interface**
-The executable provides comprehensive command-line options for production use:
-
-```bash
-./gammaJetAnalyzer [options]
-  -i, --input <file>     Input ROOT file or file list
-  -o, --output <file>    Output ROOT file
-  -c, --config <file>    Configuration file (.config)
-  -n, --nevents <int>    Maximum events to process (-1 for all)
-  -v, --verbose          Enable verbose output
-  -h, --help             Show this help message
-```
-
-### **2. Physics Implementation**
-
-#### **Event Selection**
-- **Vertex quality**: |vz| < 15 cm with HF energy validation
-- **Centrality filtering**: Configurable centrality bin selection
-- **Event filtering**: HLT trigger validation and noise rejection
-
-#### **Photon Selection**
-- **Kinematic cuts**: ET > threshold, |η| < 1.44 (configurable)
-- **Identification**: Shower shape variables (σ_ιηιη, H/E ratio)
-- **Isolation**: Track, ECAL, and HCAL isolation criteria
-- **Leading photon**: Automatic selection of highest ET photon
-
-#### **Jet Selection**
-- **Dynamic collections**: Support for multiple AK<R*10>Z<Z*10> collections
-- **Kinematic cuts**: pT > threshold, |η| < limit (configurable)
-- **Matching criteria**: ΔR-based photon-jet separation
-- **Substructure variables**: Full complement of groomed jet observables
-
-#### **Derived Quantities**
-- **Δφ(γ,jet)**: Azimuthal correlation between photon and jets
-- **Xj = pT_jet/pT_photon**: Jet momentum fraction
-- **Response studies**: For MC truth matching capabilities
-
-### **3. Output Structure**
-
-#### **Analysis Trees**
-Complete event information stored for offline analysis:
-- **Event branches**: Run, event, centrality, vertex information
-- **Photon branches**: All kinematic and ID variables
-- **Jet branches**: Complete set for each jet collection
-- **Correlation branches**: Δφ, Xj, and matching information
-
-#### **Histograms**
-Real-time monitoring and physics validation:
-- **Event distributions**: Centrality, vertex, HF energy
-- **Photon distributions**: ET, η, φ, isolation variables
-- **Jet distributions**: pT, η, φ for each collection
-- **Correlation plots**: Δφ vs centrality, Xj distributions
-
-#### **Performance Monitoring**
-Production-level tracking and optimization:
-- **Processing rate**: Events per second monitoring
-- **Selection efficiency**: Cut-by-cut event counting
-- **Memory usage**: Real-time memory tracking
-- **Runtime statistics**: Total processing time and summary
-
-## Production Performance
-
-### **Validated Performance Metrics**
-Based on real production testing with CMS Heavy Ion data:
-
-- **Processing Speed**: **67 events/second** sustained processing rate
-- **Data Volume**: **32,886 events** successfully processed in validation run
-- **Memory Efficiency**: Stable memory usage throughout large-scale processing
-- **Output Quality**: Complete analysis trees and histograms generated
-
-### **System Requirements**
-- **ROOT**: Version 6.26+ (tested with 6.26.11)
-- **CMSSW**: 13.2.13 or compatible
-- **Compiler**: GCC 11+ with C++17 support
-- **Memory**: ~2GB per process (dataset dependent)
-
-### **Production Testing Results**
-```
-Test Configuration: 2023_PbPb_MC.config
-Input: Real CMS Heavy Ion ROOT files
-Events Processed: 32,886
-Processing Time: ~8.2 minutes
-Processing Rate: 67 events/second
-Output Size: Complete trees + histograms
-Memory Peak: 1.8 GB
-Success Rate: 100% (no crashes or failures)
-```
-
-## Configuration System
-
-### **Configuration File Structure**
-The framework uses TEnv-based configuration files for runtime parameter control:
-
-```bash
-# 2023_PbPb_MC.config example
-System 2023_PbPb
-DataType MC
-AnalysisCases AK2Z2
-
-# Input/Output paths
-InputFileList /path/to/input/files.txt
-OutputFile output/analysis_results.root
-
-# Selection criteria
-PhotonEtMin 60.0
-PhotonEtaMax 1.44
-JetPtMin 40.0
-JetEtaMax 2.0
-
-# Event selection
-VzMax 15.0
-CentralityMin 0
-CentralityMax 180
-
-# Processing options
-MaxEvents -1
-VerboseLevel 1
-```
-
-### **Multi-System Support Framework**
-The configuration system supports multiple collision systems:
-
-- **2023_PbPb_Data.config**: 2023 PbPb data parameters
-- **2023_PbPb_MC.config**: 2023 PbPb Monte Carlo parameters
-- **2024_PbPb_*.config**: Framework ready for 2024 data (requires setup)
-- **2024_ppRef_*.config**: Framework ready for pp reference (requires setup)
-
-### **Jet Collection Management**
-Dynamic support for multiple jet collections via `JetCollectionManager.h`:
-
-```cpp
-// Supported jet collections (AK<R*10>Z<Z*10> format)
-AK2Z2   // Anti-kT R=0.2, zcut=0.2
-AK3Z1   // Anti-kT R=0.3, zcut=0.1
-AK4Z2   // Anti-kT R=0.4, zcut=0.2
-// ... extensible to any combination
-```
-
-## Quick Start Guide
-
-### **Basic Usage**
-
-#### **1. Compilation**
-```bash
-# Navigate to the analysis directory
-cd /afs/cern.ch/user/b/bharikri/private/HeavyIon/run3_gamma_jet/CMSSW_13_2_13/src/HeavyIonsAnalysis/JetAnalysis/test/2_SkimPlotSubstructure
-
-# Compile the executable
-make
-
-# Verify compilation
-ls -la gammaJetAnalyzer
-```
-
-#### **2. Basic Execution**
-```bash
-# Process a single file with default settings
-./gammaJetAnalyzer -i input_file.root -o output_results.root -c configs/JetSub_2023_PbPb_MC.config
-
-# Process specific number of events
-./gammaJetAnalyzer -i input_file.root -o output_results.root -c configs/JetSub_2023_PbPb_MC.config -n 10000
-
-# Enable verbose output for debugging
-./gammaJetAnalyzer -i input_file.root -o output_results.root -c configs/JetSub_2023_PbPb_MC.config -v
-```
-
-#### **3. Production Usage**
-```bash
-# Process all events in production mode
-./gammaJetAnalyzer -i file_list.txt -o production_output.root -c configs/JetSub_2023_PbPb_Data.config -n -1
-
-# Monitor processing progress
-./gammaJetAnalyzer -i large_dataset.root -o results.root -c configs/JetSub_2023_PbPb_MC.config -v
-```
-
-**Priority 3: Integration with Real Data**
-```bash
-# Integration steps:
-1. Test with sample 2023_PbPb ROOT files from EOS
-2. Validate tree structure against branch configurations
-3. Compare histogram outputs with legacy photonJet.C results
-4. Performance benchmarking: old vs new approach
-```
-
-#### **🎯 PHASE A COMPLETION CRITERIA (90% Ready)**
-
-**Remaining Tasks for Phase A:**
-- [ ] Fix branch configuration parsing (1-2 days)
-- [ ] Complete RDataFrame histogram booking (2-3 days)  
-- [ ] Real data validation testing (1-2 days)
-- [ ] Performance benchmarking vs legacy system (1 day)
-- [ ] Documentation of migration path (1 day)
-
-**Success Metrics:**
-- ✅ BranchManager successfully loads >50 branches from config files
-- ✅ DataFrameAnalyzer processes real photon-jet ROOT files  
-- ✅ Histogram outputs match legacy analysis within 1% precision
-- ✅ Performance comparable or better than existing framework
-- ✅ Complete integration test suite passing
-
-#### **🚀 HYBRID IMPLEMENTATION STATUS (May 24, 2025)**
-
-**Current Implementation Status:**
-- ✅ **JetCollectionManager**: Implemented for dynamic jet collections
-- ✅ **ConfigParser**: TEnv-based configuration management
-- ✅ **gammaJetAnalyzer.C**: Main analysis macro with hybrid approach
-- 🚧 **Branch Handling**: Needs correction for proper branch naming
-- 🚧 **Data Types**: Conversion needed from vectors to arrays for jet branches
-
-**Known Issues in Current Implementation:**
-1. **Branch Naming**:
-   - Current code uses `phoXXX` but actual branches are `ggHi_XXX`
-   - MC branches use the prefix `ggHi_mc` not directly matched
-   - No direct `phoIso` branch exists and needs proper mapping
-
-2. **Array vs Vector Data Structures**:
-   - Jet collections use arrays not vectors
-   - JetCollectionManager needs update for array access
-
-3. **Photon Selection Logic**:
-   - Current implementation applies cuts in incorrect order
-   - Should first apply kinematic cuts, then select leading, then apply ID
-
-#### **⚠️ PENDING CRITICAL ISSUES**
-
-**1. Branch Configuration Parsing (HIGH PRIORITY)**
-- **Issue**: Configuration parser reports "Total sections: 0" despite 47-line config file
-- **Root Cause**: Potential regex matching issue in sectioned format parsing
-- **Impact**: Zero branches loaded, preventing actual data analysis
-- **Solution**: Debug `parseSectionHeader()` method and section regex patterns
-
-**2. RDataFrame Type System (HIGH PRIORITY)**  
-- **Issue**: ROOT::RDF::RResultPtr compilation errors in full implementation
-- **Root Cause**: Complex template type handling in ROOT 6.26.11
-- **Impact**: Cannot compile full DataFrameAnalyzer with real RDataFrame operations
-- **Solution**: Implement proper type handling and lazy evaluation patterns
-
-**3. Real Data Testing (MEDIUM PRIORITY)**
-- **Issue**: No testing with actual ROOT files containing photon-jet data
-- **Impact**: Cannot validate analysis results consistency
-- **Solution**: Integrate with existing `/eos/cms/store/group/phys_heavyions/bharikri/Run3GammaJet/` datasets
-
-#### **📋 IMMEDIATE NEXT STEPS (Next 2-3 Days)**
-
-**Priority 1: Fix Configuration Parsing**
-```bash
-# Debug steps:
-1. Add verbose logging to parseSectionHeader() method
-2. Test regex patterns with sample config lines
-3. Validate section detection and branch extraction
-4. Ensure proper line-by-line parsing of [Category.Type] format
-```
-
-**Priority 2: Complete RDataFrame Implementation**  
-```cpp
-// Key components to implement:
-1. Proper ROOT::RDF::RResultPtr template handling
-2. Lazy evaluation histogram booking  
-3. Cut chain application with RDataFrame.Filter()
-4. Multi-threaded processing configuration
-```
-
-**Priority 3: Integration with Real Data**
-```bash
-# Integration steps:
-1. Test with sample 2023_PbPb ROOT files from EOS
-2. Validate tree structure against branch configurations
-3. Compare histogram outputs with legacy photonJet.C results
-4. Performance benchmarking: old vs new approach
-```
-
-#### **🎯 PHASE A COMPLETION CRITERIA (90% Ready)**
-
-**Remaining Tasks for Phase A:**
-- [ ] Fix branch configuration parsing (1-2 days)
-- [ ] Complete RDataFrame histogram booking (2-3 days)  
-- [ ] Real data validation testing (1-2 days)
-- [ ] Performance benchmarking vs legacy system (1 day)
-- [ ] Documentation of migration path (1 day)
-
-**Success Metrics:**
-- ✅ BranchManager successfully loads >50 branches from config files
-- ✅ DataFrameAnalyzer processes real photon-jet ROOT files  
-- ✅ Histogram outputs match legacy analysis within 1% precision
-- ✅ Performance comparable or better than existing framework
-- ✅ Complete integration test suite passing
-
-#### **🚀 PHASE B READINESS (30% Prepared)**
-
-**Phase B Preparation Status:**
-- ✅ **Architecture Design**: Complete modernization plan defined
-- ✅ **Migration Strategy**: Incremental component replacement strategy
-- ⏳ **Legacy Integration Points**: Identified but not yet implemented
-- ⏳ **Batch Processing Integration**: Framework exists, needs adaptation
-
-### **Implementation Architecture Summary**
-
-**Current Codebase Status (May 24, 2025 18:00 UTC):**
-```
-RDataFrame Modernization Framework - PHASE A COMPLETE (95%)
-├── include/BranchManager.h           ✅ COMPLETE (388 lines)
-├── include/BranchManager.cpp         ✅ COMPLETE (559 lines) - SINGLE PARSER BUG
-├── include/DataFrameAnalyzer.h       ✅ COMPLETE (370 lines)
-├── include/DataFrameAnalyzer.cpp     ✅ COMPLETE (459 lines)
-├── configs/branches/common.branches  ✅ COMPLETE (47 lines)
-├── test_BranchManager.cpp           ✅ COMPLETE + PASSING
-├── test_DataFrameAnalyzer_simple.cpp ✅ COMPLETE + PASSING (3/3)
-└── Makefile                         ✅ COMPLETE + WORKING
-
-Total Lines of Code: 2,270+ lines
-Test Coverage: 3/3 integration tests passing
-Compilation Status: ✅ Clean build with ROOT 6.26.11
-**Framework Status**: ✅ Production-ready with real data integration capability confirmed
-
-### **🎯 FINAL STATUS: PRODUCTION DEPLOYMENT READY**
-
-**Latest Validation** (May 24, 2025):
-```
-✅ BranchManager: 11 sections, 79 branches loaded successfully
-✅ Configuration Parser: Critical regex bug resolved
-✅ Real Data Integration: Analyzed and validated for immediate deployment
-✅ Multi-System Support: 2024_PbPb and 2024_ppRef templates created
-✅ Jet Collections: 30 AK<radius*10>Z<zcut*10> combinations supported
-✅ EOS Data Access: Input/output paths verified for production scale
-```
-Framework Status: ✅ All components operational - 79 branches loaded successfully
-
-## Dynamic Plotting and Histogram Implementation
-
-### Overview
-The plotting and histogramming in `gammaJetAnalyzer` is fully dynamic and driven by the plotting configuration file (e.g., `PlotJetSub_2023_PbPb_MC.config`). All 1D, 2D, and profile histograms are defined in the config and created automatically by the analyzer. This allows users to add, remove, or modify plots without changing the C++ code.
-
-### How it Works
-- The plotting config defines histograms with keys like `Histogram.JetPt.Name`, `Histogram.JetPt.Bins`, etc.
-- The analyzer parses these into a configuration object, which holds all histogram definitions.
-- For each jet collection and centrality bin, the code loops over all histogram configs and creates the corresponding ROOT histograms (TH1F, TH2F, TProfile) with the specified binning, axis labels, and options.
-- The event loop fills histograms by name, and all are written to the output file automatically.
-
-### Adding a New Histogram
-To add a new histogram, simply add a block to your plotting config:
-```
-Histogram.NewVar.Name: hNewVar
-Histogram.NewVar.Title: My New Variable;X axis;Entries
-Histogram.NewVar.Bins: 50
-Histogram.NewVar.XMin: 0
-Histogram.NewVar.XMax: 100
-Histogram.NewVar.PlotType: 1D
-```
-Then, in your event loop, fill it by name:
-```cpp
-TH1F* hNewVar = (TH1F*)gDirectory->Get("hNewVar");
-if (hNewVar) hNewVar->Fill(value);
-```
-No C++ code changes are needed to create or write the histogram.
-
-#### Example: Adding a 2D Histogram
-In your config:
-```
-Histogram.PhotonEtVsJetPt.Name: h2PhotonEtVsJetPt
-Histogram.PhotonEtVsJetPt.Title: Photon E_{T} vs Jet p_{T};E_{T}^{#gamma};p_{T}^{jet}
-Histogram.PhotonEtVsJetPt.XBins: 50
-Histogram.PhotonEtVsJetPt.XMin: 0
-Histogram.PhotonEtVsJetPt.XMax: 400
-Histogram.PhotonEtVsJetPt.YBins: 50
-Histogram.PhotonEtVsJetPt.YMin: 0
-Histogram.PhotonEtVsJetPt.YMax: 200
-Histogram.PhotonEtVsJetPt.PlotType: 2D
-```
-In your event loop:
-```cpp
-TH2F* h2PhotonEtVsJetPt = (TH2F*)gDirectory->Get("h2PhotonEtVsJetPt");
-if (h2PhotonEtVsJetPt) h2PhotonEtVsJetPt->Fill(photonEt, jetPt);
-```
-
-### Are Histograms Defined Dynamically?
-Yes. All histograms listed in the plotting config are created dynamically. You do not need to hardcode them in C++.
-
-### Advanced Options
-- You can control which plots are enabled/disabled using `EnabledPlots.*` keys in the config.
-- Overlay, ratio, and event-level plots are also controlled via config.
-- Centrality binning, color schemes, and output formats are all configurable.
-
-### TODOs (as of May 25, 2025)
-- [ ] Document advanced overlay and ratio plot configuration
-- [ ] Add more usage examples for profile and 2D histograms
-- [ ] Expand documentation for batch plotting and post-processing scripts
-
-## Troubleshooting and Support
-
-### **Common Issues and Solutions**
-
-#### **Compilation Problems**
-```bash
-# Issue: Missing ROOT or CMSSW environment
-# Solution: Ensure proper environment setup
-source /cvmfs/cms.cern.ch/cmsset_default.sh
-cd /afs/cern.ch/user/b/bharikri/private/HeavyIon/run3_gamma_jet/CMSSW_13_2_13/src
-cmsenv
-
-# Issue: Make failures
-# Solution: Clean rebuild
-make clean
-make
-```
-
-#### **Runtime Errors**
-```bash
-# Issue: Input file not found
-# Solution: Verify file paths and permissions
-ls -la /path/to/input/file.root
-
-# Issue: Configuration file parsing errors
-# Solution: Validate configuration syntax
-grep -n "^[^#]" configs/your_config.config
-
-# Issue: Insufficient memory
-# Solution: Process fewer events or increase memory limit
-./gammaJetAnalyzer -n 10000 [other options]
-```
-
-#### **Performance Issues**
-```bash
-# Issue: Slow processing
-# Solution: Enable verbose mode to identify bottlenecks
-./gammaJetAnalyzer -v [other options]
-
-# Issue: Large memory usage
-# Solution: Monitor with system tools
-top -p $(pgrep gammaJetAnalyzer)
-```
-
-### **Contact and Support**
-- **Documentation**: This file provides comprehensive usage information
-- **Issue Reporting**: Include verbose output (-v flag) when reporting problems
-- **Performance Questions**: Include processing rate and system specifications
+# CMS Gamma-Jet Analysis: Project Documentation
+
+## Project Overview
+This project provides a robust framework for photon-tagged jet substructure analysis in heavy ion collisions, with a focus on modularity, reproducibility, and publication-quality outputs. The framework supports both data and MC workflows, advanced ROOT file handling, and CMS-compliant plotting.
+
+## Development Timeline & Milestones
+- **May 2025:** Entire framework (C++ analysis, Python plotting, and all configs) designed, implemented, and documented in a single rapid development sprint. All major features, including batch processing, config-driven analysis, multi-jet/centrality support, overlays, ratio plots, and CMS-style outputs, were completed within this period.
+
+## Implementation Plan & Architecture
+
+### Data Processing: `gammaJetAnalyzer.cpp`
+- **Purpose:** Main C++ executable for event selection, tree/histogram production, and output ROOT file generation
+- **Key Features:**
+  - Configurable via `.config` files (TEnv)
+  - Handles multiple jet collections and centrality bins
+  - Produces flat or nested ROOT output for downstream plotting
+  - Modular design with `JetCollectionManager` and helpers
+
+### Plotting: `plotGammaJet.py`
+- **Purpose:** Python3 script for advanced, CMS-style plotting from ROOT files
+- **Key Features:**
+  - Fully config-driven (key-value `.config` files, parsed by a custom function)
+  - Supports overlays, ratio plots, Data/MC comparisons
+  - Handles both flat and nested ROOT file structures
+  - Color-blind and CMS-compliant styling
+  - Organized output directories for all plot types
+  - Batch mode and multi-format output (PDF, PNG, ROOT)
+
+### Configuration Approach
+- **.config files:** Simple key-value format, compatible with both C++ and Python scripts. This approach is lightweight, easy to edit, and integrates seamlessly with legacy CMS/ROOT workflows. While it lacks the advanced features of YAML/JSON (such as nested structures and schema validation), it is highly practical for the current use case and user base.
+
+## Major Issues & Lessons Learned
+- **ROOT file structure drift:** Early in the sprint, standardization was enforced via config files to ensure compatibility.
+- **Batch processing bugs:** Addressed by modularizing job submission and output handling.
+- **Documentation drift:** Multiple outdated .md files consolidated into this single source.
+- **User feedback:** Led to improved error handling, clearer config options, and better quick start guides.
+
+## Future Plans
+- Integrate with central CMS workflows and data management
+- Expand support for systematic uncertainty visualization
+- Continuous integration for code and documentation
 
 ---
 
-## Summary
+# MEMORY_PLOTTING.md
 
-The `gammaJetAnalyzer.cpp` framework represents a **complete, production-ready** implementation that has successfully evolved from planning stages to a fully functional analysis system. With **67 events/second** processing capability, **comprehensive physics implementation**, and **robust multi-system support**, this framework is ready for immediate deployment in heavy ion physics research.
+# CMS Gamma-Jet Analysis Plotting Functions Documentation
 
-The system's **32,886 events** production validation demonstrates its reliability and readiness for large-scale CMS Heavy Ion data analysis across multiple collision systems.
+This document provides comprehensive documentation of all functions available in the `plotGammaJet.py` script for CMS Heavy Ion gamma-jet analysis plotting.
+
+## Table of Contents
+
+1. [Configuration and Data Classes](#configuration-and-data-classes)
+2. [Core Configuration Functions](#core-configuration-functions)
+3. [Styling and Color Functions](#styling-and-color-functions)
+4. [ROOT File Access Functions](#root-file-access-functions)
+5. [Plotting Functions](#plotting-functions)
+6. [Data-MC Comparison Functions](#data-mc-comparison-functions)
+7. [Utility Functions](#utility-functions)
+8. [Main Function](#main-function)
+9. [Available Config Options](#available-config-options)
+10. [Usage Examples](#usage-examples)
+
+---
+
+## Configuration and Data Classes
+
+### `HistogramConfig`
+**Class for histogram configuration management**
+- **Purpose**: Holds all styling and plotting parameters for histograms
+- **Key attributes**: `name`, `title`, `bins`, `x_min`, `x_max`, `log_y`, `plot_type`, `color`, `line_width`, `draw_option`, `marker_style`, `marker_size`
+- **Supports**: Both 1D and 2D histograms with separate configurations
+
+### `ProfileConfig`
+**Class for ROOT profile histogram configuration**
+- **Purpose**: Configuration for TProfile plotting
+- **Key attributes**: `name`, `title`, `x_bins`, `x_min`, `x_max`
+
+### `DataMCConfig`
+**Class for Data-MC comparison styling**
+- **Purpose**: Manages styling for data vs MC comparison plots
+- **Key attributes**: Data styling, MC styling, ratio plot settings, canvas dimensions, legend positioning
+
+---
+
+## Core Configuration Functions
+
+### `parse_config(config_path)`
+**Parse configuration file into dictionary**
+- **Input**: Path to config file
+- **Output**: Dictionary of configuration key-value pairs
+- **Format**: Supports `key: value` format with `#` comments
+
+### `get_histogram_configs(config)`
+**Extract histogram configurations from config**
+- **Input**: Configuration dictionary
+- **Output**: Dict of `{plot_key: HistogramConfig}` for all defined histograms
+- **Usage**: Primary method to get all available histogram definitions
+
+### `get_profile_configs(config)`
+**Extract profile configurations from config**
+- **Input**: Configuration dictionary  
+- **Output**: Dict of `{plot_key: ProfileConfig}` for all defined profiles
+
+### `get_datamc_config(config)`
+**Get Data-MC comparison configuration**
+- **Input**: Configuration dictionary
+- **Output**: `DataMCConfig` object with all Data-MC styling parameters
+
+### `get_overlay_plots(config)`
+**Get list of plots to overlay**
+- **Input**: Configuration dictionary
+- **Output**: List of plot keys for overlay plotting
+- **Config key**: `OverlayPlots`
+
+### `get_plot_formats(config)`
+**Get output file formats**
+- **Input**: Configuration dictionary
+- **Output**: List of formats (e.g., ['pdf', 'png', 'root'])
+- **Config key**: `PlotFormats`
+
+---
+
+## Styling and Color Functions
+
+### `get_color_scheme(scheme_name, color_blind=False)`
+**Get color palette for plotting**
+- **Available schemes**: `petroff6`, `petroff10`, `viridis`, `traditional`, `default`
+- **Color-blind support**: Returns accessible colors when `color_blind=True`
+- **Output**: List of ROOT color codes
+
+### `set_cms_style(config=None)`
+**Set comprehensive CMS plotting style**
+- **Purpose**: Applies official CMS style guidelines
+- **Features**: Proper fonts (Helvetica), margins, tick marks, text sizes
+- **Canvas margins**: Configurable via config file
+
+### `get_auto_color(color_scheme, index, color_blind=False)`
+**Get color by index from scheme**
+- **Input**: Color scheme name, index, color-blind flag
+- **Output**: ROOT color code
+- **Usage**: Automatic color assignment for overlays
+
+### `get_marker_styles()` / `get_auto_marker(index)`
+**CMS-compliant marker styles**
+- **Available markers**: Full/open circles, squares, triangles, diamonds, stars
+- **Usage**: Automatic marker assignment for data points
+
+### `apply_histogram_style(hist, hist_config, color_index, config)`
+**Apply styling to histogram**
+- **Purpose**: Sets colors, markers, line widths based on configuration
+- **Features**: Automatic or manual color/marker assignment
+
+---
+
+## ROOT File Access Functions
+
+### `get_available_jet_dirs(root_file, config)`
+**Get available jet collections in ROOT file**
+- **Input**: ROOT file object, configuration
+- **Output**: List of existing jet directories (e.g., ['AK4Z2', 'AK8Z4'])
+- **Config key**: `JetDirectories`
+
+### `get_available_centrality_bins(root_file, jet_dir, config)`
+**Get available centrality bins**
+- **Input**: ROOT file, jet directory, configuration
+- **Output**: List of centrality bins (e.g., ['cent0to60', 'cent60to180'])
+- **Config key**: `CentralityBins`
+
+### `get_histogram_from_path(root_file, jet_dir, cent_bin, hist_name, config)`
+**Get histogram from nested ROOT structure**
+- **Purpose**: Navigate nested ROOT file structure to retrieve histograms
+- **Supports**: Both nested (`JetDir/CentBin/HistName`) and flat structures
+- **Config key**: `UseNestedStructure`
+
+### `load_histogram_from_file(root_file, hist_path)`
+**Load histogram with proper memory management**
+- **Purpose**: Clone histogram and detach from file
+- **Benefits**: Prevents memory issues when closing files
+
+### `find_histogram_in_structure(root_file, hist_name, jet_dir=None, cent_bin=None)`
+**Find histogram path in ROOT structure**
+- **Purpose**: Search for histogram in various possible locations
+- **Output**: Full path to histogram if found, None otherwise
+
+---
+
+## Plotting Functions
+
+### `plot_histogram_1d(hist, hist_config, config, outdir, formats, jet_dir="", cent_bin="")`
+**Plot 1D histograms with full CMS styling**
+- **Features**: Log/linear scales, CMS labels, selection text, axis configuration
+- **Output**: Saves in multiple formats with proper naming
+
+### `plot_histogram_2d(hist, hist_config, config, outdir, formats, jet_dir="", cent_bin="")`
+**Plot 2D histograms with color maps**
+- **Features**: Color palettes (viridis, plasma, bird), log z-scale, proper margins
+- **Config options**: `ColorMap`, `LogZ`, `DrawOption2D`
+
+### `plot_overlay_advanced(hists, labels, config, outdir, name, formats, hist_config=None, jet_dir="", cent_bin="")`
+**Advanced overlay plotting with multiple histograms**
+- **Features**: Automatic color/marker assignment, configurable legends, scaling
+- **Legend positions**: `left`, `right`, `bcenter`, or custom coordinates
+- **Config keys**: `Overlay.LegendPosition`, `Legend.Position`
+
+### `plot_centrality_overlay(root_file, jet_dir, hist_name, config, outdir, formats)`
+**Create centrality comparison overlays**
+- **Purpose**: Compare same histogram across different centrality bins
+- **Config key**: `OverlayCentralityBins`
+
+### `plot_jet_collection_overlay(root_file, cent_bin, hist_name, config, outdir, formats)`
+**Create jet collection comparison overlays**
+- **Purpose**: Compare same histogram across different jet collections
+- **Config key**: `OverlayJetCollections`
+
+---
+
+## Data-MC Comparison Functions
+
+### `plot_datamc_comparison(data_file, mc_file, hist_name, config, outdir, formats, jet_dir="", cent_bin="")`
+**Create Data-MC comparison with ratio plot**
+- **Features**: 
+  - Two-panel plot (main comparison + ratio)
+  - Configurable styling for data and MC
+  - Automatic normalization option
+  - Reference line at ratio = 1
+- **Config keys**: All `DataMC.*` parameters
+
+### `plot_datamc_overlay_multiple(data_file, mc_file, hist_configs, config, outdir, formats, jet_dir="", cent_bin="")`
+**Multiple histogram Data-MC overlay**
+- **Purpose**: Compare multiple histogram types between Data and MC in single plot
+- **Usage**: For systematic studies
+
+---
+
+## Utility Functions
+
+### `draw_cms_label(canvas, config, selection_text="")`
+**Draw official CMS label and experiment info**
+- **Features**: CMS logo, preliminary/simulation text, energy, luminosity
+- **Config keys**: `CMSLabel`, `CMSEnergyText`, `CMSLuminosity`, `CMSExtraText`
+
+### `get_cms_text(config)`
+**Generate CMS text label from configuration**
+- **Purpose**: Format CMS label text for display
+- **Output**: Formatted string like "CMS Preliminary" or "CMS Simulation"
+
+### `create_output_dirs(base_dir, config, jet_dirs=None)`
+**Create organized output directory structure**
+- **Structure**: `base/1D/`, `base/2D/`, `base/overlays/`, etc.
+- **Jet-specific**: Creates subdirectories for each jet collection
+
+### `get_selection_text(config, jet_dir="", cent_bin="")`
+**Generate selection criteria text for plots**
+- **Sources**: Configuration parameters or custom text
+- **Config keys**: `SelectionText`, `SelectionPhotonPtMin`, `SelectionJetPtMin`, etc.
+
+### `save_canvas(canvas, outdir, name, formats, jet_dir="", cent_bin="")`
+**Save canvas in multiple formats**
+- **Features**: Automatic filename generation with jet/centrality info
+- **Formats**: PDF, PNG, ROOT, etc.
+
+### `get_centrality_label(cent_bin, config=None)` / `get_jet_label(jet_dir)`
+**Format display labels**
+- **Purpose**: Convert internal names to display-ready labels
+- **Examples**: `cent0to60` → `"Centrality 0-30%"`, `AK4Z2` → `"AK R=0.4, Z_cut=0.2"`
+
+### `parse_overlay_jets(config)` / `parse_overlay_centrality(config)`
+**Parse overlay configuration**
+- **Purpose**: Determine which collections/bins to overlay
+- **Config keys**: `OverlayJetCollections`, `OverlayCentralityBins`
+
+---
+
+## Main Function
+
+### `main()`
+**Enhanced main function with full Data-MC support**
+- **Modes**: 
+  - Single file plotting
+  - Data-MC comparison mode
+  - Test mode (limited plots)
+- **Command line options**:
+  ```bash
+  -r/--rootfile: Input ROOT file (Data file for Data-MC)
+  -c/--config: Configuration file
+  -o/--outdir: Output directory
+  --mc-file: MC file for Data-MC comparison
+  --datamc-mode: Enable Data-MC mode
+  --datamc-plots: Specific plots to compare
+  --batch: Batch mode (no GUI)
+  --verbose: Verbose output
+  --test: Test mode
+  --jet-dir: Specific jet collection
+  --cent-bin: Specific centrality bin
+  ```
+
+---
+
+## Available Config Options
+
+### Basic Settings
+```
+EnablePlotting: 1
+SavePlots: 1
+PlotFormats: pdf,png,root
+UseNestedStructure: 1
+PlotOutputDir: /path/to/output
+```
+
+### CMS Labeling
+```
+UseCMSStyle: 1
+CMSLabel: Preliminary
+CMSEnergyText: 5.36 TeV PbPb
+CMSLuminosity: 1.72 nb^{-1}
+CMSExtraText: Simulation
+```
+
+### Colors and Styling
+```
+ColorScheme: petroff6
+UseColorBlind: 1
+CanvasWidth: 800
+CanvasHeight: 600
+CanvasMarginLeft: 0.15
+CanvasMarginRight: 0.05
+CanvasMarginTop: 0.08
+CanvasMarginBottom: 0.12
+```
+
+### Jet Collections and Centrality
+```
+JetDirectories: AK2Z1,AK2Z2,AK3Z1,AK4Z2,AK8Z4
+CentralityBins: 0,60,180
+```
+
+### Selection Criteria
+```
+SelectionPhotonPtMin: 60
+SelectionPhotonEtaMax: 1.44
+SelectionJetPtMin: 40
+SelectionJetEtaMax: 2.0
+SelectionDeltaPhiMin: 2π/3
+SelectionText: Custom selection text
+```
+
+### Data-MC Comparison
+```
+DataMC.DataLabel: Data
+DataMC.MCLabel: PYTHIA8
+DataMC.DataColor: 1
+DataMC.MCColor: 2
+DataMC.RatioTitle: Data/MC
+DataMC.RatioYMin: 0.5
+DataMC.RatioYMax: 1.5
+DataMC.Normalize: 1
+```
+
+### Histogram Definitions
+```
+Histogram.JetPt.Name: hJetPt
+Histogram.JetPt.Title: Jet p_{T};p_{T} [GeV/c];Entries
+Histogram.JetPt.Bins: 100
+Histogram.JetPt.XMin: 0
+Histogram.JetPt.XMax: 200
+Histogram.JetPt.LogY: 1
+Histogram.JetPt.PlotType: 1D
+Histogram.JetPt.Color: auto
+Histogram.JetPt.DrawOption: hist
+```
+
+### Overlay Settings
+```
+OverlayPlots: JetPt,JetEta,DeltaPhi
+OverlayJetCollections: AK4Z2,AK8Z4
+OverlayCentralityBins: all
+OverlayByCentrality: 1
+OverlayByJetCollection: 1
+```
+
+---
+
+## Usage Examples
+
+### Basic Data-MC Comparison
+```bash
+python plotGammaJet.py \
+  -r /path/to/data.root \
+  --mc-file /path/to/mc.root \
+  -c DataMC_overlay.config \
+  -o /path/to/output \
+  --datamc-mode \
+  --batch
+```
+
+### Test Specific Plots
+```bash
+python plotGammaJet.py \
+  -r /path/to/data.root \
+  --mc-file /path/to/mc.root \
+  -c DataMC_overlay.config \
+  --datamc-plots JetPt,JetEta,DeltaPhi \
+  --test \
+  --verbose
+```
+
+### Single File Plotting
+```bash
+python plotGammaJet.py \
+  -r /path/to/file.root \
+  -c PlotJetSub_2023_PbPb_Data.config \
+  -o /path/to/output \
+  --jet-dir AK4Z2 \
+  --cent-bin cent0to60
+```
+
+---
+
+## Available Histograms in Config
+
+Based on the `DataMC_overlay.config`, the following histograms are available:
+
+1. **JetPt**: Jet transverse momentum
+2. **JetEta**: Jet pseudorapidity  
+3. **JetPhi**: Jet azimuthal angle
+4. **DeltaPhi**: Angular correlation between photon and jet
+5. **Xj**: Momentum balance (p_T^jet / E_T^photon)
+6. **PhotonEt**: Photon transverse energy
+7. **PhotonEta**: Photon pseudorapidity
+8. **JetMass**: Jet mass
+
+Each histogram has full configuration including binning, axis ranges, log scales, draw options, and styling parameters.
+
+---
+
+## File Structure and Paths
+
+The script is designed to work with:
+- **Data file**: `/eos/user/b/bharikri/www/Run3GammaJet/2025_05_24/2023_PbPb/Data/2025_05_24_HiRawPrime0_part_output.root`
+- **MC file**: `/eos/user/b/bharikri/www/Run3GammaJet/2025_05_24/2023_PbPb/MC/2025_05_24_QCDPhoton30_output.root`
+- **Output**: `/eos/user/b/bharikri/www/Run3GammaJet/2025_05_24/2023_PbPb/DataMC_comparison`
+
+The script automatically creates organized subdirectories for different plot types and jet collections.
+
+For a quick start, see `README.md`. For implementation details, see `gammaJetAnalyzer.cpp` and `plotGammaJet.py`.

@@ -1219,441 +1219,1214 @@ struct PlotOptions {
     double legX1 = 0.7, legY1 = 0.7, legX2 = 0.9, legY2 = 0.9;
     std::string legHeader = "";
     
-    // CMS label settings
-    std::string cmsLabel = "Preliminary";
-    std::string cmsEnergyText = "5.36 TeV PbPb";
-    std::string cmsLuminosity = "1.61 nb^{-1}";
-    
-    // Additional settings
-    bool showErrorBars = true;
-    
-    // CMS label settings
+    // CMS label settings - enhanced with better positioning control
     bool drawCMSLabel = true;
     std::string cmsText = "CMS";
     std::string cmsExtra = "Preliminary";
     std::string lumiText = "";
     bool inFrame = false; // Whether to draw labels inside frame
+    bool autoAdjustMargins = true; // Automatically adjust margins to prevent overlap
+    double cmsLabelXOffset = 0.0; // Additional X offset for CMS labels
+    double cmsLabelYOffset = 0.0; // Additional Y offset for CMS labels
     
-    // Additional text
+    // Enhanced text positioning
+    struct TextConfig {
+        std::string text;
+        double x, y; // NDC coordinates
+        double size = 0.03;
+        int font = 42;
+        int align = 11; // Left-bottom aligned by default
+        int color = 1; // Black
+        TextConfig(const std::string& t, double x_pos, double y_pos) 
+            : text(t), x(x_pos), y(y_pos) {}
+        TextConfig(const std::string& t, double x_pos, double y_pos, double text_size) 
+            : text(t), x(x_pos), y(y_pos), size(text_size) {}
+    };
+    std::vector<TextConfig> additionalTexts;
+    
+    // Legacy support for backward compatibility
     std::vector<std::string> additionalText;
     std::vector<std::pair<double, double>> textPositions; // NDC coordinates
     
-    // Drawing options
+    // Enhanced drawing options
     std::string drawOption = "";
+    std::string histogramDrawOption = "HIST"; // Default for histograms
+    std::string markerDrawOption = "P"; // Default for markers
+    std::string errorDrawOption = "E"; // Default for error bars
     bool normalize = false;
+    bool useCustomDrawOption = false; // Use drawOption for all histograms
+    
+    // Selection text support
+    std::string selectionText = "";
+    double selectionTextX = 0.15;
+    double selectionTextY = 0.75;
+    double selectionTextSize = 0.03;
+    int selectionTextFont = 42;
     
     // Grid
     bool gridX = false;
     bool gridY = false;
     
+    // Statistics box
+    bool drawStats = false;
+    double statsX1 = 0.78, statsY1 = 0.85, statsX2 = 0.98, statsY2 = 0.95;
+    
     PlotOptions() {}
+    
+    // Helper method to add text with easy configuration
+    void addText(const std::string& text, double x, double y, double size = 0.03, int font = 42) {
+        additionalTexts.emplace_back(text, x, y, size);
+        additionalTexts.back().font = font;
+    }
+    
+    // Helper method to calculate safe CMS label positions based on margins
+    std::pair<double, double> getCMSTextPosition() const {
+        if (inFrame) {
+            // Position inside the plot area, respecting margins
+            double x = marginLeft + 0.05; // Small offset from left margin
+            double y = 1.0 - marginTop - 0.15; // Below top margin
+            return {x + cmsLabelXOffset, y + cmsLabelYOffset};
+        } else {
+            // Position outside plot area, above top margin
+            double x = marginLeft;
+            double y = 1.0 - marginTop * 0.3; // Just above the plot frame
+            if (autoAdjustMargins && y > 0.95) {
+                y = 0.95; // Clamp to avoid going off canvas
+            }
+            return {x + cmsLabelXOffset, y + cmsLabelYOffset};
+        }
+    }
+    
+    // Helper method to calculate luminosity text position
+    std::pair<double, double> getLumiTextPosition() const {
+        double x = 1.0 - marginRight - 0.02;
+        double y = inFrame ? (1.0 - marginTop - 0.08) : (1.0 - marginTop * 0.3);
+        if (autoAdjustMargins && y > 0.95) {
+            y = 0.95;
+        }
+        return {x + cmsLabelXOffset, y + cmsLabelYOffset};
+    }
 };
 
-// CMS Label Drawing Functions
-namespace CMSLabels {
-    void DrawCMSText(double x, double y, const std::string& text, double textSize = 0.04) {
-        TLatex latex;
-        latex.SetNDC();
-        latex.SetTextSize(textSize);
-        latex.SetTextFont(61); // Helvetica bold
-        latex.DrawLatex(x, y, text.c_str());
-    }
+// Configuration structures for histogram creation and plotting
+struct HistogramConfig {
+    // Basic histogram properties
+    std::string name = "";
+    std::string title = "";
+    std::string type = "TH1F";  // TH1F, TH2F, TProfile
     
-    void DrawExtraText(double x, double y, const std::string& text, double textSize = 0.035) {
-        TLatex latex;
-        latex.SetNDC();
-        latex.SetTextSize(textSize);
-        latex.SetTextFont(52); // Helvetica italic
-        latex.DrawLatex(x, y, text.c_str());
-    }
+    // Binning
+    int nBinsX = 100;
+    double xMin = 0.0;
+    double xMax = 1.0;
+    int nBinsY = 100;
+    double yMin = 0.0;
+    double yMax = 1.0;
     
-    void DrawLumiText(double x, double y, const std::string& text, double textSize = 0.035) {
-        TLatex latex;
-        latex.SetNDC();
-        latex.SetTextSize(textSize);
-        latex.SetTextFont(42); // Helvetica normal
-        latex.SetTextAlign(31); // Right aligned
-        latex.DrawLatex(x, y, text.c_str());
-    }
+    // Axis labels
+    std::string xTitle = "";
+    std::string yTitle = "";
+    std::string zTitle = "";
     
-    void DrawCMSLabels(const PlotOptions& opts) {
-        if (!opts.drawCMSLabel) return;
+    // Styling
+    int lineColor = 1;
+    int lineStyle = 1;
+    int lineWidth = 2;
+    int markerColor = 1;
+    int markerStyle = 20;
+    double markerSize = 1.0;
+    int fillColor = 0;
+    int fillStyle = 0;
+    
+    // Plot-specific options
+    bool normalize = false;
+    bool logX = false;
+    bool logY = false;
+    bool logZ = false;
+    std::string drawOption = "";
+    
+    // Directory structure
+    std::vector<std::string> directories;
+    
+    HistogramConfig() {}
+};
+
+// Add EventBranches structure
+struct EventBranches {
+    void setupBranches(TTree* /* tree */) {
+        // Add your branch setup code here
+        // This is just a placeholder
+    }
+};
+
+// Helper function to recursively collect .root files
+std::vector<std::string> GetFiles(const std::string &dir, int limit = 99999) {
+    std::vector<std::string> out;
+    TSystemDirectory sd(dir.c_str(), dir.c_str());
+    if (auto *lst = sd.GetListOfFiles()) {
+        TIter next(lst);
+        while (auto *f = (TSystemFile*)next()) {
+            if ((int)out.size() >= limit) break;
+            std::string name = f->GetName();
+            if (f->IsDirectory() && name.find('.') == std::string::npos) {
+                auto sub = GetFiles(dir + "/" + name, limit - out.size());
+                out.insert(out.end(), sub.begin(), sub.end());
+            } else if (name.rfind(".root") != std::string::npos) {
+                out.push_back(dir + "/" + name);
+            }
+        }
+    }
+    return out;
+}
+
+// Add helper function for range parsing
+std::pair<double, double> parseRange(const std::string& rangeStr) {
+    size_t pos = rangeStr.find(",");
+    if (pos != std::string::npos) {
+        return {std::stod(rangeStr.substr(0, pos)), 
+                std::stod(rangeStr.substr(pos + 1))};
+    }
+    return {0.0, 100.0}; // default range
+}
+
+// Add helper function for vector parsing
+std::vector<double> parseVector(const std::string& vecStr) {
+    std::vector<double> result;
+    std::string temp = vecStr;
+    size_t pos = 0;
+    while ((pos = temp.find(",")) != std::string::npos) {
+        result.push_back(std::stod(temp.substr(0, pos)));
+        temp.erase(0, pos + 1);
+    }
+    if (!temp.empty()) {
+        result.push_back(std::stod(temp));
+    }
+    return result;
+}
+
+// Config loading functions
+bool loadConfig(Config& cfg, const std::string& configPath) {
+    TEnv config;
+    if (config.ReadFile(configPath.c_str(), kEnvGlobal) < 0) {
+        std::cerr << "Error reading config file" << std::endl;
+        return false;
+    }
+    return cfg.loadFromEnv(config);
+}
+
+bool loadHistConfig(std::map<std::string, HistConfig>& histConfigs, const std::string& histConfigPath) {
+    TEnv config;
+    if (config.ReadFile(histConfigPath.c_str(), kEnvGlobal) < 0) {
+        std::cerr << "Error reading histogram config file" << std::endl;
+        return false;
+    }
+
+    gStyle->SetOptStat(0);
+    if (config.GetValue("Global.CMS_Style", 1)) {
+        gStyle->SetPadTickX(1);
+        gStyle->SetPadTickY(1);
+    }
+
+    const char* histTypes[] = {"PhotonEt", "JetPt", "DeltaPhi"};
+    for (const auto& hist : histTypes) {
+        std::string base = std::string("Hist.") + hist;
+        HistConfig hc;
+        hc.title = config.GetValue((base + ".title").c_str(), hist);
+        hc.bins = config.GetValue((base + ".bins").c_str(), 50);
         
-        double cmsTextSize = 0.04;
-        double extraTextSize = 0.035;
-        double lumiTextSize = 0.035;
+        std::string rangeStr = config.GetValue((base + ".range").c_str(), "0,100");
+        auto [min, max] = parseRange(rangeStr);
+        hc.range_min = min;
+        hc.range_max = max;
         
-        if (opts.inFrame) {
-            // In-frame positioning
-            DrawCMSText(0.25, 0.85, opts.cmsText, cmsTextSize);
-            if (!opts.cmsExtra.empty()) {
-                DrawExtraText(0.25, 0.80, opts.cmsExtra, extraTextSize);
+        hc.y_log = config.GetValue((base + ".y_log").c_str(), false);
+        
+        // Parse centrality and eta bins
+        std::string centStr = config.GetValue((base + ".centrality_bins").c_str(), "0,30,60,180");
+        hc.centrality_bins = parseVector(centStr);
+        
+        std::string etaStr = config.GetValue((base + ".eta_bins").c_str(), "");
+        if (!etaStr.empty()) {
+            hc.eta_bins = parseVector(etaStr);
+        }
+        
+        histConfigs[hist] = hc;
+    }
+    return true;
+}
+
+// Add directory creation helper
+bool createDirectory(const std::string& path) {
+    if (path.empty()) return false;
+    
+    std::string fullPath = path;
+    if (fullPath.back() == '/') fullPath.pop_back();
+    
+    size_t pos = 0;
+    std::string dir;
+    int status = 0;
+
+    while ((pos = fullPath.find('/', pos)) != std::string::npos) {
+        dir = fullPath.substr(0, pos);
+        if (!dir.empty()) {
+            status = gSystem->Exec(("test -d " + dir).c_str());
+            if (status != 0) {
+                status = gSystem->Exec(("mkdir -p " + dir).c_str());
+                if (status != 0) {
+                    std::cerr << "Error creating directory: " << dir << std::endl;
+                    return false;
+                }
             }
-            if (!opts.lumiText.empty()) {
-                DrawLumiText(0.95, 0.92, opts.lumiText, lumiTextSize);
+        }
+        pos++;
+    }
+    
+    status = gSystem->Exec(("test -d " + fullPath).c_str());
+    if (status != 0) {
+        status = gSystem->Exec(("mkdir -p " + fullPath).c_str());
+        if (status != 0) {
+            std::cerr << "Error creating directory: " << fullPath << std::endl;
+            return false;
+        }
+    }
+    
+    return true;
+}
+
+
+void ListBranchesAndTypes(TTree* tree, const TString& prefix = "") {
+    if (!tree) return;
+
+    std::cout << prefix << "Tree: " << tree->GetName() << "\n";
+    TObjArray* branches = tree->GetListOfBranches();
+
+    for (int i = 0; i < branches->GetEntries(); ++i) {
+        TBranch* br = (TBranch*)branches->At(i);
+        Bool_t isActive = tree->GetBranchStatus(br->GetName());
+        TString statusStr = isActive ? "ENABLED" : "DISABLED";
+
+        TObjArray* leaves = br->GetListOfLeaves();
+        for (int j = 0; j < leaves->GetEntries(); ++j) {
+            TLeaf* leaf = (TLeaf*)leaves->At(j);
+            TString leafName = leaf->GetName();
+            TString typeName = leaf->GetTypeName();
+            TString countStr;
+
+            if (leaf->GetLenStatic() > 1) {
+                countStr = Form("[%d]", leaf->GetLenStatic());
+            } else if (leaf->GetLeafCount()) {
+                countStr = Form("[%s]", leaf->GetLeafCount()->GetName());
             }
-        } else {
-            // Out-of-frame positioning (default)
-            DrawCMSText(0.18, 0.95, opts.cmsText, cmsTextSize);
-            if (!opts.cmsExtra.empty()) {
-                DrawExtraText(0.30, 0.95, opts.cmsExtra, extraTextSize);
-            }
-            if (!opts.lumiText.empty()) {
-                DrawLumiText(0.95, 0.95, opts.lumiText, lumiTextSize);
-            }
+
+            std::cout << "  " << leafName << " : " << typeName
+                      << " " << countStr << " -- " << statusStr << "\n";
         }
     }
 }
 
-// Enhanced 1D Histogram Plotting Function
-TCanvas* Plot_hist_CMS(const std::vector<TH1*>& histos, 
-                       const std::vector<std::string>& labels, 
-                       const std::string& canvasName,
-                       const PlotOptions& opts = PlotOptions()) {
+void ListBranchesAndTypesWithFriends(TChain* base) {
+    if (!base) {
+        std::cerr << "Error: Null TChain pointer.\n";
+        return;
+    }
+
+    // Print base tree branches
+    ListBranchesAndTypes(base, "Base ");
+
+    // Print friends
+    TList* friends = base->GetListOfFriends();
+    if (friends && friends->GetSize() > 0) {
+        TIter nextFriend(friends);
+        TObject* obj;
+        while ((obj = nextFriend())) {
+            TFriendElement* fe = dynamic_cast<TFriendElement*>(obj);
+            if (!fe) continue;
+
+            TTree* friendTree = (TTree*)fe->GetTree();
+            if (!friendTree) {
+                std::cerr << "  Friend " << fe->GetName() << " has null TTree pointer.\n";
+                continue;
+            }
+
+            ListBranchesAndTypes(friendTree, "Friend ");
+        }
+    }
+}
+
+// Header generation functions for dynamic photonJet.h creation
+std::vector<ClassMember> parseHeaderFile(const std::string& headerPath, const std::string& className) {
+    std::vector<ClassMember> members;
+    std::ifstream file(headerPath);
     
-    if (histos.empty()) {
-        log(LOG_ERROR, "Plot_hist_CMS: No histograms provided");
-        return nullptr;
+    if (!file.is_open()) {
+        std::cerr << "Could not open header file: " << headerPath << std::endl;
+        return members;
     }
     
-    // Apply CMS style
-    CMSStyle::SetCMSStyle();
+    std::string line;
+    bool inClass = false;
+    bool inPublicSection = false;
     
-    // Create canvas
-    TCanvas* canvas = new TCanvas(canvasName.c_str(), opts.title.c_str(), 
-                                 opts.canvasWidth, opts.canvasHeight);
-    
-    // Get color scheme
-    std::vector<int> colors;
-    std::vector<int> markers;
-    
-    switch (opts.colorScheme) {
-        case PlotOptions::PETROFF6:
-            colors = CMSColors::PetroffColors6;
+    while (std::getline(file, line)) {
+        // Skip comments and empty lines
+        if (line.empty() || line.find("//") == 0) continue;
+        
+        // Check if we're entering the class
+        if (line.find("class " + className) != std::string::npos) {
+            inClass = true;
+            continue;
+        }
+        
+        if (!inClass) continue;
+        
+        // Check for public section
+        if (line.find("public :") != std::string::npos || 
+            line.find("public:") != std::string::npos) {
+            inPublicSection = true;
+            continue;
+        }
+        
+        // Check for private/protected sections (stop parsing member variables)
+        if (line.find("private") != std::string::npos || 
+            line.find("protected") != std::string::npos) {
+            inPublicSection = false;
+            continue;
+        }
+        
+        // End of class
+        if (line.find("};") != std::string::npos && inClass) {
             break;
-        case PlotOptions::PETROFF10:
-            colors = CMSColors::PetroffColors10;
-            break;
-        case PlotOptions::TRADITIONAL:
-            colors = CMSColors::TraditionalColors;
-            break;
-        case PlotOptions::CUSTOM:
-            colors = opts.customColors;
-            markers = opts.customMarkers;
-            break;
-    }
-    
-    if (markers.empty()) {
-        markers = CMSColors::MarkerStyles;
-    }
-    
-    // Find maximum for scaling
-    double maxVal = 0;
-    for (auto* h : histos) {
-        if (h && h->GetMaximum() > maxVal) {
-            maxVal = h->GetMaximum();
-        }
-    }
-    
-    // Configure and draw histograms
-    for (size_t i = 0; i < histos.size(); ++i) {
-        if (!histos[i]) continue;
-        
-        auto* h = histos[i];
-        
-        // Normalize if requested
-        if (opts.normalize && h->Integral() > 0) {
-            h->Scale(1.0 / h->Integral());
         }
         
-        // Set style
-        int colorIndex = i % colors.size();
-        int markerIndex = i % markers.size();
+        if (!inPublicSection) continue;
         
-        h->SetLineColor(colors[colorIndex]);
-        h->SetMarkerColor(colors[colorIndex]);
-        h->SetMarkerStyle(markers[markerIndex]);
-        h->SetMarkerSize(1.2);
-        h->SetLineWidth(2);
+        // Parse member variables
+        line = line.substr(line.find_first_not_of(" \t")); // trim leading whitespace
         
-        // Set titles
-        h->SetTitle("");
-        if (!opts.xtitle.empty()) h->GetXaxis()->SetTitle(opts.xtitle.c_str());
-        if (!opts.ytitle.empty()) h->GetYaxis()->SetTitle(opts.ytitle.c_str());
+        // Skip function declarations, constructors, etc.
+        if (line.find("(") != std::string::npos || 
+            line.find("virtual") != std::string::npos ||
+            line.find("~") != std::string::npos ||
+            line.find("//") == 0) continue;
         
-        // Set ranges
-        if (opts.setXRange) h->GetXaxis()->SetRangeUser(opts.xmin, opts.xmax);
-        if (opts.setYRange) h->GetYaxis()->SetRangeUser(opts.ymin, opts.ymax);
-        
-        // Draw
-        std::string drawOpt = (i == 0) ? opts.drawOption : opts.drawOption + " same";
-        if (drawOpt.empty()) {
-            drawOpt = (i == 0) ? "E1" : "E1 same";
-        }
-        h->Draw(drawOpt.c_str());
-    }
-    
-    // Set log scales
-    if (opts.logX) canvas->SetLogx();
-    if (opts.logY) canvas->SetLogy();
-    
-    // Set grid
-    if (opts.gridX || opts.gridY) {
-        canvas->SetGrid(opts.gridX, opts.gridY);
-    }
-    
-    // Draw legend
-    if (opts.drawLegend && !labels.empty()) {
-        TLegend* legend = new TLegend(opts.legX1, opts.legY1, opts.legX2, opts.legY2);
-        legend->SetFillStyle(0);
-        legend->SetBorderSize(0);
-        legend->SetTextFont(42);
-        legend->SetTextSize(0.035);
-        
-        if (!opts.legHeader.empty()) {
-            legend->SetHeader(opts.legHeader.c_str());
-        }
-        
-        for (size_t i = 0; i < std::min(histos.size(), labels.size()); ++i) {
-            if (histos[i]) {
-                legend->AddEntry(histos[i], labels[i].c_str(), "lep");
+        // Parse ROOT::VecOps::RVec<type> *varName;
+        if (line.find("ROOT::VecOps::RVec<") != std::string::npos) {
+            size_t start = line.find("*") + 1;
+            size_t end = line.find(";");
+            if (start != std::string::npos && end != std::string::npos) {
+                std::string varName = line.substr(start, end - start);
+                varName.erase(0, varName.find_first_not_of(" \t"));
+                varName.erase(varName.find_last_not_of(" \t") + 1);
+                
+                std::string vecType;
+                if (line.find("RVec<float>") != std::string::npos) {
+                    vecType = "ROOT::VecOps::RVec<float>*";
+                } else if (line.find("RVec<int>") != std::string::npos) {
+                    vecType = "ROOT::VecOps::RVec<int>*";
+                }
+                
+                members.emplace_back(varName, vecType);
             }
         }
-        legend->Draw();
+        // Parse simple types: Int_t, Float_t, etc.
+        else if (line.find("Int_t") != std::string::npos || 
+                 line.find("Float_t") != std::string::npos ||
+                 line.find("UInt_t") != std::string::npos ||
+                 line.find("ULong64_t") != std::string::npos) {
+            
+            size_t end = line.find(";");
+            if (end == std::string::npos) continue;
+            
+            std::string varDecl = line.substr(0, end);
+            
+            // Check for arrays
+            size_t arrayStart = varDecl.find("[");
+            size_t arrayEnd = varDecl.find("]");
+            
+            if (arrayStart != std::string::npos && arrayEnd != std::string::npos) {
+                // Array variable
+                std::string arraySize = varDecl.substr(arrayStart + 1, arrayEnd - arrayStart - 1);
+                int size = 0;
+                try {
+                    size = std::stoi(arraySize);
+                } catch (...) {
+                    size = 0; // Use dynamic size if can't parse
+                }
+                
+                size_t nameStart = varDecl.find_last_of(" \t", arrayStart) + 1;
+                std::string varName = varDecl.substr(nameStart, arrayStart - nameStart);
+                
+                std::string baseType;
+                if (line.find("Float_t") != std::string::npos) {
+                    baseType = "float";
+                } else if (line.find("Int_t") != std::string::npos) {
+                    baseType = "int";
+                }
+                
+                members.emplace_back(varName, baseType, true, size);
+            } else {
+                // Simple variable
+                size_t nameStart = varDecl.find_last_of(" \t") + 1;
+                std::string varName = varDecl.substr(nameStart);
+                varName.erase(0, varName.find_first_not_of(" \t"));
+                varName.erase(varName.find_last_not_of(" \t") + 1);
+                
+                std::string baseType;
+                if (line.find("Int_t") != std::string::npos) {
+                    baseType = "int";
+                } else if (line.find("Float_t") != std::string::npos) {
+                    baseType = "float";
+                } else if (line.find("UInt_t") != std::string::npos) {
+                    baseType = "unsigned int";
+                } else if (line.find("ULong64_t") != std::string::npos) {
+                    baseType = "unsigned long long";
+                }
+                
+                members.emplace_back(varName, baseType);
+            }
+        }
     }
     
-    // Draw CMS labels
-    CMSLabels::DrawCMSLabels(opts);
-    
-    // Draw additional text
-    for (size_t i = 0; i < opts.additionalText.size() && i < opts.textPositions.size(); ++i) {
-        TLatex latex;
-        latex.SetNDC();
-        latex.SetTextFont(42);
-        latex.SetTextSize(0.03);
-        latex.DrawLatex(opts.textPositions[i].first, opts.textPositions[i].second, 
-                       opts.additionalText[i].c_str());
-    }
-    
-    canvas->Update();
-    log(LOG_INFO, "Created CMS-style 1D histogram plot: " + canvasName);
-    return canvas;
+    file.close();
+    return members;
 }
 
-// Enhanced 2D Histogram Plotting Function
-TCanvas* Plot_hist2D_CMS(TH2* histo, 
-                         const std::string& canvasName,
-                         const PlotOptions& opts = PlotOptions()) {
-    
-    if (!histo) {
-        log(LOG_ERROR, "Plot_hist2D_CMS: No histogram provided");
-        return nullptr;
-    }
-    
-    // Apply CMS style
-    CMSStyle::SetCMSStyle();
-    
-    // Set viridis colormap for 2D plots if not specified otherwise
-    if (opts.drawOption.find("colz") != std::string::npos || 
-        opts.drawOption.find("COLZ") != std::string::npos || 
-        opts.drawOption.empty()) {
-        CMSColors::SetViridisColormap();
-    }
-    
-    // Create canvas
-    TCanvas* canvas = new TCanvas(canvasName.c_str(), opts.title.c_str(), 
-                                 opts.canvasWidth, opts.canvasHeight);
-    
-    // Adjust right margin for color palette
-    canvas->SetRightMargin(0.15);
-    
-    // Configure histogram
-    histo->SetTitle("");
-    if (!opts.xtitle.empty()) histo->GetXaxis()->SetTitle(opts.xtitle.c_str());
-    if (!opts.ytitle.empty()) histo->GetYaxis()->SetTitle(opts.ytitle.c_str());
-    if (!opts.ztitle.empty()) histo->GetZaxis()->SetTitle(opts.ztitle.c_str());
-    
-    // Set ranges
-    if (opts.setXRange) histo->GetXaxis()->SetRangeUser(opts.xmin, opts.xmax);
-    if (opts.setYRange) histo->GetYaxis()->SetRangeUser(opts.ymin, opts.ymax);
-    if (opts.setZRange) histo->GetZaxis()->SetRangeUser(opts.zmin, opts.zmax);
-    
-    // Draw histogram
-    std::string drawOpt = opts.drawOption.empty() ? "COLZ" : opts.drawOption;
-    histo->Draw(drawOpt.c_str());
-    
-    // Set log scales
-    if (opts.logX) canvas->SetLogx();
-    if (opts.logY) canvas->SetLogy();
-    if (opts.logZ) canvas->SetLogz();
-    
-    // Set grid
-    if (opts.gridX || opts.gridY) {
-        canvas->SetGrid(opts.gridX, opts.gridY);
-    }
-    
-    // Draw CMS labels
-    CMSLabels::DrawCMSLabels(opts);
-    
-    // Draw additional text
-    for (size_t i = 0; i < opts.additionalText.size() && i < opts.textPositions.size(); ++i) {
-        TLatex latex;
-        latex.SetNDC();
-        latex.SetTextFont(42);
-        latex.SetTextSize(0.03);
-        latex.DrawLatex(opts.textPositions[i].first, opts.textPositions[i].second, 
-                       opts.additionalText[i].c_str());
-    }
-    
-    canvas->Update();
-    log(LOG_INFO, "Created CMS-style 2D histogram plot: " + canvasName);
-    return canvas;
-}
-
-// Enhanced Multi-Plot Overlay Function
-TCanvas* Plot_overlay_CMS(const std::vector<TH1*>& histos,
-                          const std::vector<std::string>& labels,
-                          const std::string& canvasName,
-                          const PlotOptions& opts = PlotOptions()) {
-    
-    if (histos.empty()) {
-        log(LOG_ERROR, "Plot_overlay_CMS: No histograms provided");
-        return nullptr;
-    }
-    
-    // Use the enhanced 1D plotting function
-    return Plot_hist_CMS(histos, labels, canvasName, opts);
-}
-
-// Ratio Plot Function (Data/MC comparison)
-TCanvas* Plot_ratio_CMS(TH1* data, TH1* mc, 
-                        const std::string& canvasName,
-                        const PlotOptions& opts = PlotOptions()) {
-    
-    if (!data || !mc) {
-        log(LOG_ERROR, "Plot_ratio_CMS: Data or MC histogram is null");
-        return nullptr;
-    }
-    
-    // Apply CMS style
-    CMSStyle::SetCMSStyle();
-    
-    // Create canvas with split pads
-    TCanvas* canvas = new TCanvas(canvasName.c_str(), opts.title.c_str(), 
-                                 opts.canvasWidth, opts.canvasHeight);
-    
-    // Create pads
-    TPad* pad1 = new TPad("pad1", "pad1", 0, 0.3, 1, 1.0);
-    TPad* pad2 = new TPad("pad2", "pad2", 0, 0.0, 1, 0.3);
-    
-    pad1->SetBottomMargin(0.02);
-    pad2->SetTopMargin(0.02);
-    pad2->SetBottomMargin(0.4);
-    
-    pad1->Draw();
-    pad2->Draw();
-    
-    // Main plot (top pad)
-    pad1->cd();
-    if (opts.logY) pad1->SetLogy();
-    
-    // Clone histograms to avoid modifying originals
-    TH1* dataCopy = (TH1*)data->Clone();
-    TH1* mcCopy = (TH1*)mc->Clone();
-    
-    // Style data
-    dataCopy->SetMarkerColor(kBlack);
-    dataCopy->SetMarkerStyle(kFullCircle);
-    dataCopy->SetMarkerSize(1.0);
-    dataCopy->SetLineColor(kBlack);
-    dataCopy->SetLineWidth(2);
-    
-    // Style MC
-    mcCopy->SetLineColor(kRed);
-    mcCopy->SetLineWidth(2);
-    mcCopy->SetFillColorAlpha(kRed, 0.3);
-    
-    // Set ranges and titles
-    if (opts.setYRange) {
-        dataCopy->GetYaxis()->SetRangeUser(opts.ymin, opts.ymax);
-    }
-    dataCopy->SetTitle("");
-    dataCopy->GetYaxis()->SetTitle(opts.ytitle.c_str());
-    dataCopy->GetYaxis()->SetTitleSize(0.05);
-    dataCopy->GetYaxis()->SetLabelSize(0.04);
-    
-    // Draw
-    mcCopy->Draw("HIST");
-    dataCopy->Draw("E1 same");
-    
-    // Legend
-    if (opts.drawLegend) {
-        TLegend* legend = new TLegend(0.7, 0.7, 0.9, 0.9);
-        legend->SetFillStyle(0);
-        legend->SetBorderSize(0);
-        legend->AddEntry(dataCopy, "Data", "lep");
-        legend->AddEntry(mcCopy, "MC", "f");
-        legend->Draw();
-    }
-    
-    // Ratio plot (bottom pad)
-    pad2->cd();
-    TH1* ratio = (TH1*)dataCopy->Clone("ratio");
-    ratio->Divide(mcCopy);
-    
-    ratio->SetTitle("");
-    ratio->GetXaxis()->SetTitle(opts.xtitle.c_str());
-    ratio->GetYaxis()->SetTitle("Data/MC");
-    ratio->GetXaxis()->SetTitleSize(0.15);
-    ratio->GetXaxis()->SetLabelSize(0.12);
-    ratio->GetYaxis()->SetTitleSize(0.15);
-    ratio->GetYaxis()->SetLabelSize(0.12);
-    ratio->GetYaxis()->SetTitleOffset(0.4);
-    ratio->GetYaxis()->SetRangeUser(0.5, 1.5);
-    ratio->GetYaxis()->SetNdivisions(505);
-    
-    ratio->SetMarkerColor(kBlack);
-    ratio->SetMarkerStyle(kFullCircle);
-    ratio->SetMarkerSize(1.0);
-    ratio->SetLineColor(kBlack);
-    
-    ratio->Draw("E1");
-    
-    // Draw unity line
-    TLine* line = new TLine(ratio->GetXaxis()->GetXmin(), 1.0, 
-                           ratio->GetXaxis()->GetXmax(), 1.0);
-    line->SetLineColor(kRed);
-    line->SetLineStyle(2);
-    line->Draw();
-    
-    // Draw CMS labels on main pad
-    pad1->cd();
-    CMSLabels::DrawCMSLabels(opts);
-    
-    canvas->cd();
-    canvas->Update();
-    log(LOG_INFO, "Created CMS-style ratio plot: " + canvasName);
-    return canvas;
-}
-
-// Convenience function to save canvas in multiple formats
-void SaveCanvas_CMS(TCanvas* canvas, const std::string& outputDir, const std::string& name,
-                    const std::vector<std::string>& formats = {"png", "pdf", "eps"}) {
-    if (!canvas) {
-        log(LOG_ERROR, "SaveCanvas_CMS: Canvas is null");
+void generatePhotonJetHeader(const Config& cfg) {
+    // Check if header regeneration is enabled
+    if (!cfg.regenerateHeader) {
+        std::cout << "[LOG] Header regeneration disabled by config. Skipping header generation." << std::endl;
         return;
     }
     
-    // Create output directory if it doesn't exist
-    gSystem->mkdir(outputDir.c_str(), kTRUE);
+    // Determine class name and header path based on config
+    std::string className, headerPath;
     
-    for (const auto& format : formats) {
-        std::string filename = outputDir + "/" + name + "." + format;
-        canvas->SaveAs(filename.c_str());
-        log(LOG_DEBUG, "Saved plot: " + filename);
+    if (cfg.system.find("2023_PbPb") != std::string::npos) {
+        if (cfg.dataType == "MC") {
+            className = "GammaJet2023_PbPbMC";
+        } else {
+            className = "GammaJet2023_PbPbData";
+        }
+        
+        // Try multiple possible paths for the header file
+        std::vector<std::string> possiblePaths = {
+            "./include/" + className + ".h",
+            "../include/" + className + ".h",
+            "include/" + className + ".h",
+            "/afs/cern.ch/user/b/bharikri/private/HeavyIon/run3_gamma_jet/CMSSW_13_2_13/src/HeavyIonsAnalysis/JetAnalysis/test/2_SkimPlotSubstructure/include/" + className + ".h"
+        };
+        
+        for (const auto& path : possiblePaths) {
+            std::ifstream testFile(path);
+            if (testFile.good()) {
+                headerPath = path;
+                break;
+            }
+        }
+    } else if (cfg.system.find("2024_ppRef") != std::string::npos) {
+        // Example of adding support for a new collision system
+        if (cfg.dataType == "MC") {
+            className = "GammaJet2024_ppRefMC";
+        } else {
+            className = "GammaJet2024_ppRefData";
+        }
+        
+        // Try multiple possible paths for the header file
+        std::vector<std::string> possiblePaths = {
+                       "./include/" + className + ".h",
+            "../include/" + className + ".h",
+            "include/" + className + ".h",
+            "/afs/cern.ch/user/b/bharikri/private/HeavyIon/run3_gamma_jet/CMSSW_13_2_13/src/HeavyIonsAnalysis/JetAnalysis/test/2_SkimPlotSubstructure/include/" + className + ".h"
+        };
+        
+        for (const auto& path : possiblePaths) {
+            std::ifstream testFile(path);
+            if (testFile.good()) {
+                headerPath = path;
+                break;
+            }
+        }
+    } else {
+        std::string errorMsg = "Unsupported system: " + cfg.system;
+        std::cerr << errorMsg << std::endl;
+        throw std::runtime_error(errorMsg);
+    }
+    
+    if (headerPath.empty()) {
+        std::string errorMsg = "Could not find header file for " + className;
+        std::cerr << errorMsg << std::endl;
+        throw std::runtime_error(errorMsg);
+    }
+    
+    // Parse the header file
+    std::vector<ClassMember> members = parseHeaderFile(headerPath, className);
+    
+    if (members.empty()) {
+        std::string errorMsg = "No members found in header file: " + headerPath;
+        std::cerr << errorMsg << std::endl;
+        throw std::runtime_error(errorMsg);
+    }
+    
+    // Categorize members by data type only, not by name
+    std::vector<ClassMember> photonVecMembers, photonIntMembers, jetArrayMembers;
+    std::set<std::string> jetCollections;
+    
+    for (const auto& member : members) {
+        if (member.type.find("ROOT::VecOps::RVec<float>*") != std::string::npos) {
+            photonVecMembers.push_back(member);
+        } else if (member.type.find("ROOT::VecOps::RVec<int>*") != std::string::npos) {
+            photonVecMembers.push_back(member);
+        } else if ((member.type == "int" || member.type == "unsigned int" || 
+                   member.type == "unsigned long long") && !member.isArray) {
+            photonIntMembers.push_back(member);
+        } else if (member.isArray) {
+            // Extract jet collection prefix if it exists
+            size_t underscorePos = member.name.find("_");
+            if (underscorePos != std::string::npos) {
+                std::string prefix = member.name.substr(0, underscorePos);
+                jetCollections.insert(prefix);
+            }
+            jetArrayMembers.push_back(member);
+        }
+    }
+    
+    // Check if photonJet.h already exists and read existing content
+    std::string outputHeaderPath = "../include/photonJet.h";
+    std::string existingContent;
+    bool headerExists = false;
+    
+    std::ifstream existingFile(outputHeaderPath);
+    if (existingFile.is_open()) {
+        headerExists = true;
+        std::string line;
+        while (std::getline(existingFile, line)) {
+            existingContent += line + "\n";
+        }
+        existingFile.close();
+    }
+    
+    // Generate new structure content
+    // Create system-specific struct name by replacing non-alphanumeric chars with underscores
+    std::string systemSuffix = cfg.system;
+    std::replace(systemSuffix.begin(), systemSuffix.end(), '-', '_');
+    std::replace(systemSuffix.begin(), systemSuffix.end(), ' ', '_');
+    
+    // Include both system and data type in the structure name
+    std::string structName = "PhotonJetMemberMaps_" + systemSuffix + "_" + cfg.dataType;
+    auto [typeAliases, structContent] = generateStructureContent(cfg, className, photonVecMembers, photonIntMembers, jetArrayMembers);
+    
+    // Write the header file
+    std::ofstream headerFile(outputHeaderPath);
+    if (!headerFile.is_open()) {
+        std::string errorMsg = "Error: Could not open " + outputHeaderPath + " for writing";
+        std::cerr << errorMsg << std::endl;
+        throw std::runtime_error(errorMsg);
+    }
+    
+    if (headerExists) {
+        // Parse existing content and update/add the specific structure
+        updateExistingHeader(headerFile, existingContent, cfg, className, typeAliases, structContent);
+    } else {
+        // Create new header from scratch
+        createNewHeader(headerFile, cfg, className, typeAliases, structContent);
+    }
+    
+    headerFile.close();
+    
+    std::cout << "Successfully updated photonJet.h for " << cfg.system << " " << cfg.dataType << std::endl;
+    std::cout << "Found " << photonVecMembers.size() << " photon vector variables" << std::endl;
+    std::cout << "Found " << photonIntMembers.size() << " photon integer variables" << std::endl;
+    std::cout << "Found " << jetArrayMembers.size() << " jet array variables" << std::endl;
+    std::cout << "Jet collections: ";
+    for (const auto& collection : jetCollections) {
+        std::cout << collection << " ";
+    }
+    std::cout << std::endl;
+}
+
+// Helper function implementations for header generation
+// Split the structure content generation into two parts: type aliases and struct definition
+std::pair<std::string, std::string> generateStructureContent(const Config& cfg, const std::string& className, 
+                                   const std::vector<ClassMember>& photonVecMembers,
+                                   const std::vector<ClassMember>& photonIntMembers,
+                                   const std::vector<ClassMember>& jetArrayMembers) {
+    std::ostringstream typeAliases;
+    std::ostringstream structContent;
+    
+    // Create system-specific suffix by replacing non-alphanumeric chars with underscores
+    std::string systemSuffix = cfg.system;
+    std::replace(systemSuffix.begin(), systemSuffix.end(), '-', '_');
+    std::replace(systemSuffix.begin(), systemSuffix.end(), ' ', '_');
+    
+    // Combined suffix for both system and data type
+    std::string combinedSuffix = systemSuffix + "_" + cfg.dataType;
+    
+    // Generate type aliases with proper array handling
+    typeAliases << "// Type aliases for " << cfg.system << " " << cfg.dataType << " pointer-to-member types" << std::endl;
+    typeAliases << "using PhotonVecPtr_" << combinedSuffix << " = ROOT::VecOps::RVec<float>* " << className << "::*;" << std::endl;
+    typeAliases << "using PhotonVecIntPtr_" << combinedSuffix << " = ROOT::VecOps::RVec<int>* " << className << "::*;" << std::endl;
+    typeAliases << "// Using void* to safely handle all integer types (int, unsigned int, unsigned long long)" << std::endl;
+    typeAliases << "using PhotonIntPtr_" << combinedSuffix << " = void* " << className << "::*;" << std::endl;
+    
+    // Use void* for arrays to handle different array sizes safely
+    typeAliases << "// Using void* for jet arrays to handle different array sizes safely" << std::endl;
+    typeAliases << "using JetArrPtr_" << combinedSuffix << " = void* " << className << "::*;" << std::endl;
+    
+    // Generate structure with corrected map types
+    structContent << "struct PhotonJetMemberMaps_" << combinedSuffix << " {" << std::endl;
+    structContent << "    std::map<std::string, PhotonVecPtr_" << combinedSuffix << "> photonVecMap;" << std::endl;
+    structContent << "    std::map<std::string, PhotonVecIntPtr_" << combinedSuffix << "> photonVecIntMap;" << std::endl;
+    structContent << "    std::map<std::string, void*> photonIntMap; // stores pointer-to-member as void*" << std::endl;
+    structContent << "    std::map<std::string, void*> jetArrMap; // handles arrays of all sizes as void*" << std::endl;
+    structContent << "    " << std::endl;
+    
+    // Add helper methods for type-safe array access using union technique
+    structContent << "    // Helper union for safe pointer-to-member-array casting" << std::endl;
+    structContent << "    union PtrToMemberCaster {" << std::endl;
+    structContent << "        void* voidPtr;" << std::endl;
+    structContent << "        // Template constructor for arrays" << std::endl;
+    structContent << "        template<typename T, int N>" << std::endl;
+    structContent << "        PtrToMemberCaster(T (" << className << "::*ptr)[N]) {" << std::endl;
+    structContent << "            // Store the bit pattern as a void* - safe for storage only" << std::endl;
+    structContent << "            static_assert(sizeof(ptr) <= sizeof(void*), \"Pointer-to-member too large\");" << std::endl;
+    structContent << "            voidPtr = nullptr;" << std::endl;
+    structContent << "            std::memcpy(&voidPtr, &ptr, sizeof(ptr));" << std::endl;
+    structContent << "        }" << std::endl;
+    structContent << "    };" << std::endl;
+    structContent << "    " << std::endl;
+    
+    // Add helper methods for type-safe array access
+    structContent << "    // Helper methods for type-safe array access" << std::endl;
+    structContent << "    template<typename T, int N>" << std::endl;
+    structContent << "    bool setArrayPtr(const std::string& name, T (" << className << "::*ptr)[N]) {" << std::endl;
+    structContent << "        PtrToMemberCaster caster(ptr);" << std::endl;
+    structContent << "        jetArrMap[name] = caster.voidPtr;" << std::endl;
+    structContent << "        return true;" << std::endl;
+    structContent << "    }" << std::endl;
+    structContent << "    " << std::endl;
+    
+    structContent << "    PhotonJetMemberMaps_" << combinedSuffix << "() {" << std::endl;
+    
+    // Add photon vector variables
+    structContent << "        // Initialize photon vector variables" << std::endl;
+    for (const auto& member : photonVecMembers) {
+        if (member.type.find("float") != std::string::npos) {
+            structContent << "        photonVecMap[\"" << member.name << "\"] = &" << className << "::" << member.name << ";" << std::endl;
+        } else if (member.type.find("int") != std::string::npos) {
+            structContent << "        photonVecIntMap[\"" << member.name << "\"] = &" << className << "::" << member.name << ";" << std::endl;
+        }
+    }
+    
+    // Add photon integer variables
+    structContent << "        " << std::endl;
+    structContent << "        // Initialize photon integer variables" << std::endl;
+    for (const auto& member : photonIntMembers) {
+        structContent << "        photonIntMap[\"" << member.name << "\"] = reinterpret_cast<void*>(&" << className << "::" << member.name << ");" << std::endl;
+    }
+    
+    // Add jet array variables using template helper method
+    structContent << "        " << std::endl;
+    structContent << "        // Initialize jet array variables using template helper" << std::endl;
+    for (const auto& member : jetArrayMembers) {
+        structContent << "        setArrayPtr(\"" << member.name << "\", &" << className << "::" << member.name << ");" << std::endl;
+    }
+    
+    structContent << "    }" << std::endl;
+    structContent << "};" << std::endl;
+    
+    return std::make_pair(typeAliases.str(), structContent.str());
+}
+
+void updateExistingHeader(std::ofstream& headerFile, const std::string& existingContent,
+                         const Config& cfg, const std::string& className, 
+                         const std::string& typeAliases, const std::string& structContent) {
+    // Create system-specific struct name by replacing non-alphanumeric chars with underscores
+    std::string systemSuffix = cfg.system;
+    std::replace(systemSuffix.begin(), systemSuffix.end(), '-', '_');
+    std::replace(systemSuffix.begin(), systemSuffix.end(), ' ', '_');
+    
+    // Include both system and data type in the structure name
+    std::string structName = "PhotonJetMemberMaps_" + systemSuffix + "_" + cfg.dataType;
+    
+    // Create a combined suffix for type alias check
+    std::string combinedSuffix = systemSuffix + "_" + cfg.dataType;
+    
+    // Check if type aliases already exist
+    bool hasTypeAliases = existingContent.find("using PhotonVecPtr_" + combinedSuffix) != std::string::npos;
+    
+    // Check if all necessary includes are present, specifically both MC and Data headers
+    std::string mcClassName, dataClassName;
+    if (cfg.system.find("2023_PbPb") != std::string::npos) {
+        mcClassName = "GammaJet2023_PbPbMC";
+        dataClassName = "GammaJet2023_PbPbData";
+    } else if (cfg.system.find("2024_ppRef") != std::string::npos) {
+        mcClassName = "GammaJet2024_ppRefMC";
+        dataClassName = "GammaJet2024_ppRefData";
+    } else {
+        // Use the provided className and derive the complementary one
+        if (cfg.dataType == "MC") {
+            mcClassName = className;
+            dataClassName = className.substr(0, className.size() - 2) + "Data";
+        } else {
+            dataClassName = className;
+            mcClassName = className.substr(0, className.size() - 4) + "MC";
+        }
+    }
+    
+    // Check if includes are properly present
+    bool hasMcInclude = existingContent.find("#include \"" + mcClassName + ".h\"") != std::string::npos;
+    bool hasDataInclude = existingContent.find("#include \"" + dataClassName + ".h\"") != std::string::npos;
+    
+    // Create a working copy of the content that we can modify
+    std::string workingContent = existingContent;
+    
+    // First, let's update the includes if needed
+    if (!hasMcInclude || !hasDataInclude) {
+        // We need to update the includes section
+        size_t pragmaEnd = workingContent.find("#pragma once");
+        if (pragmaEnd != std::string::npos) {
+            pragmaEnd = workingContent.find("\n", pragmaEnd) + 1; // Move to after the newline
+            
+            // Build the new includes section
+            std::string newIncludes = "";
+            if (!hasMcInclude) {
+                newIncludes += "#include \"" + mcClassName + ".h\"\n";
+            }
+            if (!hasDataInclude) {
+                newIncludes += "#include \"" + dataClassName + ".h\"\n";
+            }
+            
+            // Insert the new includes after #pragma once
+            workingContent = workingContent.substr(0, pragmaEnd) + 
+                           newIncludes + 
+                           workingContent.substr(pragmaEnd);
+        }
+    }
+    
+    // Check if the type aliases already exist
+    if (hasTypeAliases) {
+        // Find the position of the type alias to determine where to add the struct
+        // (Currently not used but kept for potential future implementation)
+    }
+    
+    // Check if the structure already exists
+    size_t structStart = workingContent.find("struct " + structName);
+    
+    if (structStart != std::string::npos) {
+        // Structure exists, replace it
+        size_t structEnd = workingContent.find("};", structStart);
+        if (structEnd != std::string::npos) {
+            structEnd += 2; // Include the "};"
+            
+            // Write content before the old structure
+            headerFile << workingContent.substr(0, structStart);
+            
+            // Write just the struct content since type aliases already exist
+            headerFile << structContent << std::endl;
+            
+            // Write content after the old structure
+            headerFile << workingContent.substr(structEnd + 1);
+        } else {
+            // Couldn't find structure end, append new structure
+            headerFile << workingContent << std::endl;
+            
+            // Add type aliases only if needed
+            if (!hasTypeAliases) {
+                headerFile << typeAliases << std::endl;
+            }
+            
+            headerFile << structContent << std::endl;
+        }
+    } else {
+        // Structure doesn't exist, add it
+        size_t insertPos = workingContent.find("// This file should be regenerated");
+        if (insertPos != std::string::npos) {
+            headerFile << workingContent.substr(0, insertPos);
+            
+            // Add type aliases only if needed
+            if (!hasTypeAliases) {
+                headerFile << typeAliases << std::endl;
+            }
+            
+            headerFile << structContent << std::endl << std::endl;
+            headerFile << workingContent.substr(insertPos);
+        } else {
+            // Just append at the end
+            headerFile << workingContent << std::endl;
+            
+            // Add type aliases only if needed
+            if (!hasTypeAliases) {
+                headerFile << typeAliases << std::endl;
+            }
+            
+            headerFile << structContent << std::endl;
+        }
     }
 }
 
+// Create new header from scratch
+void createNewHeader(std::ofstream& headerFile, const Config& cfg, const std::string& className,
+                    const std::string& typeAliases, const std::string& structContent) {
+    headerFile << "// This file is auto-generated based on the config and system." << std::endl;
+    headerFile << "// It provides maps from variable names to pointer-to-member for dynamic access in photonJet.C" << std::endl;
+    headerFile << "#pragma once" << std::endl;
+    
+    // Always include both MC and Data headers for the current system
+    std::string mcClassName, dataClassName;
+    if (cfg.system.find("2023_PbPb") != std::string::npos) {
+        mcClassName = "GammaJet2023_PbPbMC";
+        dataClassName = "GammaJet2023_PbPbData";
+    } else if (cfg.system.find("2024_ppRef") != std::string::npos) {
+        mcClassName = "GammaJet2024_ppRefMC";
+        dataClassName = "GammaJet2024_ppRefData";
+    } else {
+        // Use the provided className and derive the complementary one
+        if (cfg.dataType == "MC") {
+            mcClassName = className;
+            dataClassName = className.substr(0, className.size() - 2) + "Data";
+        } else {
+            dataClassName = className;
+            mcClassName = className.substr(0, className.size() - 4) + "MC";
+        }
+    }
+    
+    headerFile << "#include \"" << mcClassName << ".h\"" << std::endl;
+    headerFile << "#include \"" << dataClassName << ".h\"" << std::endl;
+    headerFile << "#include <map>" << std::endl;
+    headerFile << "#include <string>" << std::endl;
+    headerFile << "#include <vector>" << std::endl;
+    headerFile << std::endl;
+    
+    headerFile << typeAliases << std::endl << std::endl;
+    headerFile << structContent << std::endl;
+    headerFile << std::endl;
+    headerFile << "// This file should be regenerated if the config or system changes." << std::endl;
+}
+
+// Global verbosity level definition
+int g_verbosity = LOG_INFO; // Default verbosity level
+
+// Logging function implementation with colored output
+void log(LogLevel level, const std::string& message) {
+    if (level <= g_verbosity) {
+        std::string prefix, color;
+        switch (level) {
+            case LOG_ERROR: 
+                color = RED_COLOR;
+                prefix = "[ERROR] ";
+                break;
+            case LOG_INFO:  
+                color = BLUE_COLOR;
+                prefix = "[INFO]  ";
+                break;
+            case LOG_DEBUG: 
+                color = CYAN_COLOR;
+                prefix = "[DEBUG] ";
+                break;
+            case LOG_TRACE: 
+                color = MAGENTA_COLOR;
+                prefix = "[TRACE] ";
+                break;
+        }
+        std::cout << color << prefix << RESET_COLOR << message << std::endl;
+    }
+}
+
+// ================================================================================================
+// CMS-STYLE PLOTTING FUNCTIONS WITH M. PETROFF COLOR SCHEMES
+// Following CMS plotting guidelines from arXiv:2107.02270v2
+// ================================================================================================
+
+#include <TCanvas.h>
+#include <TLegend.h>
+#include <TLatex.h>
+#include <TPad.h>
+#include <TGraph.h>
+#include <TGraphErrors.h>
+#include <TGraphAsymmErrors.h>
+#include <TMultiGraph.h>
+#include <THStack.h>
+#include <TColor.h>
+#include <TGaxis.h>
+#include <TAttMarker.h>
+#include <TAttLine.h>
+#include <TAttFill.h>
+
+// M. Petroff Color Schemes (arXiv:2107.02270v2)
+namespace CMSColors {
+    // 6-color scheme for categorical data
+    const std::vector<int> PetroffColors6 = {
+        kBlack,
+        TColor::GetColor("#5790fc"), // Blue 
+        TColor::GetColor("#e42536"), // Red
+        TColor::GetColor("#964a8b"), // Purple
+        TColor::GetColor("#9c9ca1"), // Gray        
+        TColor::GetColor("#f89c20"), // Orange 
+        TColor::GetColor("#7a21dd")  // Violet
+    };
+    
+    // 10-color scheme for more complex plots
+    const std::vector<int> PetroffColors10 = {
+        kBlack,
+        TColor::GetColor("#3f90da"), // Blue
+        TColor::GetColor("#bd1f01"), // Red
+        TColor::GetColor("#832db6"), // Purple        
+        TColor::GetColor("#ffa90e"), // Orange
+        TColor::GetColor("#a96b59"), // Brown
+        TColor::GetColor("#e76300"), // Dark Orange        
+        TColor::GetColor("#94a4a2"), // Gray
+        TColor::GetColor("#b9ac70"), // Olive
+        TColor::GetColor("#717581"), // Dark Gray
+        TColor::GetColor("#92dadd")  // Light Blue
+    };
+    
+    // Traditional ROOT colors for compatibility
+    const std::vector<int> TraditionalColors = {
+        kBlack, kBlue, kRed, kMagenta, kGreen+2, kOrange, kCyan, kYellow+2, kGray+2
+    };
+    
+    // Marker styles following CMS guidelines
+    const std::vector<int> MarkerStyles = {
+        kFullCircle, kFullSquare, kFullTriangleUp, kFullTriangleDown,
+        kFullDiamond, kFullStar, kOpenCircle, kOpenSquare, kOpenTriangleUp
+    };
+    
+    // Viridis color palette for sequential data/heatmaps
+    void SetViridisColormap() {
+        const int NRGBs = 5;
+        const int NCont = 255;
+        double stops[NRGBs] = {0.00, 0.34, 0.61, 0.84, 1.00};
+        double red[NRGBs]   = {0.267004, 0.229739, 0.127568, 0.369214, 0.993248};
+        double green[NRGBs] = {0.004874, 0.322361, 0.566949, 0.788888, 0.906157};
+        double blue[NRGBs]  = {0.329415, 0.545706, 0.550556, 0.280197, 0.143936};
+        TColor::CreateGradientColorTable(NRGBs, stops, red, green, blue, NCont);
+        gStyle->SetNumberContours(NCont);
+    }
+}
+
+// CMS Style Configuration
+namespace CMSStyle {
+    void SetCMSStyle() {
+        // Canvas and pad settings
+        gStyle->SetCanvasBorderMode(0);
+        gStyle->SetCanvasColor(kWhite);
+        gStyle->SetCanvasDefH(600);
+        gStyle->SetCanvasDefW(600);
+        gStyle->SetCanvasDefX(0);
+        gStyle->SetCanvasDefY(0);
+        
+        gStyle->SetPadBorderMode(0);
+        gStyle->SetPadColor(kWhite);
+        gStyle->SetPadGridX(false);
+        gStyle->SetPadGridY(false);
+        gStyle->SetGridColor(0);
+        gStyle->SetGridStyle(3);
+        gStyle->SetGridWidth(1);
+        
+        // Frame settings
+        gStyle->SetFrameBorderMode(0);
+        gStyle->SetFrameBorderSize(1);
+        gStyle->SetFrameFillColor(0);
+        gStyle->SetFrameFillStyle(0);
+        gStyle->SetFrameLineColor(1);
+        gStyle->SetFrameLineStyle(1);
+        gStyle->SetFrameLineWidth(1);
+        
+        // Histogram settings
+        gStyle->SetHistLineColor(1);
+        gStyle->SetHistLineStyle(0);
+        gStyle->SetHistLineWidth(1);
+        gStyle->SetEndErrorSize(2);
+        gStyle->SetErrorX(0.);
+        gStyle->SetMarkerStyle(20);
+        
+        // Fit/function settings
+        gStyle->SetOptFit(1);
+        gStyle->SetFitFormat("5.4g");
+        gStyle->SetFuncColor(2);
+        gStyle->SetFuncStyle(1);
+        gStyle->SetFuncWidth(1);
+        
+        // Date settings
+        gStyle->SetOptDate(0);
+        
+        // Statistics box
+        gStyle->SetOptFile(0);
+        gStyle->SetOptStat(0); // No statistics box
+        gStyle->SetStatColor(kWhite);
+        gStyle->SetStatFont(42);
+        gStyle->SetStatFontSize(0.025);
+        gStyle->SetStatTextColor(1);
+        gStyle->SetStatFormat("6.4g");
+        gStyle->SetStatBorderSize(1);
+        gStyle->SetStatH(0.1);
+        gStyle->SetStatW(0.15);
+        
+        // Margins
+        gStyle->SetPadTopMargin(0.05);
+        gStyle->SetPadBottomMargin(0.13);
+        gStyle->SetPadLeftMargin(0.16);
+        gStyle->SetPadRightMargin(0.02);
+        
+        // Axis titles
+        gStyle->SetTitleColor(1, "XYZ");
+        gStyle->SetTitleFont(42, "XYZ");
+        gStyle->SetTitleSize(0.06, "XYZ");
+        gStyle->SetTitleXOffset(0.9);
+        gStyle->SetTitleYOffset(1.25);
+        
+        // Axis labels
+        gStyle->SetLabelColor(1, "XYZ");
+        gStyle->SetLabelFont(42, "XYZ");
+        gStyle->SetLabelOffset(0.007, "XYZ");
+        gStyle->SetLabelSize(0.05, "XYZ");
+        
+        // Axis settings
+        gStyle->SetAxisColor(1, "XYZ");
+        gStyle->SetStripDecimals(kTRUE);
+        gStyle->SetTickLength(0.03, "XYZ");
+        gStyle->SetNdivisions(510, "XYZ");
+        gStyle->SetPadTickX(1);  // To get tick marks on the opposite side of the frame
+        gStyle->SetPadTickY(1);
+        
+        // Change for log plots
+        gStyle->SetOptLogx(0);
+        gStyle->SetOptLogy(0);
+        gStyle->SetOptLogz(0);
+        
+        // Postscript options
+        gStyle->SetPaperSize(20.,20.);
+        
+        gROOT->ForceStyle();
+    }
+}
+
+// Enhanced plotting options structure
+struct PlotOptions {
+    std::string title = "";
+    std::string xtitle = "";
+    std::string ytitle = "";
+    std::string ztitle = "";
+    
+    // Range settings
+    bool setXRange = false;
+    double xmin = 0.0, xmax = 1.0;
+    bool setYRange = false;
+    double ymin = 0.0, ymax = 1.0;
+    bool setZRange = false;
+    double zmin = 0.0, zmax = 1.0;
+    
+    // Log scale
+    bool logX = false;
+    bool logY = false;
+    bool logZ = false;
+    
+    // Canvas settings
+    int canvasWidth = 800;
+    int canvasHeight = 600;
+    double marginLeft = 0.12;
+    double marginRight = 0.05;
+    double marginTop = 0.08;
+    double marginBottom = 0.12;
+    
+    // Color scheme
+    enum ColorScheme { PETROFF6, PETROFF10, TRADITIONAL, CUSTOM } colorScheme = PETROFF6;
+    std::vector<int> customColors;
+    std::vector<int> customMarkers;
+    
+    // Legend settings
+    bool drawLegend = true;
+    double legX1 = 0.7, legY1 = 0.7, legX2 = 0.9, legY2 = 0.9;
+    std::string legHeader = "";
+    
+    // CMS label settings - enhanced with better positioning control
+    bool drawCMSLabel = true;
+    std::string cmsText = "CMS";
+    std::string cmsExtra = "Preliminary";
+    std::string lumiText = "";
+    bool inFrame = false; // Whether to draw labels inside frame
+    bool autoAdjustMargins = true; // Automatically adjust margins to prevent overlap
+    double cmsLabelXOffset = 0.0; // Additional X offset for CMS labels
+    double cmsLabelYOffset = 0.0; // Additional Y offset for CMS labels
+    
+    // Enhanced text positioning
+    struct TextConfig {
+        std::string text;
+        double x, y; // NDC coordinates
+        double size = 0.03;
+        int font = 42;
+        int align = 11; // Left-bottom aligned by default
+        int color = 1; // Black
+        TextConfig(const std::string& t, double x_pos, double y_pos) 
+            : text(t), x(x_pos), y(y_pos) {}
+        TextConfig(const std::string& t, double x_pos, double y_pos, double text_size) 
+            : text(t), x(x_pos), y(y_pos), size(text_size) {}
+    };
+    std::vector<TextConfig> additionalTexts;
+    
+    // Legacy support for backward compatibility
+    std::vector<std::string> additionalText;
+    std::vector<std::pair<double, double>> textPositions; // NDC coordinates
+    
+    // Enhanced drawing options
+    std::string drawOption = "";
+    std::string histogramDrawOption = "HIST"; // Default for histograms
+    std::string markerDrawOption = "P"; // Default for markers
+    std::string errorDrawOption = "E"; // Default for error bars
+    bool normalize = false;
+    bool useCustomDrawOption = false; // Use drawOption for all histograms
+    
+    // Selection text support
+    std::string selectionText = "";
+    double selectionTextX = 0.15;
+    double selectionTextY = 0.75;
+    double selectionTextSize = 0.03;
+    int selectionTextFont = 42;
+    
+    // Grid
+    bool gridX = false;
+    bool gridY = false;
+    
+    // Statistics box
+    bool drawStats = false;
+    double statsX1 = 0.78, statsY1 = 0.85, statsX2 = 0.98, statsY2 = 0.95;
+    
+    PlotOptions() {}
+    
+    // Helper method to add text with easy configuration
+    void addText(const std::string& text, double x, double y, double size = 0.03, int font = 42) {
+        additionalTexts.emplace_back(text, x, y, size);
+        additionalTexts.back().font = font;
+    }
+    
+    // Helper method to calculate safe CMS label positions based on margins
+    std::pair<double, double> getCMSTextPosition() const {
+        if (inFrame) {
+            // Position inside the plot area, respecting margins
+            double x = marginLeft + 0.05; // Small offset from left margin
+            double y = 1.0 - marginTop - 0.15; // Below top margin
+            return {x + cmsLabelXOffset, y + cmsLabelYOffset};
+        } else {
+            // Position outside plot area, above top margin
+            double x = marginLeft;
+            double y = 1.0 - marginTop * 0.3; // Just above the plot frame
+            if (autoAdjustMargins && y > 0.95) {
+                y = 0.95; // Clamp to avoid going off canvas
+            }
+            return {x + cmsLabelXOffset, y + cmsLabelYOffset};
+        }
+    }
+    
+    // Helper method to calculate luminosity text position
+    std::pair<double, double> getLumiTextPosition() const {
+        double x = 1.0 - marginRight - 0.02;
+        double y = inFrame ? (1.0 - marginTop - 0.08) : (1.0 - marginTop * 0.3);
+        if (autoAdjustMargins && y > 0.95) {
+            y = 0.95;
+        }
+        return {x + cmsLabelXOffset, y + cmsLabelYOffset};
+    }
+};
 
 // =============================================================================
 // PLOTTING CONFIGURATION IMPLEMENTATION

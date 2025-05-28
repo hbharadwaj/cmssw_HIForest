@@ -61,8 +61,9 @@ test: test_BranchManager test_DataFrameAnalyzer_simple
 test-gamma-jet: gammaJetAnalyzer
 	@echo "Gamma jet analyzer compilation test completed successfully!"
 	@echo "To run the analyzer:"
-	@echo "  ./gammaJetAnalyzer -c ../configs/JetSub_2023_PbPb_MC.config -t 1000"
-	@echo "  ./gammaJetAnalyzer --config ../configs/JetSub_2023_PbPb_MC.config --test 1000"
+	@echo "  ./gammaJetAnalyzer -c ../configs/JetSub_2023_PbPb_MC.config -p ../configs/plot.config -t 1000"
+	@echo "  ./gammaJetAnalyzer --config ../configs/JetSub_2023_PbPb_MC.config --plot-config ../configs/plot.config --test 1000"
+	@echo "  ./gammaJetAnalyzer -c ../configs/analysis.config -P  # Production mode"
 	@echo "  ./gammaJetAnalyzer --help  # Show usage information"
 
 # Run gamma jet analyzer with default config (if available)

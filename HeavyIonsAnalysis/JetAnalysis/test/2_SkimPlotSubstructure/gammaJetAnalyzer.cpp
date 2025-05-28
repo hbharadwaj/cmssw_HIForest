@@ -65,25 +65,30 @@ int main(int argc, char* argv[]) {
     log(LOG_DEBUG, "=========================");
     
     std::string configFile = "../configs/JetSub_2023_PbPb_Data.config";
+    std::string plotConfigFile = "../configs/PlotJetSub_2023_PbPb_Data.config";
     bool testMode = false;
     int maxEvents = 1000;
     
     // Parse command line arguments using getopt_long
     static struct option long_options[] = {
-        {"config",     required_argument, 0, 'c'},
-        {"test",       optional_argument, 0, 't'},
-        {"production", no_argument,       0, 'p'},
-        {"help",       no_argument,       0, 'h'},
+        {"config",       required_argument, 0, 'c'},
+        {"plot-config",  required_argument, 0, 'p'},
+        {"test",         optional_argument, 0, 't'},
+        {"production",   no_argument,       0, 'P'},
+        {"help",         no_argument,       0, 'h'},
         {0, 0, 0, 0}
     };
     
     int option_index = 0;
     int c;
     
-    while ((c = getopt_long(argc, argv, "c:t::ph", long_options, &option_index)) != -1) {
+    while ((c = getopt_long(argc, argv, "c:p:t::Ph", long_options, &option_index)) != -1) {
         switch (c) {
             case 'c':
                 configFile = optarg;
+                break;
+            case 'p':
+                plotConfigFile = optarg;
                 break;
             case 't':
                 testMode = true;
@@ -97,7 +102,7 @@ int main(int argc, char* argv[]) {
                     }
                 }
                 break;
-            case 'p':
+            case 'P':
                 testMode = false;
                 break;
             case 'h':
@@ -115,7 +120,8 @@ int main(int argc, char* argv[]) {
     
     // Debug output
     log(LOG_DEBUG, "Command line parsing complete:");
-    log(LOG_DEBUG, "  Config file: " + configFile);
+    log(LOG_DEBUG, "  Analysis config file: " + configFile);
+    log(LOG_DEBUG, "  Plotting config file: " + plotConfigFile);
     log(LOG_DEBUG, "  Test mode: " + std::string(testMode ? "true" : "false"));
     log(LOG_DEBUG, "  Max events: " + std::to_string(maxEvents));
     
@@ -135,38 +141,44 @@ int main(int argc, char* argv[]) {
             log(LOG_INFO, "Running in PRODUCTION mode (all events)");
         }
         
-        // Load configuration
+        // Load analysis configuration
         TEnv* config = new TEnv();
         if (gSystem->AccessPathName(configFile.c_str())) {
-            std::cerr << "Error: Configuration file not found: " << configFile << std::endl;
+            std::cerr << "Error: Analysis configuration file not found: " << configFile << std::endl;
             delete config;
             return 1;
         }
         
         int readStatus = config->ReadFile(configFile.c_str(), kEnvLocal);
         if (readStatus != 0) {
-            std::cerr << "Error: Failed to read configuration file: " << configFile << std::endl;
+            std::cerr << "Error: Failed to read analysis configuration file: " << configFile << std::endl;
             delete config;
             return 1;
         }
         
-        log(LOG_INFO, "Loaded configuration from " + configFile);
+        log(LOG_INFO, "Loaded analysis configuration from " + configFile);
         
         // Print configuration summary
         printConfig(config);
         
-        // Load plotting configuration
-        std::string plottingConfigPath = config->GetValue("PlottingConfig", "../configs/PlotJetSub_2023_PbPb_MC.config");
+        // Load plotting configuration from separate file
         PlottingConfiguration plotConfig;
         
-        log(LOG_INFO, "Loading plotting configuration from: " + plottingConfigPath);
-        if (!loadPlottingConfig(plottingConfigPath, plotConfig)) {
-            log(LOG_ERROR, "Failed to load plotting configuration, using defaults");
-            // Initialize with default configuration if loading fails
+        log(LOG_INFO, "Loading plotting configuration from: " + plotConfigFile);
+        if (gSystem->AccessPathName(plotConfigFile.c_str())) {
+            std::cerr << "Error: Plotting configuration file not found: " << plotConfigFile << std::endl;
+            log(LOG_DEBUG, "Using default plotting configuration");
+            // Initialize with default configuration if file not found
             plotConfig = PlottingConfiguration(); // Uses default constructor
         } else {
-            log(LOG_INFO, "Successfully loaded plotting configuration");
-            log(LOG_DEBUG, "Loaded " + std::to_string(plotConfig.histogramConfigs.size()) + " histogram configurations");
+            if (!loadPlottingConfig(plotConfigFile, plotConfig)) {
+                log(LOG_ERROR, "Failed to load plotting configuration, using defaults");
+                // Initialize with default configuration if loading fails
+                plotConfig = PlottingConfiguration(); // Uses default constructor
+            } else {
+                log(LOG_INFO, "Successfully loaded plotting configuration");
+                log(LOG_DEBUG, "Loaded " + std::to_string(plotConfig.histogramConfigs.size()) + " histogram configurations");
+            }
         }
         
         // Get basic parameters
@@ -669,7 +681,7 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
                 float dPhi = getDeltaPhi(selectedPhotonPhi, jetPhi);
                 
                 // Select highest pT jet passing all cuts
-                if (jetPt > maxJetPt && dPhi >= deltaPhiMin) {
+                if (jetPt > maxJetPt) {
                     maxJetPt = jetPt;
                     bestJetIndex = iJet;
                 }
@@ -1065,11 +1077,7 @@ void createHistograms(TFile* outFile, const std::vector<std::string>& jetCollect
                 }
             }
             
-            // Write histograms to the ROOT file
-            for (auto hist : histograms) {
-                hist->Write("", TObject::kWriteDelete);
-            }
-            
+            // Don't write histograms individually here - they will be written with the directory
             // Write directory metadata
             centDir->Write();
             outFile->cd();
@@ -1243,13 +1251,14 @@ float getXj(float jetPt, float photonPt) {
 void printUsage() {
     std::cout << "Usage: gammaJetAnalyzer [options]" << std::endl;
     std::cout << "Options:" << std::endl;
-    std::cout << "  --config, -c FILE      Config file path" << std::endl;
-    std::cout << "  --test, -t [N]         Run in test mode with N events (default: 1000)" << std::endl;
-    std::cout << "  --production, -p       Run in production mode (all events)" << std::endl;
-    std::cout << "  --help, -h             Print this help message" << std::endl;
+    std::cout << "  --config, -c FILE          Analysis config file path" << std::endl;
+    std::cout << "  --plot-config, -p FILE     Plotting config file path" << std::endl;
+    std::cout << "  --test, -t [N]             Run in test mode with N events (default: 1000)" << std::endl;
+    std::cout << "  --production               Run in production mode (all events)" << std::endl;
+    std::cout << "  --help, -h                 Print this help message" << std::endl;
     std::cout << std::endl;
     std::cout << "Examples:" << std::endl;
-    std::cout << "  ./gammaJetAnalyzer -c config.config -t 10000" << std::endl;
-    std::cout << "  ./gammaJetAnalyzer --config config.config --test 5000" << std::endl;
-    std::cout << "  ./gammaJetAnalyzer -c config.config -p" << std::endl;
+    std::cout << "  ./gammaJetAnalyzer -c analysis.config -p plotting.config -t 10000" << std::endl;
+    std::cout << "  ./gammaJetAnalyzer --config analysis.config --plot-config plotting.config --test 5000" << std::endl;
+    std::cout << "  ./gammaJetAnalyzer -c analysis.config -p plotting.config --production" << std::endl;
 }
