@@ -266,3 +266,107 @@ run3_egamma.toReplaceWith(regressionModifier,regressionModifierRun3)
 
 from Configuration.ProcessModifiers.egamma_lowPt_exclusive_cff import egamma_lowPt_exclusive
 egamma_lowPt_exclusive.toReplaceWith(regressionModifier,regressionModifier103XLowPtPho)
+
+# Heavy Ion specific regression modifier for Run 3
+# This version is specifically for testing with the 20250515_test_2023PbPb_photon_regression.db file
+# which only contains the hin_photon_eb_1To500 label. 
+# To be updated when the full regression is available. 
+regressionModifier132XHIN = cms.PSet(
+    modifierName = cms.string('EGRegressionModifierV3'),       
+    rhoTag = cms.InputTag('fixedGridRhoFastjetAll'),
+    useClosestToCentreSeedCrysDef = cms.bool(False),
+    maxRawEnergyForLowPtEBSigma = cms.double(-1), 
+    maxRawEnergyForLowPtEESigma = cms.double(1200.),
+    # No electron regression configuration since we're only testing photon corrections
+    eleRegs = cms.PSet(
+        ecalOnlyMean = cms.PSet(
+            rangeMinLowEt = cms.double(0.2),
+            rangeMaxLowEt = cms.double(2.0),
+            rangeMinHighEt = cms.double(-1.),
+            rangeMaxHighEt = cms.double(3.0),
+            forceHighEnergyTrainingIfSaturated = cms.bool(True),
+            lowEtHighEtBoundary = cms.double(999999.),
+            # Using dummy values for electron forests since we're not using them
+            ebLowEtForestName = cms.ESInputTag("", "electron_eb_ecalOnly_1To300_0p2To2_mean"),
+            ebHighEtForestName = cms.ESInputTag("", "electron_eb_ECALonly"),
+            eeLowEtForestName = cms.ESInputTag("", "electron_ee_ecalOnly_1To300_0p2To2_mean"),
+            eeHighEtForestName = cms.ESInputTag("", "electron_ee_ECALonly"),
+            ),
+        ecalOnlySigma = cms.PSet(
+            rangeMinLowEt = cms.double(0.0002),
+            rangeMaxLowEt = cms.double(0.5),
+            rangeMinHighEt = cms.double(0.0002),
+            rangeMaxHighEt = cms.double(0.5),
+            forceHighEnergyTrainingIfSaturated = cms.bool(True),
+            lowEtHighEtBoundary = cms.double(999999.),
+            # Using dummy values for electron forests since we're not using them
+            ebLowEtForestName = cms.ESInputTag("", "electron_eb_ecalOnly_1To300_0p0002To0p5_sigma"),
+            ebHighEtForestName = cms.ESInputTag("", "electron_eb_ECALonly_var"),
+            eeLowEtForestName = cms.ESInputTag("", "electron_ee_ecalOnly_1To300_0p0002To0p5_sigma"),
+            eeHighEtForestName = cms.ESInputTag("", "electron_ee_ECALonly_var"),
+            ),
+        epComb = cms.PSet(
+            ecalTrkRegressionConfig = cms.PSet(
+                rangeMinLowEt = cms.double(0.2),
+                rangeMaxLowEt = cms.double(2.0),
+                rangeMinHighEt = cms.double(0.2),
+                rangeMaxHighEt = cms.double(2.0),
+                lowEtHighEtBoundary = cms.double(999999.),
+                forceHighEnergyTrainingIfSaturated = cms.bool(False),
+                ebLowEtForestName = cms.ESInputTag("", 'electron_eb_ecalTrk_1To300_0p2To2_mean'),
+                ebHighEtForestName = cms.ESInputTag("", 'electron_eb_ecalTrk_1To300_0p2To2_mean'),
+                eeLowEtForestName = cms.ESInputTag("", 'electron_ee_ecalTrk_1To300_0p2To2_mean'),
+                eeHighEtForestName = cms.ESInputTag("", 'electron_ee_ecalTrk_1To300_0p2To2_mean'),
+                ),
+            ecalTrkRegressionUncertConfig = cms.PSet(
+                rangeMinLowEt = cms.double(0.0002),
+                rangeMaxLowEt = cms.double(0.5),
+                rangeMinHighEt = cms.double(0.0002),
+                rangeMaxHighEt = cms.double(0.5),
+                lowEtHighEtBoundary = cms.double(999999.),  
+                forceHighEnergyTrainingIfSaturated = cms.bool(False),
+                ebLowEtForestName = cms.ESInputTag("", 'electron_eb_ecalTrk_1To300_0p0002To0p5_sigma'),
+                ebHighEtForestName = cms.ESInputTag("", 'electron_eb_ecalTrk_1To300_0p0002To0p5_sigma'),
+                eeLowEtForestName = cms.ESInputTag("", 'electron_ee_ecalTrk_1To300_0p0002To0p5_sigma'),
+                eeHighEtForestName = cms.ESInputTag("", 'electron_ee_ecalTrk_1To300_0p0002To0p5_sigma'),
+                ),
+            maxEcalEnergyForComb=cms.double(200.),
+            minEOverPForComb=cms.double(0.025),
+            maxEPDiffInSigmaForComb=cms.double(15.),
+            maxRelTrkMomErrForComb=cms.double(10.),                
+            )
+        ),
+    # Configure only the photon regression for EB since that's what we have in the DB
+    phoRegs = cms.PSet(
+        ecalOnlyMean = cms.PSet(
+            rangeMinLowEt = cms.double(0.2),
+            rangeMaxLowEt = cms.double(2.0),
+            rangeMinHighEt = cms.double(0.2),
+            rangeMaxHighEt = cms.double(2.0),
+            forceHighEnergyTrainingIfSaturated = cms.bool(True),
+            lowEtHighEtBoundary = cms.double(999999.),
+            # Using the available EB regression and dummy values for EE
+            ebLowEtForestName = cms.ESInputTag("", "hin_photon_eb_1To500"),
+            ebHighEtForestName = cms.ESInputTag("", "hin_photon_eb_1To500"),
+            eeLowEtForestName = cms.ESInputTag("", "photon_ee_ecalOnly_5To300_0p2To2_mean"),
+            eeHighEtForestName = cms.ESInputTag("", "photon_ee_ECALonly"),
+            ),
+        ecalOnlySigma = cms.PSet(
+            rangeMinLowEt = cms.double(0.0002),
+            rangeMaxLowEt = cms.double(0.5),
+            rangeMinHighEt = cms.double(0.0002),
+            rangeMaxHighEt = cms.double(0.5),
+            forceHighEnergyTrainingIfSaturated = cms.bool(True),
+            lowEtHighEtBoundary = cms.double(999999.),
+            # Since we don't have variance regression yet, use standard values
+            ebLowEtForestName = cms.ESInputTag("", "photon_eb_ecalOnly_5To300_0p0002To0p5_sigma"),
+            ebHighEtForestName = cms.ESInputTag("", "photon_eb_ECALonly_var"),
+            eeLowEtForestName = cms.ESInputTag("", "photon_ee_ecalOnly_5To300_0p0002To0p5_sigma"),
+            eeHighEtForestName = cms.ESInputTag("", "photon_ee_ECALonly_var"),
+        ),
+    )
+)
+
+# Add HIN specific modifier for Run3 Heavy Ion collisions
+from Configuration.Eras.Modifier_run3_egamma_cff import run3_egamma # using the era modifier for pp?
+run3_egamma.toReplaceWith(regressionModifier,regressionModifier132XHIN)
