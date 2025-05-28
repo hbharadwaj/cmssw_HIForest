@@ -36,6 +36,5 @@ __init__.py
 *.jpeg
 
 # Jet Substructure analysis related ignores
-HeavyIonsAnalysis/JetAnalysis/test/1_Skimming/batch/
-HeavyIonsAnalysis/JetAnalysis/test/1_Skimming/bharikri.cc
-
+**/batch/
+**/bharikri.cc

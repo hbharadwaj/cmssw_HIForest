@@ -22,15 +22,13 @@
 #include "SimDataFormats/GeneratorProducts/interface/HepMCProduct.h"
 #include "DataFormats/PatCandidates/interface/PackedCandidate.h"
 #include "fastjet/contrib/Njettiness.hh"
-#include "DataFormats/JetMatching/interface/JetFlavourInfo.h"
-#include "DataFormats/JetMatching/interface/JetFlavourInfoMatching.h"
-
 //
 
 /**\class HiInclusiveJetAnalyzer
 
    \author Matt Nguyen
    \date   November 2010
+   Modified by Bharadwaj Harikrishnan, October 2024
 */
 
 class HiInclusiveJetAnalyzer : public edm::one::EDAnalyzer<edm::one::WatchRuns> {
@@ -45,6 +43,12 @@ public:
   void endRun(const edm::Run& run, const edm::EventSetup& es) override;
 
   void beginJob() override;
+
+  enum JetType {
+    kAllGen   = 0,      // All gen jets
+    kMatchGen = 1,      // Only matched gen jets
+    kReco     = 2       // Reco jets
+  };
 
 private:
   // for reWTA reclustering-----------------------
@@ -66,6 +70,8 @@ private:
 
   int TaggedJet(pat::Jet patjet, edm::Handle<reco::JetTagCollection > jetTags );
 
+  void IterativeDeclustering(int flagGen,const reco::Jet& jet,fastjet::PseudoJet *sub1, fastjet::PseudoJet *sub2);
+
   edm::InputTag jetTagLabel_;
   edm::EDGetTokenT<pat::JetCollection> jetTag_;
   edm::EDGetTokenT<reco::CaloJetCollection> caloJetTag_;
@@ -75,8 +81,6 @@ private:
   edm::EDGetTokenT<edm::View<reco::GenJet>> genjetTag_;
   edm::EDGetTokenT<edm::HepMCProduct> eventInfoTag_;
   edm::EDGetTokenT<GenEventInfoProduct> eventGenInfoTag_;
-  // b and c hadrons
-  edm::EDGetTokenT<reco::JetFlavourInfoMatchingCollection> jetFlavourInfosToken_;
 
   std::string jetName_;  //used as prefix for jet structures
   edm::EDGetTokenT<edm::View<reco::Jet>> subjetGenTag_;
@@ -95,28 +99,44 @@ private:
   bool isMC_;
   bool useHepMC_;
   bool fillGenJets_;
+  bool fillDetailBranches_;
   bool useQuality_;
   std::string trackQuality_;
 
-  bool doSubEvent_;
-  double genPtMin_;
-  bool doLegacyBtagging_;
-  bool doCandidateBtagging_;
-  bool useNewBtaggers_;
-
-  bool doHiJetID_;
-  bool doStandardJetID_;
-
-  double rParam;
-  double hardPtMin_;
-  double jetPtMin_;
-  double jetAbsEtaMax_;
   bool doGenTaus_;
   bool doGenSym_;
   bool doSubJets_;
   bool doJetConstituents_;
   bool doGenSubJets_;
   bool doCaloJets_;
+
+  bool doHiJetID_;
+  bool doStandardJetID_;
+
+  double rParam_;
+  double hardPtMin_;
+  double jetPtMin_;
+  double jetAbsEtaMax_;
+
+  bool doSubstructure_;
+  double sdZcut_;
+  double sdBeta_;
+  double sdDynktcut_;
+  double groomType_;
+  double groomCombine_;
+  bool doChargedConstOnly_;
+
+  bool doLegacyBtagging_;
+  bool doCandidateBtagging_;
+  bool useNewBtaggers_;
+
+  bool doSubEvent_;
+  double genPtMin_;
+  bool doPFCandEnergySmear_;
+  double pfChargedCandidateEnergyScale_;
+  double pfNeutralCandidateEnergyScale_;
+  double pfGammaCandidateEnergyScale_;
+
 
   TTree* t;
   edm::Service<TFileService> fs1;
@@ -176,6 +196,18 @@ private:
     float jttau1[MAXJETS] = {0};
     float jttau2[MAXJETS] = {0};
     float jttau3[MAXJETS] = {0};
+
+    int   jtdyn_split[MAXJETS] = {0};
+    float jtdyn_eta[MAXJETS] = {0};
+    float jtdyn_phi[MAXJETS] = {0};
+    float jtdyn_deltaR[MAXJETS] = {0};
+    float jtdyn_kt[MAXJETS] = {0};
+    float jtdyn_z[MAXJETS] = {0};
+    int   jt_intjet_multi[MAXJETS] = {0};
+    float jt_girth[MAXJETS] = {0};
+    float jt_thrust[MAXJETS] = {0};
+    float jt_LHA[MAXJETS] = {0};
+    float jt_pTD[MAXJETS] = {0};
 
     float jtsym[MAXJETS] = {0};
     int jtdroppedBranches[MAXJETS] = {0};
@@ -264,14 +296,12 @@ private:
 
     int subid[MAXJETS] = {0};
 
-    float mjtPt[MAXJETS] = {0};
-    float mjtRawPt[MAXJETS] = {0};
-    float mjtR[MAXJETS] = {0};
-    float mjtPu[MAXJETS] = {0};
-    int mjtHadronFlavor[MAXJETS] = {0};
-    int mjtPartonFlavor[MAXJETS] = {0};
-    int mjtNbHad[MAXJETS]={0};
-    int mjtNcHad[MAXJETS]={0};
+    float matchedPt[MAXJETS] = {0};
+    float matchedRawPt[MAXJETS] = {0};
+    float matchedR[MAXJETS] = {0};
+    float matchedPu[MAXJETS] = {0};
+    int matchedHadronFlavor[MAXJETS] = {0};
+    int matchedPartonFlavor[MAXJETS] = {0};
 
     float discr_csvV2[MAXJETS] = {0};
     float discr_deepCSV[MAXJETS] = {0};
@@ -341,6 +371,18 @@ private:
     int refparton_flavor[MAXJETS] = {0};
     int refparton_flavorForB[MAXJETS] = {0};
 
+    int   refdyn_split[MAXJETS] = {0};
+    float refdyn_eta[MAXJETS] = {0};
+    float refdyn_phi[MAXJETS] = {0};
+    float refdyn_deltaR[MAXJETS] = {0};
+    float refdyn_kt[MAXJETS] = {0};
+    float refdyn_z[MAXJETS] = {0};
+    int   ref_intjet_multi[MAXJETS] = {0};
+    float ref_girth[MAXJETS] = {0};
+    float ref_thrust[MAXJETS] = {0};
+    float ref_LHA[MAXJETS] = {0};
+    float ref_pTD[MAXJETS] = {0};
+
     float refptG[MAXJETS] = {0};
     float refetaG[MAXJETS] = {0};
     float refphiG[MAXJETS] = {0};
@@ -379,6 +421,18 @@ private:
     float gendphijt[MAXJETS] = {0};
     float gendrjt[MAXJETS] = {0};
     int gensubid[MAXJETS] = {0};
+
+    int   gendyn_split[MAXJETS] = {0};
+    float gendyn_eta[MAXJETS] = {0};
+    float gendyn_phi[MAXJETS] = {0};
+    float gendyn_deltaR[MAXJETS] = {0};
+    float gendyn_kt[MAXJETS] = {0};
+    float gendyn_z[MAXJETS] = {0};
+    int   gen_intjet_multi[MAXJETS] = {0};
+    float gen_girth[MAXJETS] = {0};
+    float gen_thrust[MAXJETS] = {0};
+    float gen_LHA[MAXJETS] = {0};
+    float gen_pTD[MAXJETS] = {0};
 
     float genptG[MAXJETS] = {0};
     float genetaG[MAXJETS] = {0};

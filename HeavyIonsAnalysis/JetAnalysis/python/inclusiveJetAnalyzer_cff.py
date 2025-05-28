@@ -1,17 +1,17 @@
 import FWCore.ParameterSet.Config as cms
 
-inclusiveJetAnalyzer = cms.EDAnalyzer(
-    "HiInclusiveJetAnalyzer",
+inclusiveJetAnalyzer = cms.EDAnalyzer("HiInclusiveJetAnalyzer",
+
     jetTag = cms.InputTag("ak4PFJets"),
     caloJetTag = cms.InputTag("slimmedCaloJets"),
-    jetPtMin = cms.double(5.0),
+    jetPtMin = cms.untracked.double(5.0),
     matchJets = cms.untracked.bool(False),
     matchTag = cms.untracked.InputTag("akPu4PFpatJets"),
     genjetTag = cms.InputTag("ak4HiGenJets"),
     eventInfoTag = cms.InputTag("generator"),
     isMC = cms.untracked.bool(False), 
     fillGenJets = cms.untracked.bool(False),
-    rParam = cms.double(0.4),
+    rParam = cms.untracked.double(0.4),
     pfCandidateLabel = cms.untracked.InputTag('packedPFCandidates'),
     trackTag = cms.InputTag("hiTracks"),
     trackQuality  = cms.untracked.string("highPurity"),
@@ -29,6 +29,28 @@ inclusiveJetAnalyzer = cms.EDAnalyzer(
     doStandardJetID = cms.untracked.bool(False),
     doSubEvent = cms.untracked.bool(False),
     doLegacyBtagging = cms.untracked.bool(False),
-    doCandidateBtagging = cms.untracked.bool(True),
+    doCandidateBtagging = cms.untracked.bool(False),
     useNewBtaggers = cms.untracked.bool(False),
-    )
+
+    fillDetailBranches = cms.untracked.bool(False),
+    doCaloJets = cms.untracked.bool(False),
+
+    doSubstructure = cms.untracked.bool(False),
+    sdZcut = cms.untracked.double(0.2),
+    sdBeta = cms.untracked.double(0),
+    sdDynktcut=cms.untracked.double(1),
+    groomType=cms.untracked.double(0),
+    groomCombine=cms.untracked.double(0),
+    doChargedConstOnly = cms.untracked.bool(False),
+    pfChargedEnergyScaleVar = cms.untracked.double(1.),
+    pfNeutralEnergyScaleVar = cms.untracked.double(1.),
+    pfGammaEnergyScaleVar = cms.untracked.double(1.)
+    
+    # TrackVariation = cms.untracked.double(0.03),
+    # doHardestSplitMatching = cms.untracked.bool(True),
+    # pfNeutralSmear = cms.untracked.bool(False),
+    # doPrimaryLJPReco = cms.untracked.bool(False),
+    # doPrimaryLJPTruth = cms.untracked.bool(False),
+    # doNaiveNeuPFScaling = cms.untracked.bool(False),
+    # doRatioNeuPFScaling = cms.untracked.bool(False)
+)

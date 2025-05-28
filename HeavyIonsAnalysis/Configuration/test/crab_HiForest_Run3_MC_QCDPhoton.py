@@ -14,6 +14,7 @@ config.JobType.psetName = 'forest_miniAOD_run3_MC_gammaJet.py'
 config.JobType.numCores = 1
 config.JobType.maxMemoryMB = 5000 * config.JobType.numCores
 
+
 config.section_('Data')
 config.Data.inputDataset = "/Pythia8_Embedded_QCDPhoton30_TuneCP5/bharikri-2024_Mar_07_step4_MINIAODSIM_Pythia8_Embedded_QCDPhoton30_TuneCP5_13_2_10-1bf2ca3122c0a5b11c34b8148c6e5d2d/USER"
 config.Data.inputDBS = "phys03"
