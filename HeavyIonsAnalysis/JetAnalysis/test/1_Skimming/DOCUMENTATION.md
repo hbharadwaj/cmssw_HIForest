@@ -1,25 +1,50 @@
-# HiForest Skimming Documentation (AI generated)
+# HiForest Skimming Framework - Technical Documentation
 
 ## Overview
 
-The skimming system processes HiForest files using ROOT's RDataFrame to create smaller, analysis-ready files. It is implemented as a standalone C++ executable for improved reliability and performance with batch processing support via HTCondor.
+The skimming system processes HiForest files to create analysis-ready ROOT files with selected branches and proper tree friendships. This is the first stage of the CMS Photon-Jet Analysis Framework, implemented as a robust C++ executable with comprehensive batch processing capabilities.
 
-### Key Components
+### System Architecture
 
-1. **Executable Structure**
-   - Standalone C++ program with main()
-   - No dependency on ROOT's interpreter
-   - Pre-compiled for consistent behavior
+**Primary Components:**
+1. **SkimHiForest.C** - Main C++ implementation with ROOT TChain processing
+2. **Build System** - Makefile-based compilation for optimized executables  
+3. **Batch Processing** - HTCondor integration with job management scripts
+4. **Configuration System** - TEnv-based config file parsing for maximum flexibility
 
-2. **Build System**
-   - Simple Makefile for compilation
-   - Produces optimized executable
-   - Proper library linkage
+**Key Design Principles:**
+- **Performance**: Direct TChain processing without ROOT interpreter overhead
+- **Scalability**: Batch processing with configurable files-per-output grouping
+- **Reliability**: Comprehensive error handling and progress monitoring
+- **Maintainability**: Config-driven design with clear separation of concerns
 
-3. **Execution Modes**
-   - Direct local execution
-   - HTCondor batch submission
-   - Configurable EL8/EL9 OS version selection
+### Technical Features
+
+#### Multi-Tree Processing
+- **Friend Tree Management**: Automatically handles complex tree friendships from HiForest
+- **Branch Selection**: Configurable branch selection per tree to minimize I/O
+- **Alias System**: Tree and branch aliasing for analysis convenience
+- **Memory Optimization**: Smart buffer management for large datasets
+
+#### Advanced Configuration
+```bash
+# Core processing settings
+Verbose 1                    # Debug output level
+FileLimit 99999             # Maximum files to process
+FilesPerOutput 10           # Files per output batch
+BatchMode 0                 # Enable batch processing mode
+
+# Tree and branch configuration  
+Trees hiEvtAnalyzer/HiTree:hiEvt ggHiNtuplizer/EventTree:ggHi ...
+Branches_hiEvtAnalyzer/HiTree run,evt,lumi,vx,vy,vz,Npart,Ncoll...
+Branches_ggHiNtuplizer/EventTree run,event,lumis,rho,nPUInfo...
+```
+
+#### Batch Processing System
+- **HTCondor Integration**: Native Condor job submission with resource management
+- **Job Monitoring**: Built-in progress tracking and job status monitoring  
+- **Output Merging**: Automated merging of batch outputs with integrity checking
+- **Error Recovery**: Robust error handling with automatic retry mechanisms
 
 ### Usage
 

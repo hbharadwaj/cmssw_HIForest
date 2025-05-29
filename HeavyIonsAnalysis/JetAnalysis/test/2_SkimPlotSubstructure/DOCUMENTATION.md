@@ -1,44 +1,209 @@
-# CMS Gamma-Jet Analysis: Project Documentation
+# CMS Gamma-Jet Analysis: Comprehensive Technical Documentation
 
 ## Project Overview
 This project provides a robust framework for photon-tagged jet substructure analysis in heavy ion collisions, with a focus on modularity, reproducibility, and publication-quality outputs. The framework supports both data and MC workflows, advanced ROOT file handling, and CMS-compliant plotting.
 
+**Physics Goal:** Study jet quenching and medium effects in heavy-ion collisions using photon-tagged jets as calibrated probes of the QGP.
+
+## Analysis Framework Architecture
+
+### Core Components
+1. **`gammaJetAnalyzer.cpp`** - Main analysis executable (C++17)
+2. **`plotGammaJet.py`** - Advanced plotting framework (Python 3)
+3. **Configuration System** - `.config` files for all analysis parameters
+4. **Build System** - Makefiles and compilation scripts
+5. **Batch Processing** - HTCondor submission and job management
+
+### Data Flow
+```
+HiForest ROOT Files → gammaJetAnalyzer → Analysis ROOT Files → plotGammaJet → Publication Plots
+                           ↑                      ↑                     ↑
+                     .config files        Helper Scripts        CMS Style Guide
+```
+
+## gammaJetAnalyzer.cpp: Analysis Engine
+
+### Core Functionality
+- **Event Selection:** Photon isolation, jet quality cuts, kinematic selections
+- **Multi-Collection Support:** Handles different jet algorithms (AK4, AK8) and Z-cut values
+- **Centrality Binning:** Configurable centrality selections for heavy-ion analysis
+- **Output Management:** Produces both flat and nested ROOT file structures
+- **Memory Optimization:** Efficient ROOT tree processing with selective branch reading
+
+### Key Classes and Methods
+- **`JetCollectionManager`:** Manages multiple jet algorithms and configurations
+- **`CentralityManager`:** Handles centrality binning and event classification  
+- **`PhotonSelector`:** Implements photon identification and isolation cuts
+- **`JetAnalyzer`:** Core jet analysis algorithms including substructure
+- **`HistogramManager`:** Centralized histogram booking and filling
+
+### Configuration Parameters
+```cpp
+// Example config entries for gammaJetAnalyzer
+PhotonPtMin: 60.0
+PhotonEtaMax: 1.44
+JetPtMin: 40.0
+JetEtaMax: 2.0
+DeltaPhiMin: 2.094  // 2π/3
+CentralityBins: 0,30,60,90,180
+JetCollections: AK4Z1,AK4Z2,AK8Z2,AK8Z4
+UseNestedOutput: 1
+MaxEvents: -1  // Process all events
+```
+
+### Performance Optimizations
+- **Selective Branch Reading:** Only loads required branches from HiForest
+- **Memory Pool Management:** Efficient histogram and tree memory handling
+- **Parallel Processing Ready:** Thread-safe design for future parallelization
+- **Batch Processing:** Optimized for HTCondor job submission
+
+### Event Selection Criteria
+1. **Photon Selection:**
+   - Isolated photons with ET > 60 GeV
+   - |η| < 1.44 (barrel region)
+   - Shower shape and isolation requirements
+   
+2. **Jet Selection:**
+   - Anti-kT jets with pT > 40 GeV  
+   - |η| < 2.0 for tracking efficiency
+   - Jet quality cuts and pile-up mitigation
+   
+3. **Correlation Requirements:**
+   - Δφ(γ,jet) > 2π/3 for back-to-back topology
+   - Leading jet matching to photon
+
+### plotGammaJet.py: Advanced Plotting Framework
+
+### Design Philosophy
+- **Configuration-Driven:** All plot parameters controlled via `.config` files
+- **CMS Compliance:** Official CMS style guidelines and formatting
+- **Modular Design:** Separate functions for different plot types and overlays
+- **Publication Ready:** High-quality output in multiple formats (PDF, PNG, ROOT)
+
+### Advanced Features
+- **Data-MC Comparison:** Ratio plots with statistical uncertainty bands
+- **Multi-Dimensional Overlays:** Compare across centrality bins and jet collections
+- **Color-Blind Support:** Accessible color schemes and marker combinations
+- **Batch Processing:** Command-line interface for automated plot production
+- **Smart File Handling:** Automatic detection of ROOT file structure (nested vs flat)
+
+### Configuration System Architecture
+
+### Design Rationale
+The framework uses simple key-value `.config` files compatible with both C++ (TEnv) and Python parsing. This approach provides:
+- **Legacy Compatibility:** Works with existing CMS/ROOT workflows
+- **Simplicity:** Easy editing without specialized tools
+- **Bi-directional Use:** Same files work for both analysis and plotting
+- **Version Control Friendly:** Plain text format for easy diff tracking
+
+### Configuration Categories
+1. **Analysis Parameters:** Physics cuts, selections, algorithms
+2. **I/O Settings:** File paths, output formats, directory structures  
+3. **Plotting Options:** Colors, styles, CMS labeling, overlays
+4. **Batch Settings:** Job submission, resource requirements, output management
+
+### Build System and Compilation
+
+### Compilation Methods
+1. **Makefile:** Production compilation with optimization
+   ```bash
+   make clean && make
+   ./gammaJetAnalyzer configs/2023_PbPb_Data.config
+   ```
+
+2. **compile.sh:** Development compilation script
+   ```bash
+   ./compile.sh
+   ./gammaJetAnalyzer configs/2023_PbPb_Data.config
+   ```
+
+3. **ROOT Compilation:** Interactive development
+   ```bash
+   root -l 'gammaJetAnalyzer.cpp+("configs/2023_PbPb_Data.config")'
+   ```
+
+### Compiler Optimizations
+- **Release Mode:** `-O3` optimization for production
+- **Debug Mode:** `-g` symbols for development
+- **C++17 Features:** Modern C++ features and STL algorithms
+- **ROOT Integration:** Optimized ROOT library linking
+
+## Batch Processing and Job Management
+
+### HTCondor Integration
+The framework includes comprehensive batch processing capabilities:
+
+### Job Submission
+```bash
+# Submit multiple jobs with different configurations
+./submit_batch.py --config configs/2023_PbPb_Data.config \
+                  --input-list file_lists/data_files.txt \
+                  --jobs-per-file 10 \
+                  --output-dir /eos/user/output/
+```
+
+### Job Management Scripts
+- **`submit_jobs.py`:** Automated job submission with dependency handling
+- **`merge_outputs.py`:** Intelligent output file merging and validation
+- **`check_jobs.py`:** Job status monitoring and error detection
+- **`resubmit_failed.py`:** Automatic resubmission of failed jobs
+
+### Resource Requirements
+```bash
+# Example HTCondor requirements
+request_cpus = 1
+request_memory = 4GB
+request_disk = 2GB
++JobFlavour = "workday"  # 8-hour jobs
+```
+
+## Advanced Analysis Features
+
+### Jet Substructure Analysis
+- **Grooming Algorithms:** Soft Drop, Z-cut grooming for jet substructure
+- **Substructure Variables:** Mass, groomed momentum fraction, splitting scales
+- **Comparative Studies:** Multiple grooming parameters in parallel
+
+### Systematic Studies
+- **Uncertainty Propagation:** JEC, JER, photon energy scale uncertainties
+- **Background Estimation:** Data-driven methods for photon purity
+- **Centrality Dependencies:** Medium effects across different collision geometries
+
+### Data Quality and Validation
+- **Automated Checks:** Event counts, histogram sanity checks, file integrity
+- **Cross-Validation:** Data vs MC comparisons at multiple analysis stages
+- **Performance Monitoring:** Processing time and memory usage tracking
+
+## Integration with CMS Software
+
+### CMSSW Compatibility
+- **Framework Version:** CMSSW_13_2_13 for Run 3 data processing
+- **Data Formats:** HiForest ntuples from centralized production
+- **Calibrations:** Latest JEC/JER corrections and photon energy scales
+
+### CMS Data Management
+- **Input Data:** Centralized HiForest production on `/eos/cms/`
+- **Output Storage:** User space on `/eos/user/` with organized directory structure
+- **Backup Strategy:** Critical analysis outputs backed up to CMS DAS
+
 ## Development Timeline & Milestones
 - **May 2025:** Entire framework (C++ analysis, Python plotting, and all configs) designed, implemented, and documented in a single rapid development sprint. All major features, including batch processing, config-driven analysis, multi-jet/centrality support, overlays, ratio plots, and CMS-style outputs, were completed within this period.
-
-## Implementation Plan & Architecture
-
-### Data Processing: `gammaJetAnalyzer.cpp`
-- **Purpose:** Main C++ executable for event selection, tree/histogram production, and output ROOT file generation
-- **Key Features:**
-  - Configurable via `.config` files (TEnv)
-  - Handles multiple jet collections and centrality bins
-  - Produces flat or nested ROOT output for downstream plotting
-  - Modular design with `JetCollectionManager` and helpers
-
-### Plotting: `plotGammaJet.py`
-- **Purpose:** Python3 script for advanced, CMS-style plotting from ROOT files
-- **Key Features:**
-  - Fully config-driven (key-value `.config` files, parsed by a custom function)
-  - Supports overlays, ratio plots, Data/MC comparisons
-  - Handles both flat and nested ROOT file structures
-  - Color-blind and CMS-compliant styling
-  - Organized output directories for all plot types
-  - Batch mode and multi-format output (PDF, PNG, ROOT)
-
-### Configuration Approach
-- **.config files:** Simple key-value format, compatible with both C++ and Python scripts. This approach is lightweight, easy to edit, and integrates seamlessly with legacy CMS/ROOT workflows. While it lacks the advanced features of YAML/JSON (such as nested structures and schema validation), it is highly practical for the current use case and user base.
 
 ## Major Issues & Lessons Learned
 - **ROOT file structure drift:** Early in the sprint, standardization was enforced via config files to ensure compatibility.
 - **Batch processing bugs:** Addressed by modularizing job submission and output handling.
 - **Documentation drift:** Multiple outdated .md files consolidated into this single source.
 - **User feedback:** Led to improved error handling, clearer config options, and better quick start guides.
+- **Memory Management:** Careful ROOT object handling to prevent memory leaks in long batch jobs
+- **Configuration Complexity:** Balance between flexibility and usability in config file design
 
-## Future Plans
-- Integrate with central CMS workflows and data management
-- Expand support for systematic uncertainty visualization
-- Continuous integration for code and documentation
+## Future Development Plans
+- **CMS Integration:** Incorporate into official CMS Heavy Ion analysis workflows
+- **Machine Learning:** Jet substructure analysis using deep learning techniques  
+- **Real-time Analysis:** Integration with CMS online selection and monitoring
+- **Systematic Automation:** Automated systematic uncertainty evaluation
+- **Performance Optimization:** GPU acceleration for computationally intensive tasks
+- **Analysis Preservation:** Integration with CMS Analysis Preservation service
 
 ---
 
