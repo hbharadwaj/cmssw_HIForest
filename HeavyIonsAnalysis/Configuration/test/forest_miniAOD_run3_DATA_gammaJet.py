@@ -35,7 +35,7 @@ process.source = cms.Source("PoolSource",
 
 # number of events to process, set to -1 to process all events
 process.maxEvents = cms.untracked.PSet(
-    input = cms.untracked.int32(100)
+    input = cms.untracked.int32(1000)
     )
 
 ###############################################################################
@@ -132,7 +132,7 @@ process.forest = cms.Path(
     process.HiForestInfo +
     process.centralityBin +
     process.hiEvtAnalyzer +
-    process.hltanalysis +
+    process.hltanalysis + 
     # process.hltobject +  # HLT objects can be bulky; enable if needed for specific studies
     # process.l1object +   # L1 objects can be bulky; enable if needed for specific studies
     # process.trackSequencePbPb + # Track sequence removed to align with MC gammaJet focus
@@ -157,7 +157,7 @@ jetAbsEtaMax = 2.5
 
 # Substructure settings from MC gammaJet
 doSubstructure = True
-sdZList = ["1", "2", "3", "4", "5"]
+sdZList = ["1", "2", "3"]
 
 # Choose which additional information is added to jet trees
 doHIJetID = False            # Fill jet ID and composition information branches (set to False like MC gammaJet)
@@ -281,19 +281,20 @@ process.pphfCoincFilter4Th6 = cms.Path(process.phfCoincFilter4Th6)
 process.pphfCoincFilter5Th6 = cms.Path(process.phfCoincFilter5Th6)
 process.pAna = cms.EndPath(process.skimanalysis)
 
-#from HLTrigger.HLTfilters.hltHighLevel_cfi import hltHighLevel
-#process.hltfilter = hltHighLevel.clone(
-#    HLTPaths = [
-#        #"HLT_HIZeroBias_v4",                                                     
-#        "HLT_HIMinimumBias_v2",
-#    ]
-#)
-#process.filterSequence = cms.Sequence(
-#    process.hltfilter
-#)
-#
-#process.superFilterPath = cms.Path(process.filterSequence)
-#process.skimanalysis.superFilters = cms.vstring("superFilterPath")
-#
-#for path in process.paths:
-#    getattr(process, path)._seq = process.filterSequence * getattr(process,path)._seq
+from HLTrigger.HLTfilters.hltHighLevel_cfi import hltHighLevel
+process.hltfilter = hltHighLevel.clone(
+   HLTPaths = [
+        #"HLT_HIZeroBias_v4",                                                     
+        #"HLT_HIMinimumBias_v2",
+        "HLT_HIGEDPhoton*"
+   ]
+)
+process.filterSequence = cms.Sequence(
+   process.hltfilter
+)
+
+process.superFilterPath = cms.Path(process.filterSequence)
+process.skimanalysis.superFilters = cms.vstring("superFilterPath")
+
+for path in process.paths:
+   getattr(process, path)._seq = process.filterSequence * getattr(process,path)._seq
