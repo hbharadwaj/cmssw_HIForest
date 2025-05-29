@@ -7,23 +7,37 @@ This project provides a robust framework for photon-tagged jet substructure anal
 
 ## Analysis Framework Architecture
 
-### Core Components
+## Core Analysis Files
+
+### Essential Components
 1. **`gammaJetAnalyzer.cpp`** - Main analysis executable (C++17)
 2. **`plotGammaJet.py`** - Advanced plotting framework (Python 3)
-3. **Configuration System** - `.config` files for all analysis parameters
-4. **Build System** - Makefiles and compilation scripts
-5. **Batch Processing** - HTCondor submission and job management
+3. **`Makefile`** - Production build system
+4. **`compile.sh`** - Development compilation script
+
+### Supporting Files
+- **`test_datamc_config.py`** - Configuration validation utility
+- **`scripts/tdrstyle.C`** - CMS plotting style definitions
+- **`run_plotting.sh`** - Automated plotting execution
+
+### Development Templates
+- **`scripts/photonJet.C`** - Legacy ROOT macro template
+- **`scripts/generateTemplates.C`** - Code generation utilities
+- **`scripts/testHeaderGeneration.C`** - Header file testing
+
+**Note:** Template files in `scripts/` contain features to be implemented in future versions and serve as development references.
 
 ### Data Flow
 ```
-HiForest ROOT Files → gammaJetAnalyzer → Analysis ROOT Files → plotGammaJet → Publication Plots
-                           ↑                      ↑                     ↑
-                     .config files        Helper Scripts        CMS Style Guide
+Skimmed HiForest → gammaJetAnalyzer → Analysis ROOT Files → plotGammaJet → Publication Plots
+(Flat TTree)            ↑                      ↑                     ↑
+                  .config files        Helper Scripts        CMS Style Guide
 ```
 
 ## gammaJetAnalyzer.cpp: Analysis Engine
 
 ### Core Functionality
+- **Input Processing:** Reads skimmed HiForest files with flat TTree structure (output from Step 1)
 - **Event Selection:** Photon isolation, jet quality cuts, kinematic selections
 - **Multi-Collection Support:** Handles different jet algorithms (AK4, AK8) and Z-cut values
 - **Centrality Binning:** Configurable centrality selections for heavy-ion analysis
@@ -116,12 +130,7 @@ The framework uses simple key-value `.config` files compatible with both C++ (TE
    ./compile.sh
    ./gammaJetAnalyzer configs/2023_PbPb_Data.config
    ```
-
-3. **ROOT Compilation:** Interactive development
-   ```bash
-   root -l 'gammaJetAnalyzer.cpp+("configs/2023_PbPb_Data.config")'
-   ```
-
+   
 ### Compiler Optimizations
 - **Release Mode:** `-O3` optimization for production
 - **Debug Mode:** `-g` symbols for development
@@ -130,32 +139,17 @@ The framework uses simple key-value `.config` files compatible with both C++ (TE
 
 ## Batch Processing and Job Management
 
-### HTCondor Integration
-The framework includes comprehensive batch processing capabilities:
+### Available Scripts
+The framework includes basic job management capabilities in development:
 
-### Job Submission
-```bash
-# Submit multiple jobs with different configurations
-./submit_batch.py --config configs/2023_PbPb_Data.config \
-                  --input-list file_lists/data_files.txt \
-                  --jobs-per-file 10 \
-                  --output-dir /eos/user/output/
-```
+- **`submit_production.sh`:** Job submission script for production analysis
+- **`monitor_jobs.sh`:** Basic job monitoring and status checking
+- **`run_plotting.sh`:** Automated plotting script execution
 
-### Job Management Scripts
-- **`submit_jobs.py`:** Automated job submission with dependency handling
-- **`merge_outputs.py`:** Intelligent output file merging and validation
-- **`check_jobs.py`:** Job status monitoring and error detection
-- **`resubmit_failed.py`:** Automatic resubmission of failed jobs
-
-### Resource Requirements
-```bash
-# Example HTCondor requirements
-request_cpus = 1
-request_memory = 4GB
-request_disk = 2GB
-+JobFlavour = "workday"  # 8-hour jobs
-```
+### Current Status
+- **Batch System:** HTCondor integration under development
+- **Job Templates:** Located in `batch/` directory (currently empty - templates to be added)
+- **Resource Management:** Basic resource allocation and monitoring
 
 ## Advanced Analysis Features
 
