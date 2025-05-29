@@ -9,7 +9,7 @@
  *   ./gammaJetAnalyzer -c path/to/config.config [-t maxEvents] [-h]
  *
  * Example:
- *   ./gammaJetAnalyzer -c ../configs/JetSub_2023_PbPb_MC.config -t 1000
+ *   ./gammaJetAnalyzer -c ../configs/JetSub_2023_PbPb_Data.config -t 1000
  */
 
 // Include headers
@@ -35,6 +35,252 @@
 #include <getopt.h>
 #include <unistd.h>
 #include <cstdlib>
+
+// Cut Flow Tracker Class
+class CutFlowTracker {
+public:
+    struct CutInfo {
+        std::string name;
+        std::string description;
+        int passedIndividual;   // Events passing this cut individually
+        int passedSequential;   // Events passing all cuts up to this point
+        bool isActive;          // Whether this cut is enabled in config
+        
+        CutInfo(const std::string& n, const std::string& desc, bool active = true) 
+            : name(n), description(desc), passedIndividual(0), passedSequential(0), isActive(active) {}
+    };
+    
+private:
+    std::vector<CutInfo> cuts;
+    int totalEvents;
+    int currentSequentialPassed;
+    bool isMC;
+    
+public:
+    CutFlowTracker(TEnv* config) : totalEvents(0), currentSequentialPassed(0) {
+        isMC = (std::string(config->GetValue("DataType", "Data")) == "MC");
+        initializeCuts(config);
+    }
+    
+    void initializeCuts(TEnv* config) {
+        // Define all possible cuts based on config parameters
+        cuts.clear();
+        
+        // Event-level cuts
+        cuts.emplace_back("RawEvents", "All input events", true);
+        
+        float vzCut = config->GetValue("VzCut", -1.0);
+        if (vzCut > 0) {
+            cuts.emplace_back("VertexCut", "Vertex |z| < " + std::to_string(vzCut) + " cm", true);
+        }
+        
+        float hiHFMin = config->GetValue("HiHFCutMin", -1.0);
+        float hiHFMax = config->GetValue("HiHFCutMax", -1.0);
+        if (hiHFMin >= 0 || hiHFMax >= 0) {
+            std::string desc = "Centrality: ";
+            if (hiHFMin >= 0) desc += "HiHF > " + std::to_string(hiHFMin);
+            if (hiHFMax >= 0) desc += (hiHFMin >= 0 ? " && " : "") + std::string("HiHF < ") + std::to_string(hiHFMax);
+            cuts.emplace_back("CentralityCut", desc, true);
+        }
+        
+        // Photon cuts
+        float photonEtMin = config->GetValue("PhotonEtMin", -1.0);
+        if (photonEtMin > 0) {
+            cuts.emplace_back("PhotonKinematics", "Photon ET > " + std::to_string(photonEtMin) + " GeV", true);
+        }
+        
+        float photonEtaMax = config->GetValue("PhotonEtaMax", -1.0);
+        if (photonEtaMax > 0) {
+            cuts.emplace_back("PhotonEta", "Photon |η| < " + std::to_string(photonEtaMax), true);
+        }
+        
+        // Photon ID cuts
+        float photonHoverEMax = config->GetValue("PhotonHoverEMax", -1.0);
+        if (photonHoverEMax > 0) {
+            cuts.emplace_back("PhotonHoverE", "Photon H/E < " + std::to_string(photonHoverEMax), true);
+        }
+        
+        float photonSigmaMax = config->GetValue("PhotonSigmaIEtaIEtaMax", -1.0);
+        if (photonSigmaMax > 0) {
+            cuts.emplace_back("PhotonSigmaIEtaIEta", "Photon σ_iηiη < " + std::to_string(photonSigmaMax), true);
+        }
+        
+        float photonIsoMax = config->GetValue("PhotonIsoMax", -1.0);
+        if (photonIsoMax > 0) {
+            cuts.emplace_back("PhotonIsolation", "Photon Iso < " + std::to_string(photonIsoMax), true);
+        }
+        
+        float photonR9Min = config->GetValue("PhotonR9Min", -1.0);
+        if (photonR9Min > 0) {
+            cuts.emplace_back("PhotonR9", "Photon R9 > " + std::to_string(photonR9Min), true);
+        }
+        
+        // MC-specific photon cuts
+        if (isMC && config->GetValue("MCPhotonMatchRequired", 0)) {
+            cuts.emplace_back("MCPhotonMatch", "MC truth photon matching", true);
+        }
+        
+        // Jet cuts
+        float jetPtMin = config->GetValue("JetPtMin", -1.0);
+        if (jetPtMin > 0) {
+            cuts.emplace_back("JetKinematics", "Jet pT > " + std::to_string(jetPtMin) + " GeV", true);
+        }
+        
+        float jetEtaMax = config->GetValue("JetEtaMax", -1.0);
+        if (jetEtaMax > 0) {
+            cuts.emplace_back("JetEta", "Jet |η| < " + std::to_string(jetEtaMax), true);
+        }
+        
+        // Angular correlation cuts
+        float deltaPhiMin = config->GetValue("DeltaPhiMin", -1.0);
+        if (deltaPhiMin > 0) {
+            cuts.emplace_back("DeltaPhi", "Δφ(γ,jet) > " + std::to_string(deltaPhiMin) + " rad", true);
+        }
+        
+        float xjMin = config->GetValue("XjMin", -1.0);
+        if (xjMin > 0) {
+            cuts.emplace_back("XjCut", "xj > " + std::to_string(xjMin), true);
+        }
+        
+        cuts.emplace_back("FinalSelection", "All cuts passed", true);
+        
+        log(LOG_INFO, "CutFlowTracker initialized with " + std::to_string(cuts.size()) + " cuts");
+        for (const auto& cut : cuts) {
+            log(LOG_DEBUG, "  Cut: " + cut.name + " - " + cut.description);
+        }
+    }
+    
+    void startEvent() {
+        totalEvents++;
+        currentSequentialPassed = 0;
+    }
+    
+    void applyCut(const std::string& cutName, bool passed) {
+        auto it = std::find_if(cuts.begin(), cuts.end(), 
+                              [&cutName](const CutInfo& cut) { return cut.name == cutName; });
+        
+        if (it != cuts.end() && it->isActive) {
+            if (passed) {
+                it->passedIndividual++;
+                
+                // Update sequential count: only increment if all previous cuts passed
+                if (currentSequentialPassed == std::distance(cuts.begin(), it)) {
+                    it->passedSequential++;
+                    currentSequentialPassed++;
+                }
+            }
+        }
+    }
+    
+    void printCutFlow() const {
+        log(LOG_INFO, "");
+        log(LOG_INFO, "=== CUT FLOW SUMMARY ===");
+        log(LOG_INFO, "Total events processed: " + std::to_string(totalEvents));
+        log(LOG_INFO, "");
+        log(LOG_INFO, std::string(80, '-'));
+        log(LOG_INFO, "Cut Name              | Description                    | Individual | Sequential | Efficiency");
+        log(LOG_INFO, std::string(80, '-'));
+        
+        for (size_t i = 0; i < cuts.size(); ++i) {
+            const auto& cut = cuts[i];
+            if (!cut.isActive) continue;
+            
+            double individualEff = totalEvents > 0 ? 100.0 * cut.passedIndividual / totalEvents : 0.0;
+            double sequentialEff = 0.0;
+            
+            if (i == 0) {
+                sequentialEff = 100.0; // First cut (raw events) is always 100%
+            } else if (cuts[i-1].passedSequential > 0) {
+                sequentialEff = 100.0 * cut.passedSequential / cuts[i-1].passedSequential;
+            }
+            
+            char buffer[200];
+            snprintf(buffer, sizeof(buffer), "%-20s | %-30s | %8d   | %8d   | %6.2f%%",
+                    cut.name.c_str(), 
+                    cut.description.substr(0, 30).c_str(),
+                    cut.passedIndividual,
+                    cut.passedSequential,
+                    sequentialEff);
+            
+            log(LOG_INFO, std::string(buffer));
+        }
+        
+        log(LOG_INFO, std::string(80, '-'));
+        
+        if (cuts.size() > 1 && totalEvents > 0) {
+            double overallEff = 100.0 * cuts.back().passedSequential / totalEvents;
+            log(LOG_INFO, "Overall efficiency: " + std::to_string(cuts.back().passedSequential) + 
+                         "/" + std::to_string(totalEvents) + " = " + 
+                         std::to_string(overallEff) + "%");
+        }
+        log(LOG_INFO, "");
+    }
+    
+    void saveCutFlowToFile(TFile* outFile) const {
+        if (!outFile) return;
+        
+        outFile->cd();
+        
+        // Create histogram for cut flow
+        TH1F* hCutFlow = new TH1F("hCutFlow", "Cut Flow;Cut Stage;Events", cuts.size(), 0, cuts.size());
+        TH1F* hCutFlowEfficiency = new TH1F("hCutFlowEfficiency", "Cut Flow Efficiency;Cut Stage;Efficiency (%)", cuts.size(), 0, cuts.size());
+        
+        for (size_t i = 0; i < cuts.size(); ++i) {
+            if (!cuts[i].isActive) continue;
+            
+            hCutFlow->SetBinContent(i + 1, cuts[i].passedSequential);
+            hCutFlow->GetXaxis()->SetBinLabel(i + 1, cuts[i].name.c_str());
+            
+            double efficiency = (i == 0) ? 100.0 : 
+                               (cuts[i-1].passedSequential > 0 ? 100.0 * cuts[i].passedSequential / cuts[i-1].passedSequential : 0.0);
+            hCutFlowEfficiency->SetBinContent(i + 1, efficiency);
+            hCutFlowEfficiency->GetXaxis()->SetBinLabel(i + 1, cuts[i].name.c_str());
+        }
+        
+        hCutFlow->Write();
+        hCutFlowEfficiency->Write();
+        
+        // Save cut flow table as TTree for easy access
+        TTree* cutFlowTree = new TTree("cutFlowTree", "Cut Flow Information");
+        
+        std::string cutName, cutDescription;
+        int passedIndividual, passedSequential, totalProcessed;
+        double individualEff, sequentialEff;
+        
+        cutFlowTree->Branch("cutName", &cutName);
+        cutFlowTree->Branch("cutDescription", &cutDescription); 
+        cutFlowTree->Branch("passedIndividual", &passedIndividual);
+        cutFlowTree->Branch("passedSequential", &passedSequential);
+        cutFlowTree->Branch("totalProcessed", &totalProcessed);
+        cutFlowTree->Branch("individualEfficiency", &individualEff);
+        cutFlowTree->Branch("sequentialEfficiency", &sequentialEff);
+        
+        totalProcessed = totalEvents;
+        
+        for (size_t i = 0; i < cuts.size(); ++i) {
+            const auto& cut = cuts[i];
+            if (!cut.isActive) continue;
+            
+            cutName = cut.name;
+            cutDescription = cut.description;
+            passedIndividual = cut.passedIndividual;
+            passedSequential = cut.passedSequential;
+            individualEff = totalEvents > 0 ? 100.0 * cut.passedIndividual / totalEvents : 0.0;
+            sequentialEff = (i == 0) ? 100.0 : 
+                           (cuts[i-1].passedSequential > 0 ? 100.0 * cut.passedSequential / cuts[i-1].passedSequential : 0.0);
+            
+            cutFlowTree->Fill();
+        }
+        
+        cutFlowTree->Write();
+        
+        log(LOG_INFO, "Cut flow information saved to output file");
+    }
+    
+    int getFinalEventCount() const {
+        return cuts.empty() ? 0 : cuts.back().passedSequential;
+    }
+};
 
 // Forward declarations
 void printUsage();
@@ -279,6 +525,9 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
     g_verbosity = config->GetValue("Verbosity", LOG_INFO);
     log(LOG_INFO, "Starting event processing...");
     
+    // Initialize cut flow tracker
+    CutFlowTracker cutFlow(config);
+    
     // Get parameters from config
     std::string dataType = config->GetValue("DataType", "Data");
     bool isMC = (dataType == "MC" || dataType == "mc");
@@ -514,6 +763,9 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
     int nWithJet = 0;
     int nPassed = 0;
     
+    // Initialize cut flow tracker
+    CutFlowTracker cutFlowTracker(config);
+    
     for (Long64_t iEvent = 0; iEvent < nEvents; ++iEvent) {
         if (iEvent % 1000 == 0) {
             log(LOG_INFO, "Processing event " + std::to_string(iEvent) + "/" + 
@@ -531,9 +783,21 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
         
         log(LOG_TRACE, "Event " + std::to_string(iEvent) + " weight: " + std::to_string(eventWeight));
         
+        // Start new event in cut flow tracker
+        cutFlowTracker.startEvent();
+        
         // Event selection
-        if (std::abs(vz) > vzCut) continue;
-        if (hiHF < hiHFCutMin || hiHF > hiHFCutMax) continue;
+        if (std::abs(vz) > vzCut) {
+            cutFlowTracker.applyCut("VertexCut", false);
+            continue;
+        }
+        cutFlowTracker.applyCut("VertexCut", true);
+        
+        if (hiHF < hiHFCutMin || hiHF > hiHFCutMax) {
+            cutFlowTracker.applyCut("CentralityCut", false);
+            continue;
+        }
+        cutFlowTracker.applyCut("CentralityCut", true);
         
         // FIXED: Photon selection using two-stage approach
         // Stage 1: First apply only kinematic cuts and find leading photon

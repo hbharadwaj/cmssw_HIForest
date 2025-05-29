@@ -141,12 +141,12 @@ echo "Verbosity level : "$VERBOSITY
 # Check and remove existing condor jobs if requested
 if [[ $REMOVE_JOBS -eq 1 ]]; then
     log 1 "Checking for existing condor jobs..."
-    EXISTING_JOBS=$(condor_q -submitter $(whoami) -format "%d." ClusterId -format "%d " ProcId -format "%s\n" Cmd | grep "$EXECUTABLE" | wc -l)
+    EXISTING_JOBS=$(condor_q -format "%d." ClusterId -format "%d " ProcId -format "%s\n" Cmd | grep "$EXECUTABLE" | wc -l)
     
     if [[ $EXISTING_JOBS -gt 0 ]]; then
         log 1 "Found $EXISTING_JOBS running jobs. Removing them..."
-        log 2 "Running: condor_q -submitter $(whoami) -format \"%d.\" ClusterId -format \"%d \" ProcId -format \"%s\\n\" Cmd | grep $EXECUTABLE | awk '{print \$1}' | xargs condor_rm"
-        condor_q -submitter $(whoami) -format "%d." ClusterId -format "%d " ProcId -format "%s\n" Cmd | grep "$EXECUTABLE" | awk '{print $1}' | xargs condor_rm
+        log 2 "Running: condor_q -format \"%d.\" ClusterId -format \"%d \" ProcId -format \"%s\\n\" Cmd | grep $EXECUTABLE | awk '{print \$1}' | xargs condor_rm"
+        condor_q -format "%d." ClusterId -format "%d " ProcId -format "%s\n" Cmd | grep "$EXECUTABLE" | awk '{print $1}' | xargs condor_rm
         log 1 "Waiting for jobs to finish terminating..."
         sleep 5
         log 1 "Done."
@@ -441,7 +441,7 @@ if [[ $SUBMIT == "y" || $SUBMIT == "Y" ]]; then
         log 1 "Jobs submitted successfully."
         log 1 "============= JOB MONITORING =============="
         log 1 "Monitor job status with:"
-        log 1 "  condor_q -submitter $(whoami)"
+        log 1 "  condor_q "
         log 1 "  # or check logs with"
         log 1 "  tail -f $LOGS_DIR/skim_*.out"
         log 1 "=========================================="

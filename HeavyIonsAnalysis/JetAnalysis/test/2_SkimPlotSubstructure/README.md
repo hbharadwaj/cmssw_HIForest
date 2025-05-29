@@ -31,10 +31,10 @@ Process skimmed HiForest files to create analysis ROOT files:
 
 ```bash
 # Basic analysis run
-./gammaJetAnalyzer ../configs/2023_PbPb_QCDPhoton.config
+./gammaJetAnalyzer ../configs/JetSub_2023_PbPb_MC.config
 
 # With specific options
-./gammaJetAnalyzer ../configs/2023_PbPb_Data.config
+./gammaJetAnalyzer ../configs/JetSub_2023_PbPb_Data.config
 ```
 
 **Input:** Skimmed HiForest files (flat TTree structure)  
@@ -64,8 +64,8 @@ python3 plotGammaJet.py \
 ## Configuration Files
 
 ### Analysis Configuration
-- **`2023_PbPb_QCDPhoton.config`** - MC photon analysis
-- **`2023_PbPb_Data.config`** - Data analysis settings
+- **`JetSub_2023_PbPb_MC.config`** - MC photon analysis
+- **`JetSub_2023_PbPb_Data.config`** - Data analysis settings
 - **Key parameters:** Photon/jet cuts, centrality bins, jet collections
 
 ### Plotting Configuration  
