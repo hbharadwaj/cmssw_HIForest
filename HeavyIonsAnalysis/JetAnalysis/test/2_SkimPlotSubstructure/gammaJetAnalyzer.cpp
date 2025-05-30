@@ -490,12 +490,19 @@ int main(int argc, char* argv[]) {
         // Process events
         Long64_t nEvents = testMode && maxEvents > 0 ? maxEvents : -1;
         processEvents(chain, config, jetManager, outFile, plotConfig, nEvents);
-        
-        // Clean up
-        outFile->Close();
+
+        // Ensure all output is written before closing
+        if (outFile && outFile->IsOpen()) {
+            outFile->Write("", TObject::kOverwrite);
+            outFile->Close();
+            log(LOG_INFO, "Output file closed successfully.");
+        }
         delete outFile;
+        outFile = nullptr;
         delete chain;
+        chain = nullptr;
         delete config;
+        config = nullptr;
         
         // Print timing information
         timer.Stop();
@@ -507,10 +514,19 @@ int main(int argc, char* argv[]) {
         log(LOG_INFO, "Real time: " + std::to_string(realTime) + " seconds, CPU time: " + std::to_string(cpuTime) + " seconds");
         log(LOG_INFO, "==================================================");
         
+        log(LOG_INFO, "Batch job completed successfully. Exiting cleanly.");
         return 0;
-        
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << std::endl;
+        // Attempt to close output file if open
+        // if (outFile && outFile->IsOpen()) {
+        //     outFile->Write("", TObject::kOverwrite);
+        //     outFile->Close();
+        //     log(LOG_INFO, "Output file closed after exception.");
+        // }
+        // delete outFile;
+        // outFile = nullptr;
+        log(LOG_ERROR, "Batch job failed with exception. Exiting with error code 1.");
         return 1;
     }
 }
