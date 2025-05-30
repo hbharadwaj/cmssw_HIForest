@@ -866,6 +866,10 @@ void updateExistingHeader(std::ofstream& headerFile, const std::string& existing
                          const Config& cfg, const std::string& className, 
                          const std::string& typeAliases, const std::string& structContent) {
     
+    // Mark unused parameters to avoid compiler warnings
+    (void)cfg;
+    (void)className;
+    
     // Find the struct definition in existing content
     size_t structStart = existingContent.find("struct PhotonJetEvent");
     

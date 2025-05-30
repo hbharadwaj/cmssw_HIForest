@@ -177,9 +177,10 @@ public:
         log(LOG_INFO, "=== CUT FLOW SUMMARY ===");
         log(LOG_INFO, "Total events processed: " + std::to_string(totalEvents));
         log(LOG_INFO, "");
-        log(LOG_INFO, std::string(80, '-'));
-        log(LOG_INFO, "Cut Name              | Description                    | Individual | Sequential | Efficiency");
-        log(LOG_INFO, std::string(80, '-'));
+        log(LOG_INFO, std::string(100, '-'));
+        log(LOG_INFO, "Cut Name              | Description                    | Individual     | Sequential     | Efficiency");
+        log(LOG_INFO, "                      |                                | Count   (%)    | Count   (%)    | (%)");
+        log(LOG_INFO, std::string(100, '-'));
         
         for (size_t i = 0; i < cuts.size(); ++i) {
             const auto& cut = cuts[i];
@@ -194,18 +195,18 @@ public:
                 sequentialEff = 100.0 * cut.passedSequential / cuts[i-1].passedSequential;
             }
             
-            char buffer[200];
-            snprintf(buffer, sizeof(buffer), "%-20s | %-30s | %8d   | %8d   | %6.2f%%",
+            char buffer[250];
+            snprintf(buffer, sizeof(buffer), "%-20s | %-30s | %5d (%5.1f%%) | %5d (%5.1f%%) | %6.2f%%",
                     cut.name.c_str(), 
                     cut.description.substr(0, 30).c_str(),
-                    cut.passedIndividual,
-                    cut.passedSequential,
+                    cut.passedIndividual, individualEff,
+                    cut.passedSequential, sequentialEff,
                     sequentialEff);
             
             log(LOG_INFO, std::string(buffer));
         }
         
-        log(LOG_INFO, std::string(80, '-'));
+        log(LOG_INFO, std::string(100, '-'));
         
         if (cuts.size() > 1 && totalEvents > 0) {
             double overallEff = 100.0 * cuts.back().passedSequential / totalEvents;
@@ -525,9 +526,6 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
     g_verbosity = config->GetValue("Verbosity", LOG_INFO);
     log(LOG_INFO, "Starting event processing...");
     
-    // Initialize cut flow tracker
-    CutFlowTracker cutFlow(config);
-    
     // Get parameters from config
     std::string dataType = config->GetValue("DataType", "Data");
     bool isMC = (dataType == "MC" || dataType == "mc");
@@ -543,6 +541,7 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
     float jetPtMin = config->GetValue("JetPtMin", 40.0);
     float jetEtaMax = config->GetValue("JetEtaMax", 2.0);
     float deltaPhiMin = config->GetValue("DeltaPhiMin", 2.094);
+    (void)deltaPhiMin; // Mark as unused to avoid compiler warning
     std::vector<float> centralityBins = getFloatVector(config, "CentralityBins");
     std::vector<std::string> jetCollections = jetManager.getCollections();
     
@@ -799,7 +798,7 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
         }
         cutFlowTracker.applyCut("CentralityCut", true);
         
-        // FIXED: Photon selection using two-stage approach
+        // FIXED: Photon selection using two-stage approach with individual cut tracking
         // Stage 1: First apply only kinematic cuts and find leading photon
         std::vector<int> kinematicCandidates;
         
@@ -812,6 +811,13 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
             kinematicCandidates.push_back(iPho);
         }
         
+        // Track PhotonKinematics cut (ET + eta requirements)
+        if (kinematicCandidates.empty()) {
+            cutFlowTracker.applyCut("PhotonKinematics", false);
+            continue;
+        }
+        cutFlowTracker.applyCut("PhotonKinematics", true);
+        
         // Stage 2: Find the highest ET photon among kinematic candidates
         selectedPhotonIndex = -1;
         float maxPhotonEt = 0;
@@ -823,14 +829,41 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
             }
         }
         
-        // Stage 3: Apply photon ID criteria to the leading photon
+        // Stage 3: Apply photon ID criteria to the leading photon with individual cut tracking
         if (selectedPhotonIndex >= 0) {
-            // Check shower shape, isolation and other ID criteria
-            if (phoHoverE->at(selectedPhotonIndex) > photonHoverEMax ||
-                phoSigmaIEtaIEta->at(selectedPhotonIndex) > photonSigmaIEtaIEtaMax ||
-                phoIso->at(selectedPhotonIndex) > photonIsoMax ||
-                phoR9->at(selectedPhotonIndex) < photonR9Min) {
-                selectedPhotonIndex = -1; // Reset if ID criteria not satisfied
+            // Track PhotonEta cut (should pass since we selected from kinematic candidates)
+            cutFlowTracker.applyCut("PhotonEta", true);
+            
+            // Check H/E cut
+            bool passHoverE = (phoHoverE->at(selectedPhotonIndex) <= photonHoverEMax);
+            cutFlowTracker.applyCut("PhotonHoverE", passHoverE);
+            if (!passHoverE) {
+                selectedPhotonIndex = -1;
+                continue;
+            }
+            
+            // Check sigma ieta ieta cut
+            bool passSigmaIEtaIEta = (phoSigmaIEtaIEta->at(selectedPhotonIndex) <= photonSigmaIEtaIEtaMax);
+            cutFlowTracker.applyCut("PhotonSigmaIEtaIEta", passSigmaIEtaIEta);
+            if (!passSigmaIEtaIEta) {
+                selectedPhotonIndex = -1;
+                continue;
+            }
+            
+            // Check isolation cut
+            bool passIso = (phoIso->at(selectedPhotonIndex) <= photonIsoMax);
+            cutFlowTracker.applyCut("PhotonIso", passIso);
+            if (!passIso) {
+                selectedPhotonIndex = -1;
+                continue;
+            }
+            
+            // Check R9 cut
+            bool passR9 = (phoR9->at(selectedPhotonIndex) >= photonR9Min);
+            cutFlowTracker.applyCut("PhotonR9", passR9);
+            if (!passR9) {
+                selectedPhotonIndex = -1;
+                continue;
             }
             
             // MC-specific photon requirements (only if passed previous checks)
@@ -891,7 +924,10 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
             }
         }
         
-        if (selectedPhotonIndex < 0) continue;
+        // Final photon selection check
+        if (selectedPhotonIndex < 0) {
+            continue;
+        }
         nWithPhoton++;
         
         // Store selected photon information
@@ -925,36 +961,65 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
             selectedJetXjs[collection] = 0;
         }
         
-        // Jet selection for each collection
+        // Jet selection for each collection with individual cut tracking
         bool hasSelectedJet = false;
+        std::vector<int> jetsPassingKinematics;
+        
+        // First pass: collect all jets passing kinematic cuts across all collections
         for (const auto& collection : jetCollections) {
             int nJets = jetManager.getNJets(collection);
-            float maxJetPt = 0;
-            int bestJetIndex = -1;
             
             for (int iJet = 0; iJet < nJets; ++iJet) {
                 float jetPt = jetManager.getJetPt(collection, iJet);
                 float jetEta = jetManager.getJetEta(collection, iJet);
-                float jetPhi = jetManager.getJetPhi(collection, iJet);
                 
-                // Apply jet selection
-                if (jetPt < jetPtMin) continue;
-                if (std::abs(jetEta) > jetEtaMax) continue;
-                
-                // Calculate delta phi between photon and jet
-                float dPhi = getDeltaPhi(selectedPhotonPhi, jetPhi);
-                
-                // Select highest pT jet passing all cuts
-                if (jetPt > maxJetPt) {
-                    maxJetPt = jetPt;
-                    bestJetIndex = iJet;
+                // Apply jet kinematic selection
+                if (jetPt >= jetPtMin && std::abs(jetEta) <= jetEtaMax) {
+                    jetsPassingKinematics.push_back(1); // At least one jet passes
+                    break; // We only need to know if any jet passes
                 }
             }
-            
-            // If jet found, store its information
-            if (bestJetIndex >= 0) {
-                hasSelectedJet = true;
-                selectedJetIndexes[collection] = bestJetIndex;
+            if (!jetsPassingKinematics.empty()) break; // Found at least one good jet
+        }
+        
+        // Track JetKinematics cut (pT + eta requirements)
+        bool passJetKinematics = !jetsPassingKinematics.empty();
+        cutFlowTracker.applyCut("JetKinematics", passJetKinematics);
+        
+        if (!passJetKinematics) {
+            cutFlowTracker.applyCut("JetSelection", false);
+        } else {
+            // Second pass: find the best jet among those passing cuts
+            for (const auto& collection : jetCollections) {
+                int nJets = jetManager.getNJets(collection);
+                float maxJetPt = 0;
+                int bestJetIndex = -1;
+                
+                for (int iJet = 0; iJet < nJets; ++iJet) {
+                    float jetPt = jetManager.getJetPt(collection, iJet);
+                    float jetEta = jetManager.getJetEta(collection, iJet);
+                    float jetPhi = jetManager.getJetPhi(collection, iJet);
+                    
+                    // Apply jet selection
+                    if (jetPt < jetPtMin) continue;
+                    if (std::abs(jetEta) > jetEtaMax) continue;
+                    
+                    // Calculate delta phi between photon and jet
+                    float dPhi = getDeltaPhi(selectedPhotonPhi, jetPhi);
+                    (void)dPhi; // Mark as unused to avoid compiler warning
+                    
+                    // Select highest pT jet passing all cuts
+                    if (jetPt > maxJetPt) {
+                        maxJetPt = jetPt;
+                        bestJetIndex = iJet;
+                    }
+                }
+                
+                // If jet found, store its information
+                if (bestJetIndex >= 0) {
+                    hasSelectedJet = true;
+                    selectedJetIndexes[collection] = bestJetIndex;
+                }
                 selectedJetPts[collection] = jetManager.getJetPt(collection, bestJetIndex);
                 selectedJetEtas[collection] = jetManager.getJetEta(collection, bestJetIndex);
                 selectedJetPhis[collection] = jetManager.getJetPhi(collection, bestJetIndex);
@@ -1037,6 +1102,9 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
                     }
                 }
             }
+            
+            // Track final JetSelection based on whether we found any jet
+            cutFlowTracker.applyCut("JetSelection", hasSelectedJet);
         }
         
         if (hasSelectedJet) {
@@ -1075,6 +1143,9 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
     log(LOG_INFO, "  Events with selected jet: " + std::to_string(nWithJet));
     log(LOG_INFO, "  Events passing all selections: " + std::to_string(nPassed));
     log(LOG_INFO, "==================================================");
+    
+    // Print the cut flow summary
+    cutFlowTracker.printCutFlow();
 }
 
 /**
