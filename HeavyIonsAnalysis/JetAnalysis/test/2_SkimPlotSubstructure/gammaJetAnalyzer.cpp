@@ -176,7 +176,7 @@ public:
                     it->passedSequential++;
                     currentSequentialPassed = 1;
                 }
-            } else if (cutIndex == currentSequentialPassed && passed) {
+            } else if (cutIndex == (size_t)currentSequentialPassed && passed) {
                 // This is the next cut in sequence and it passed
                 it->passedSequential++;
                 currentSequentialPassed++;
@@ -309,7 +309,6 @@ void printUsage();
 void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager, TFile* outFile, 
                   const PlottingConfiguration& plotConfig, Long64_t maxEvents = -1);
 bool setupInputChain(TChain* chain, const std::string& inputDir, bool testMode, int maxFiles = 1);
-void setupOutputTree(TTree* outTree, const std::vector<std::string>& jetCollections);
 void createHistograms(TFile* outFile, const std::vector<std::string>& jetCollections, 
                      const std::vector<float>& centralityBins, const PlottingConfiguration& plotConfig);
 float getDeltaPhi(float phi1, float phi2);
@@ -602,7 +601,6 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
     
     // Setup output tree
     TTree* outTree = new TTree("gammaJetTree", "Gamma-Jet Analysis");
-    setupOutputTree(outTree, jetCollections);
     
     // Create histograms
     createHistograms(outFile, jetCollections, centralityBins, plotConfig);
@@ -1872,6 +1870,22 @@ void createHistograms(TFile* outFile, const std::vector<std::string>& jetCollect
                 log(LOG_DEBUG, "Created MC-specific histograms in " + collection + "/" + centName);
             }
 
+            // Suppress unused variable warnings - these histograms are properly stored in ROOT directory
+            (void)hJetPt; (void)hJetEta; (void)hJetPhi; (void)hDeltaPhi; (void)hXj;
+            (void)hPhotonEt; (void)hPhotonEta; (void)hPhotonHoverE; (void)hPhotonSigmaIEtaIEta; 
+            (void)hPhotonIso; (void)hPhotonR9; (void)hJetMass; (void)hJetArea; (void)hDynSplit; 
+            (void)hDynKt; (void)hDynZ; (void)hGirth; (void)hThrust; (void)hLHA; (void)hPtD; 
+            (void)hDynDeltaR; (void)hIntJetMulti; (void)hRefJetPt; (void)hRefJetEta; (void)hRefJetPhi; 
+            (void)hRefJetMass; (void)hRefJetArea; (void)hRefDynSplit; (void)hRefDynKt; (void)hRefDynZ; 
+            (void)hRefGirth; (void)hRefThrust; (void)hRefLHA; (void)hRefPtD; (void)hRefDynDeltaR; 
+            (void)hRefIntJetMulti; (void)hNPhotons; (void)hNJets; (void)hEventWeight; (void)hVz; 
+            (void)hHiHF; (void)hCentrality; (void)h2JetPtVsEta; (void)h2JetMassVsPt; (void)h2GirthVsPt; 
+            (void)h2ThrustVsPt; (void)h2PtDVsPt; (void)h2RefJetPtVsEta; (void)h2RefJetMassVsPt; 
+            (void)h2RefGirthVsPt; (void)h2RefThrustVsPt; (void)h2RefPtDVsPt; (void)h2JetVsRefPt; 
+            (void)h2JetVsRefMass; (void)h2JetVsRefGirth; (void)h2JetVsRefThrust; (void)h2JetVsRefPtD; 
+            (void)pGirthVsPt; (void)pThrustVsPt; (void)pPtDVsPt; (void)pRefGirthVsPt; (void)pRefThrustVsPt; 
+            (void)pRefPtDVsPt; (void)hMCPhotonPt; (void)hMCPhotonEta; (void)hMCPhotonPhi; 
+            (void)hMCPhotonPID; (void)hMCPhotonMomPID; (void)hPhotonGenMatch; (void)h2PhotonGenVsReco;
             
             // Create any additional histograms defined in the config but not explicitly included above
             for (const auto& histConfig : plotConfig.histogramConfigs) {
@@ -1906,18 +1920,6 @@ void createHistograms(TFile* outFile, const std::vector<std::string>& jetCollect
     
     log(LOG_DEBUG, "Histogram creation complete with " + 
         std::to_string(plotConfig.histogramConfigs.size()) + " histogram configurations.");
-}
-
-/**
- * Setup output tree branches
- */
-void setupOutputTree(TTree* outTree, const std::vector<std::string>& jetCollections) {
-    if (!outTree) return;
-    
-    // Suppress unused parameter warning
-    // (void)jetCollections;
-    
-    // Basic tree structure is set up in processEvents
 }
 
 /**
