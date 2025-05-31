@@ -26,9 +26,14 @@ class JetCollectionManager {
 public:
     // Enum for jet properties to replace individual getter functions
     enum JetProperty {
+        // Reconstructed jet properties
         PT, ETA, PHI, MASS, AREA, 
         DYN_SPLIT, DYN_KT, DYN_Z, 
-        GIRTH, THRUST, LHA, PTD
+        GIRTH, THRUST, LHA, PTD,
+        // MC-matched generator jet properties (ref variables)
+        REF_PT, REF_ETA, REF_PHI, REF_MASS, REF_AREA,
+        REF_DYN_SPLIT, REF_DYN_KT, REF_DYN_Z,
+        REF_GIRTH, REF_THRUST, REF_LHA, REF_PTD
     };
 
     /**
@@ -127,29 +132,30 @@ public:
     }
     
     /**
-     * Generic getter for jet properties - replaces all individual getters
+     * Generic getter for jet properties - handles both reco and gen jets
      * @param collection Name of jet collection
-     * @param property Jet property to retrieve
+     * @param property Jet property to retrieve (reco or gen)
      * @param jetIndex Index of the jet in the collection
-     * @return Property value (float for most, int for DYN_SPLIT)
+     * @return Property value (float for most, int for DYN_SPLIT variants)
      */
     float getJetProperty(const std::string& collection, JetProperty property, int jetIndex)
     {
         auto it = fJetBranches.find(collection);
         if (it == fJetBranches.end() || jetIndex >= it->second.nJets || jetIndex < 0) {
-            return (property == DYN_SPLIT) ? -999 : -999.0;
+            return (property == DYN_SPLIT || property == REF_DYN_SPLIT) ? -999.0f : -999.0f;
         }
         
         // Add additional bounds checking against MAX_JETS to prevent buffer overflow
         if (it->second.nJets > MAX_JETS) {
             log(LOG_ERROR, "Collection " + collection + " has " + std::to_string(it->second.nJets) + 
                 " jets, exceeding MAX_JETS=" + std::to_string(MAX_JETS) + ". Data may be corrupted!");
-            return (property == DYN_SPLIT) ? -999 : -999.0;
+            return (property == DYN_SPLIT || property == REF_DYN_SPLIT) ? -999.0f : -999.0f;
         }
         
         const auto& branches = it->second;
         
         switch (property) {
+            // Reconstructed jet properties
             case PT:        return branches.pt.get()[jetIndex];
             case ETA:       return branches.eta.get()[jetIndex];
             case PHI:       return branches.phi.get()[jetIndex];
@@ -162,12 +168,25 @@ public:
             case THRUST:    return branches.thrust.get()[jetIndex];
             case LHA:       return branches.lha.get()[jetIndex];
             case PTD:       return branches.ptd.get()[jetIndex];
-            default:        return -999.0;
+            // MC-matched generator jet properties (ref variables)
+            case REF_PT:        return branches.refpt.get()[jetIndex];
+            case REF_ETA:       return branches.refeta.get()[jetIndex];
+            case REF_PHI:       return branches.refphi.get()[jetIndex];
+            case REF_MASS:      return branches.refmass.get()[jetIndex];
+            case REF_AREA:      return branches.refarea.get()[jetIndex];
+            case REF_DYN_SPLIT: return static_cast<float>(branches.refdyn_split.get()[jetIndex]);
+            case REF_DYN_KT:    return branches.refdyn_kt.get()[jetIndex];
+            case REF_DYN_Z:     return branches.refdyn_z.get()[jetIndex];
+            case REF_GIRTH:     return branches.refgirth.get()[jetIndex];
+            case REF_THRUST:    return branches.refthrust.get()[jetIndex];
+            case REF_LHA:       return branches.reflha.get()[jetIndex];
+            case REF_PTD:       return branches.refptd.get()[jetIndex];
+            default:            return -999.0f;
         }
     }
     
     /**
-     * Convenience functions that call getJetProperty internally
+     * Convenience functions for reconstructed jets (call getJetProperty internally)
      */
     float getJetPt(const std::string& collection, int jetIndex) { 
         return getJetProperty(collection, PT, jetIndex); 
@@ -204,6 +223,46 @@ public:
     }
     float getJetPtD(const std::string& collection, int jetIndex) { 
         return getJetProperty(collection, PTD, jetIndex); 
+    }
+    
+    /**
+     * Convenience functions for MC-matched ref jets (call getJetProperty internally)
+     */
+    float getRefJetPt(const std::string& collection, int jetIndex) {
+        return getJetProperty(collection, REF_PT, jetIndex);
+    }
+    float getRefJetEta(const std::string& collection, int jetIndex) {
+        return getJetProperty(collection, REF_ETA, jetIndex);
+    }
+    float getRefJetPhi(const std::string& collection, int jetIndex) {
+        return getJetProperty(collection, REF_PHI, jetIndex);
+    }
+    float getRefJetMass(const std::string& collection, int jetIndex) {
+        return getJetProperty(collection, REF_MASS, jetIndex);
+    }
+    float getRefJetArea(const std::string& collection, int jetIndex) {
+        return getJetProperty(collection, REF_AREA, jetIndex);
+    }
+    int getRefJetDynSplit(const std::string& collection, int jetIndex) {
+        return (int)getJetProperty(collection, REF_DYN_SPLIT, jetIndex);
+    }
+    float getRefJetDynKt(const std::string& collection, int jetIndex) {
+        return getJetProperty(collection, REF_DYN_KT, jetIndex);
+    }
+    float getRefJetDynZ(const std::string& collection, int jetIndex) {
+        return getJetProperty(collection, REF_DYN_Z, jetIndex);
+    }
+    float getRefJetGirth(const std::string& collection, int jetIndex) {
+        return getJetProperty(collection, REF_GIRTH, jetIndex);
+    }
+    float getRefJetThrust(const std::string& collection, int jetIndex) {
+        return getJetProperty(collection, REF_THRUST, jetIndex);
+    }
+    float getRefJetLHA(const std::string& collection, int jetIndex) {
+        return getJetProperty(collection, REF_LHA, jetIndex);
+    }
+    float getRefJetPtD(const std::string& collection, int jetIndex) {
+        return getJetProperty(collection, REF_PTD, jetIndex);
     }
     
     /**
@@ -294,7 +353,20 @@ private:
             {"_jt_girth", branches.girth.get(), false, "float[]"},
             {"_jt_thrust", branches.thrust.get(), false, "float[]"},
             {"_jt_LHA", branches.lha.get(), false, "float[]"},
-            {"_jt_pTD", branches.ptd.get(), false, "float[]"}
+            {"_jt_pTD", branches.ptd.get(), false, "float[]"},
+            // Ref jet branches for MC truth (ref variables) - following same naming as reco
+            {"_refpt", branches.refpt.get(), false, "float[]"},
+            {"_refeta", branches.refeta.get(), false, "float[]"},
+            {"_refphi", branches.refphi.get(), false, "float[]"},
+            {"_refm", branches.refmass.get(), false, "float[]"},
+            {"_refarea", branches.refarea.get(), false, "float[]"},
+            {"_refdyn_split", branches.refdyn_split.get(), false, "int[]"},
+            {"_refdyn_kt", branches.refdyn_kt.get(), false, "float[]"},
+            {"_refdyn_z", branches.refdyn_z.get(), false, "float[]"},
+            {"_ref_girth", branches.refgirth.get(), false, "float[]"},
+            {"_ref_thrust", branches.refthrust.get(), false, "float[]"},
+            {"_ref_LHA", branches.reflha.get(), false, "float[]"},
+            {"_ref_pTD", branches.refptd.get(), false, "float[]"}
         };
         
         // Setup all branches using loop
@@ -344,6 +416,19 @@ private:
         std::unique_ptr<float[]> thrust;
         std::unique_ptr<float[]> lha;
         std::unique_ptr<float[]> ptd;
+        // Ref jet variables for MC truth (ref variables)
+        std::unique_ptr<float[]> refpt;
+        std::unique_ptr<float[]> refeta;
+        std::unique_ptr<float[]> refphi;
+        std::unique_ptr<float[]> refmass;
+        std::unique_ptr<float[]> refarea;
+        std::unique_ptr<int[]> refdyn_split;
+        std::unique_ptr<float[]> refdyn_kt;
+        std::unique_ptr<float[]> refdyn_z;
+        std::unique_ptr<float[]> refgirth;
+        std::unique_ptr<float[]> refthrust;
+        std::unique_ptr<float[]> reflha;
+        std::unique_ptr<float[]> refptd;
         
         // Initialize arrays on heap
         JetBranches() : nJets(0) {
@@ -359,20 +444,44 @@ private:
             thrust = std::make_unique<float[]>(MAX_JETS);
             lha = std::make_unique<float[]>(MAX_JETS);
             ptd = std::make_unique<float[]>(MAX_JETS);
+            refpt = std::make_unique<float[]>(MAX_JETS);
+            refeta = std::make_unique<float[]>(MAX_JETS);
+            refphi = std::make_unique<float[]>(MAX_JETS);
+            refmass = std::make_unique<float[]>(MAX_JETS);
+            refarea = std::make_unique<float[]>(MAX_JETS);
+            refdyn_split = std::make_unique<int[]>(MAX_JETS);
+            refdyn_kt = std::make_unique<float[]>(MAX_JETS);
+            refdyn_z = std::make_unique<float[]>(MAX_JETS);
+            refgirth = std::make_unique<float[]>(MAX_JETS);
+            refthrust = std::make_unique<float[]>(MAX_JETS);
+            reflha = std::make_unique<float[]>(MAX_JETS);
+            refptd = std::make_unique<float[]>(MAX_JETS);
             
-            // Initialize to zero
-            std::memset(pt.get(), 0, MAX_JETS * sizeof(float));
-            std::memset(eta.get(), 0, MAX_JETS * sizeof(float));
-            std::memset(phi.get(), 0, MAX_JETS * sizeof(float));
-            std::memset(mass.get(), 0, MAX_JETS * sizeof(float));
-            std::memset(area.get(), 0, MAX_JETS * sizeof(float));
-            std::memset(dyn_split.get(), 0, MAX_JETS * sizeof(int));
-            std::memset(dyn_kt.get(), 0, MAX_JETS * sizeof(float));
-            std::memset(dyn_z.get(), 0, MAX_JETS * sizeof(float));
-            std::memset(girth.get(), 0, MAX_JETS * sizeof(float));
-            std::memset(thrust.get(), 0, MAX_JETS * sizeof(float));
-            std::memset(lha.get(), 0, MAX_JETS * sizeof(float));
-            std::memset(ptd.get(), 0, MAX_JETS * sizeof(float));
+            // Initialize to -999 (not 0) for proper out-of-bounds identification
+            std::fill_n(pt.get(), MAX_JETS, -999.0f);
+            std::fill_n(eta.get(), MAX_JETS, -999.0f);
+            std::fill_n(phi.get(), MAX_JETS, -999.0f);
+            std::fill_n(mass.get(), MAX_JETS, -999.0f);
+            std::fill_n(area.get(), MAX_JETS, -999.0f);
+            std::fill_n(dyn_split.get(), MAX_JETS, -999);
+            std::fill_n(dyn_kt.get(), MAX_JETS, -999.0f);
+            std::fill_n(dyn_z.get(), MAX_JETS, -999.0f);
+            std::fill_n(girth.get(), MAX_JETS, -999.0f);
+            std::fill_n(thrust.get(), MAX_JETS, -999.0f);
+            std::fill_n(lha.get(), MAX_JETS, -999.0f);
+            std::fill_n(ptd.get(), MAX_JETS, -999.0f);
+            std::fill_n(refpt.get(), MAX_JETS, -999.0f);
+            std::fill_n(refeta.get(), MAX_JETS, -999.0f);
+            std::fill_n(refphi.get(), MAX_JETS, -999.0f);
+            std::fill_n(refmass.get(), MAX_JETS, -999.0f);
+            std::fill_n(refarea.get(), MAX_JETS, -999.0f);
+            std::fill_n(refdyn_split.get(), MAX_JETS, -999);
+            std::fill_n(refdyn_kt.get(), MAX_JETS, -999.0f);
+            std::fill_n(refdyn_z.get(), MAX_JETS, -999.0f);
+            std::fill_n(refgirth.get(), MAX_JETS, -999.0f);
+            std::fill_n(refthrust.get(), MAX_JETS, -999.0f);
+            std::fill_n(reflha.get(), MAX_JETS, -999.0f);
+            std::fill_n(refptd.get(), MAX_JETS, -999.0f);
         }
         
         // Copy constructor
@@ -389,6 +498,18 @@ private:
             thrust = std::make_unique<float[]>(MAX_JETS);
             lha = std::make_unique<float[]>(MAX_JETS);
             ptd = std::make_unique<float[]>(MAX_JETS);
+            refpt = std::make_unique<float[]>(MAX_JETS);
+            refeta = std::make_unique<float[]>(MAX_JETS);
+            refphi = std::make_unique<float[]>(MAX_JETS);
+            refmass = std::make_unique<float[]>(MAX_JETS);
+            refarea = std::make_unique<float[]>(MAX_JETS);
+            refdyn_split = std::make_unique<int[]>(MAX_JETS);
+            refdyn_kt = std::make_unique<float[]>(MAX_JETS);
+            refdyn_z = std::make_unique<float[]>(MAX_JETS);
+            refgirth = std::make_unique<float[]>(MAX_JETS);
+            refthrust = std::make_unique<float[]>(MAX_JETS);
+            reflha = std::make_unique<float[]>(MAX_JETS);
+            refptd = std::make_unique<float[]>(MAX_JETS);
             
             std::memcpy(pt.get(), other.pt.get(), MAX_JETS * sizeof(float));
             std::memcpy(eta.get(), other.eta.get(), MAX_JETS * sizeof(float));
@@ -402,6 +523,18 @@ private:
             std::memcpy(thrust.get(), other.thrust.get(), MAX_JETS * sizeof(float));
             std::memcpy(lha.get(), other.lha.get(), MAX_JETS * sizeof(float));
             std::memcpy(ptd.get(), other.ptd.get(), MAX_JETS * sizeof(float));
+            std::memcpy(refpt.get(), other.refpt.get(), MAX_JETS * sizeof(float));
+            std::memcpy(refeta.get(), other.refeta.get(), MAX_JETS * sizeof(float));
+            std::memcpy(refphi.get(), other.refphi.get(), MAX_JETS * sizeof(float));
+            std::memcpy(refmass.get(), other.refmass.get(), MAX_JETS * sizeof(float));
+            std::memcpy(refarea.get(), other.refarea.get(), MAX_JETS * sizeof(float));
+            std::memcpy(refdyn_split.get(), other.refdyn_split.get(), MAX_JETS * sizeof(int));
+            std::memcpy(refdyn_kt.get(), other.refdyn_kt.get(), MAX_JETS * sizeof(float));
+            std::memcpy(refdyn_z.get(), other.refdyn_z.get(), MAX_JETS * sizeof(float));
+            std::memcpy(refgirth.get(), other.refgirth.get(), MAX_JETS * sizeof(float));
+            std::memcpy(refthrust.get(), other.refthrust.get(), MAX_JETS * sizeof(float));
+            std::memcpy(reflha.get(), other.reflha.get(), MAX_JETS * sizeof(float));
+            std::memcpy(refptd.get(), other.refptd.get(), MAX_JETS * sizeof(float));
         }
         
         // Assignment operator
@@ -420,6 +553,18 @@ private:
                 std::memcpy(thrust.get(), other.thrust.get(), MAX_JETS * sizeof(float));
                 std::memcpy(lha.get(), other.lha.get(), MAX_JETS * sizeof(float));
                 std::memcpy(ptd.get(), other.ptd.get(), MAX_JETS * sizeof(float));
+                std::memcpy(refpt.get(), other.refpt.get(), MAX_JETS * sizeof(float));
+                std::memcpy(refeta.get(), other.refeta.get(), MAX_JETS * sizeof(float));
+                std::memcpy(refphi.get(), other.refphi.get(), MAX_JETS * sizeof(float));
+                std::memcpy(refmass.get(), other.refmass.get(), MAX_JETS * sizeof(float));
+                std::memcpy(refarea.get(), other.refarea.get(), MAX_JETS * sizeof(float));
+                std::memcpy(refdyn_split.get(), other.refdyn_split.get(), MAX_JETS * sizeof(int));
+                std::memcpy(refdyn_kt.get(), other.refdyn_kt.get(), MAX_JETS * sizeof(float));
+                std::memcpy(refdyn_z.get(), other.refdyn_z.get(), MAX_JETS * sizeof(float));
+                std::memcpy(refgirth.get(), other.refgirth.get(), MAX_JETS * sizeof(float));
+                std::memcpy(refthrust.get(), other.refthrust.get(), MAX_JETS * sizeof(float));
+                std::memcpy(reflha.get(), other.reflha.get(), MAX_JETS * sizeof(float));
+                std::memcpy(refptd.get(), other.refptd.get(), MAX_JETS * sizeof(float));
             }
             return *this;
         }

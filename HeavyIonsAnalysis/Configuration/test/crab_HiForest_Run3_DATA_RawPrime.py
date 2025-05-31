@@ -4,7 +4,7 @@ config = Configuration()
 
 # ── General ────────────────────────────────────────────────────────────────────
 config.section_('General')
-config.General.requestName    = '2025_May_29_HIRawPrime1_with_Trigger'
+config.General.requestName    = '2025_May_31_HIRawPrime4_with_Trigger'
 config.General.workArea       = 'crab_projects'
 config.General.transferOutputs= True
 config.General.transferLogs   = False
@@ -21,12 +21,12 @@ config.JobType.maxJobRuntimeMin = 2750
 
 # ── Data ───────────────────────────────────────────────────────────────────────
 config.section_('Data')
-config.Data.inputDataset      = "/HIPhysicsRawPrime1/HIRun2023A-PromptReco-v2/MINIAOD"
+config.Data.inputDataset      = "/HIPhysicsRawPrime4/HIRun2023A-PromptReco-v2/MINIAOD"
 config.Data.inputDBS          = "global"
 
 # Lumi‐based splitting: now *integer* 5 lumis per job
 config.Data.splitting         = 'LumiBased'
-config.Data.unitsPerJob       = 5        # was '10' (string); now 2 lumis ≃5 h/job
+config.Data.unitsPerJob       = 10        # was '10' (string); now 2 lumis ≃5 h/job
 config.Data.totalUnits        = -1       # process all lumis
 
 # Output location

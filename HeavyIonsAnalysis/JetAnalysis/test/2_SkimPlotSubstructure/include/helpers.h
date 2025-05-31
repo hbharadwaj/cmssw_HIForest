@@ -136,6 +136,9 @@ struct PlottingConfiguration {
     bool createProfilePlots = true;
     bool createRatioPlots = false;
     
+    // Configuration file reference for MC detection
+    TEnv* configFile = nullptr;
+    
     PlottingConfiguration() {}
 };
 

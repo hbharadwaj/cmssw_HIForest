@@ -106,6 +106,9 @@ class DataMCConfig:
         self.legend_y1 = float(config_dict.get('DataMC.LegendY1', 0.75))
         self.legend_x2 = float(config_dict.get('DataMC.LegendX2', 0.85))
         self.legend_y2 = float(config_dict.get('DataMC.LegendY2', 0.85))
+        
+        # Plot scaling settings
+        self.log_y = config_dict.get('DataMC.LogY', '0') == '1'
 
 
 def get_histogram_configs(config):
@@ -299,7 +302,7 @@ def get_available_jet_dirs(root_file, config):
     jet_dirs_config = config.get('JetDirectories', 'AK4Z2')
     available_dirs = []
     verbose = config.get('Verbose', '0') == '1'
-    if verbose
+    if verbose:
         print(f"DEBUG: Checking for jet directories from config: {jet_dirs_config}")
         
         for jet_dir in jet_dirs_config.split(','):
@@ -571,11 +574,11 @@ def draw_cms_label(canvas, config, selection_text=""):
         
         # Try to keep energy and luminosity on same line
         combined_text = f"{energy_text}, {luminosity}"
-        if len(combined_text) > 40:  # Split if too long
-            latex.DrawLatexNDC(x_lumi, y_cms, f"{energy_text}")
-            latex.DrawLatexNDC(x_lumi, y_cms - 0.035, f"{luminosity}")
-        else:
-            latex.DrawLatexNDC(x_lumi, y_cms, combined_text)
+        # if len(combined_text) > 40:  # Split if too long
+        #     latex.DrawLatexNDC(x_lumi, y_cms, f"{energy_text}")
+        #     latex.DrawLatexNDC(x_lumi, y_cms - 0.04, f"{luminosity}")
+        # else:
+        latex.DrawLatexNDC(x_lumi, y_cms, combined_text)
     
     # Don't add selection text here - it will be handled by the plotting functions
     # based on legend position
@@ -838,7 +841,7 @@ def plot_histogram_1d(hist, hist_config, config, outdir, formats, jet_dir="", ce
         
         start_x = left_margin + 0.02  # Small offset from left margin
         start_y = bottom_margin + 0.02  # Small offset from bottom margin
-        line_spacing = 0.032  # Spacing between lines
+        line_spacing = 0.04  # Spacing between lines
         
         # Draw each chunk on a separate line, starting from bottom
         for i, chunk in enumerate(chunks):
@@ -951,7 +954,7 @@ def plot_histogram_2d(hist, hist_config, config, outdir, formats, jet_dir="", ce
         
         # Position text at bottom left with proper spacing
         for i, chunk in enumerate(chunks):
-            latex.DrawLatexNDC(0.2, 0.3 - i*0.035, chunk)
+            latex.DrawLatexNDC(0.2, 0.3 - i*0.04, chunk)
     
     # Create filename with jet directory and centrality bin information
     filename = hist_config.name
@@ -1265,6 +1268,21 @@ def plot_datamc_comparison(data_file, mc_file, hist_name, config, outdir, format
     
     # Plot main comparison in upper pad
     upper_pad.cd()
+    
+    # Check for logY scaling - look for histogram-specific LogY setting
+    # Try to find the histogram configuration for LogY setting
+    hist_plot_key = hist_name.replace('h', '') if hist_name.startswith('h') else hist_name
+    use_log_y = False
+    
+    # Check histogram-specific LogY setting
+    if config.get(f'Histogram.{hist_plot_key}.LogY', '0') == '1':
+        use_log_y = True
+    # Check global DataMC LogY setting as fallback
+    elif config.get('DataMC.LogY', '0') == '1':
+        use_log_y = True
+    
+    if use_log_y:
+        upper_pad.SetLogy()
     
     # Style data histogram
     data_hist.SetMarkerColor(datamc_config.data_color)
