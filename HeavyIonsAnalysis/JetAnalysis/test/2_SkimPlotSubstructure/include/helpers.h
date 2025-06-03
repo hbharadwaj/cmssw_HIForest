@@ -310,7 +310,7 @@ struct PlottingConfiguration {
     // Canvas settings
     int canvasWidth = 800;
     int canvasHeight = 600;
-    int canvasDPI = 300;
+    int canvasDPI = 600;
     double marginLeft = 0.12;
     double marginRight = 0.05;
     double marginTop = 0.08;
@@ -365,9 +365,9 @@ PlottingConfiguration g_plotConfig;
  * - Usage: call after loading your TEnv config.
 */
 inline void loadHistogramConfigsFromEnv(TEnv* env, PlottingConfiguration& plotConfig) {
-    plotConfig.histogramDefaults.clear();
-    plotConfig.histogramRawConfigs.clear();
-    plotConfig.histogramConfigs.clear();
+    // plotConfig.histogramDefaults.clear();
+    // plotConfig.histogramRawConfigs.clear();
+    // plotConfig.histogramConfigs.clear();
 
     // Collect all keys from TEnv
     TList* keys = env->GetTable();
@@ -447,6 +447,8 @@ inline void loadHistogramConfigsFromEnv(TEnv* env, PlottingConfiguration& plotCo
         } else {
             hcfg.color = 1;
         }
+
+        log(LOG_TRACE, "Parsed config for " + histName);
         
         plotConfig.histogramConfigs[histName] = hcfg;
     }
@@ -477,8 +479,8 @@ bool createOutputDirectories(const std::string& outputDir) {
 
 /**
  * Print configuration summary
-*/
-void printConfig(TEnv* config) {
+ */
+ void printConfig(TEnv* config) {
     if (!config) {
         std::cerr << "Error: Configuration is null" << std::endl;
         return;
@@ -501,7 +503,6 @@ void printConfig(TEnv* config) {
     log(LOG_INFO, "VzCut: " + std::to_string(config->GetValue("VzCut", 15.0)));
     log(LOG_INFO, "===========================");
 }
-
 
 /**
  * Parse comma-separated float values from config
@@ -805,12 +806,12 @@ std::vector<double> parseDoubleVector(const std::string& str, char delimiter) {
 // M. Petroff color schemes
 std::vector<int> getPetroffColors(const std::string& scheme) {
     if (scheme == "qualitative") {
-        return {862, 834, 838, 866, 870, 874, 878, 882};
+        return {1,862, 834, 838, 866, 870, 874, 878, 882};
     } else if (scheme == "sequential") {
-        return {51, 52, 53, 54, 55, 56, 57, 58, 59};
+        return {1,51, 52, 53, 54, 55, 56, 57, 58, 59};
     } else {
         // Default scheme
-        return {634, 628, 807, 823, 419, 602, 921, 622};
+        return {1,634, 628, 807, 823, 419, 602, 921, 622};
     }
 }
 

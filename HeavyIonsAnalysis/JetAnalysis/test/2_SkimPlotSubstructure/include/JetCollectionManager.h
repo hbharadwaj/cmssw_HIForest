@@ -158,36 +158,36 @@ public:
         
         switch (property) {
             // Reconstructed jet properties
-            case PT:        return branches.pt.get()[jetIndex];
-            case ETA:       return branches.eta.get()[jetIndex];
-            case PHI:       return branches.phi.get()[jetIndex];
-            case MASS:      return branches.mass.get()[jetIndex];
-            case AREA:      return branches.area.get()[jetIndex];
-            case DYN_SPLIT: return static_cast<float>(branches.dyn_split.get()[jetIndex]);
-            case DYN_KT:    return branches.dyn_kt.get()[jetIndex];
-            case DYN_Z:     return branches.dyn_z.get()[jetIndex];
-            case GIRTH:     return branches.girth.get()[jetIndex];
-            case THRUST:    return branches.thrust.get()[jetIndex];
-            case LHA:       return branches.lha.get()[jetIndex];
-            case PTD:       return branches.ptd.get()[jetIndex];
-            case DYN_DELTA_R: return branches.dyn_deltaR.get()[jetIndex]; // NEW
-            case INTJET_MULTI: return static_cast<float>(branches.intjet_multi.get()[jetIndex]); // NEW
+            case PT:                return branches.pt.get()[jetIndex];
+            case ETA:               return branches.eta.get()[jetIndex];
+            case PHI:               return branches.phi.get()[jetIndex];
+            case MASS:              return branches.mass.get()[jetIndex];
+            case AREA:              return branches.area.get()[jetIndex];
+            case DYN_SPLIT:         return static_cast<float>(branches.dyn_split.get()[jetIndex]);
+            case DYN_KT:            return branches.dyn_kt.get()[jetIndex];
+            case DYN_Z:             return branches.dyn_z.get()[jetIndex];
+            case GIRTH:             return branches.girth.get()[jetIndex];
+            case THRUST:            return branches.thrust.get()[jetIndex];
+            case LHA:               return branches.lha.get()[jetIndex];
+            case PTD:               return branches.ptd.get()[jetIndex];
+            case DYN_DELTA_R:       return (branches.dyn_deltaR.get()[jetIndex] < 0) ? -0.025f : branches.dyn_deltaR.get()[jetIndex]; // NEW
+            case INTJET_MULTI:      return static_cast<float>(branches.intjet_multi.get()[jetIndex]); // NEW
             // MC-matched generator jet properties (ref variables)
-            case REF_PT:        return branches.refpt.get()[jetIndex];
-            case REF_ETA:       return branches.refeta.get()[jetIndex];
-            case REF_PHI:       return branches.refphi.get()[jetIndex];
-            case REF_MASS:      return branches.refmass.get()[jetIndex];
-            case REF_AREA:      return branches.refarea.get()[jetIndex];
-            case REF_DYN_SPLIT: return static_cast<float>(branches.refdyn_split.get()[jetIndex]);
-            case REF_DYN_KT:    return branches.refdyn_kt.get()[jetIndex];
-            case REF_DYN_Z:     return branches.refdyn_z.get()[jetIndex];
-            case REF_GIRTH:     return branches.refgirth.get()[jetIndex];
-            case REF_THRUST:    return branches.refthrust.get()[jetIndex];
-            case REF_LHA:       return branches.reflha.get()[jetIndex];
-            case REF_PTD:       return branches.refptd.get()[jetIndex];
-            case REF_DYN_DELTA_R: return branches.refdyn_deltaR.get()[jetIndex]; // NEW
-            case REF_INTJET_MULTI: return static_cast<float>(branches.refintjet_multi.get()[jetIndex]); // NEW
-            default:            return -999.0f;
+            case REF_PT:            return branches.refpt.get()[jetIndex];
+            case REF_ETA:           return branches.refeta.get()[jetIndex];
+            case REF_PHI:           return branches.refphi.get()[jetIndex];
+            case REF_MASS:          return branches.refmass.get()[jetIndex];
+            case REF_AREA:          return branches.refarea.get()[jetIndex];
+            case REF_DYN_SPLIT:     return static_cast<float>(branches.refdyn_split.get()[jetIndex]);
+            case REF_DYN_KT:        return branches.refdyn_kt.get()[jetIndex];
+            case REF_DYN_Z:         return branches.refdyn_z.get()[jetIndex];
+            case REF_GIRTH:         return branches.refgirth.get()[jetIndex];
+            case REF_THRUST:        return branches.refthrust.get()[jetIndex];
+            case REF_LHA:           return branches.reflha.get()[jetIndex];
+            case REF_PTD:           return branches.refptd.get()[jetIndex];
+            case REF_DYN_DELTA_R:   return (branches.refdyn_deltaR.get()[jetIndex] < 0) ? -0.025f : branches.refdyn_deltaR.get()[jetIndex]; // NEW
+            case REF_INTJET_MULTI:  return static_cast<float>(branches.refintjet_multi.get()[jetIndex]); // NEW
+            default:        return -999.0f;
         }
     }
     
