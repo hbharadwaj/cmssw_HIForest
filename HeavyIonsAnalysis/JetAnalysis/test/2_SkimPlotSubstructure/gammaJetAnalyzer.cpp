@@ -305,24 +305,15 @@ public:
 };
 
 // Forward declarations
-void printUsage();
-void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager, TFile* outFile, 
-                  const PlottingConfiguration& plotConfig, Long64_t maxEvents = -1);
-bool setupInputChain(TChain* chain, const std::string& inputDir, bool testMode, int maxFiles = 1);
+void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager, TFile* outFile, const PlottingConfiguration& plotConfig, Long64_t maxEvents = -1);
 void createHistograms(TFile* outFile, const std::vector<std::string>& jetCollections, 
                      const std::vector<float>& centralityBins, const PlottingConfiguration& plotConfig);
-float getDeltaPhi(float phi1, float phi2);
-float getXj(float jetPt, float photonPt);
 
-// Utility functions for config and directory management
-bool createOutputDirectories(const std::string& outputDir);
-void printConfig(TEnv* config);
-std::vector<float> getFloatVector(TEnv* config, const std::string& param);
-std::vector<std::string> getStringVector(TEnv* config, const std::string& param);
+
 
 /**
  * Main function - entry point for standalone executable
- */
+*/
 int main(int argc, char* argv[]) {
     log(LOG_DEBUG, "=== Command Line Debug ===");
     log(LOG_DEBUG, "argc: " + std::to_string(argc));
@@ -510,8 +501,15 @@ int main(int argc, char* argv[]) {
         // Print jet collection information
         jetManager.printBranchMappings();
         
-        // Process events
-        Long64_t nEvents = testMode && maxEvents > 0 ? maxEvents : -1;
+        // Before processing events, check for HistogramConfigFile in TEnv and load it if present
+        std::string histConfigFile = config->GetValue("HistogramConfigFile", "");
+        if (!histConfigFile.empty()) {
+            TEnv histEnv(histConfigFile.c_str());
+            loadHistogramConfigsFromEnv(&histEnv, plotConfig);
+        }
+        
+        // Now process events as usual
+        Long64_t nEvents = testMode && maxEvents > 0 ? maxEvents : -1; // -1 means all events
         processEvents(chain, config, jetManager, outFile, plotConfig, nEvents);
 
         // Ensure all output is written before closing
@@ -556,9 +554,8 @@ int main(int argc, char* argv[]) {
 
 /**
  * Process events in the chain
- */
-void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager, TFile* outFile, 
-                  const PlottingConfiguration& plotConfig, Long64_t maxEvents) {
+*/
+void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager, TFile* outFile, const PlottingConfiguration& plotConfig, Long64_t maxEvents) {
     if (!chain || !outFile) return;
     
     // Initialize logging verbosity from config
@@ -1020,6 +1017,109 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
         selectedPhotonSigmaIEtaIEta = phoSigmaIEtaIEta->at(selectedPhotonIndex);
         selectedPhotonIso = phoIso->at(selectedPhotonIndex);
         selectedPhotonR9 = phoR9->at(selectedPhotonIndex);
+
+        // Fill histograms for this collection
+        int centBin = -1;
+        for (size_t i = 0; i < centralityBins.size() - 1; ++i) {
+            if (hiBin >= centralityBins[i] && hiBin < centralityBins[i+1]) {
+                centBin = i;
+                break;
+            }
+        }
+
+        if (centBin >= 0) {
+            std::string centName = "cent" + std::to_string(static_cast<int>(centralityBins[centBin])) + "to" + std::to_string(static_cast<int>(centralityBins[centBin+1]));
+            
+            log(LOG_TRACE, "Filling histograms for " + centName + "/General/ with weight: " + std::to_string(eventWeight));
+            
+            // Navigate to subdirectory and fill histograms with weights
+            outFile->cd();
+            if (outFile->cd((centName + "/General").c_str())) {
+                // Photon histograms
+                TH1F* hPhotonEt = (TH1F*)gDirectory->Get("hPhotonEt");
+                if (hPhotonEt) hPhotonEt->Fill(selectedPhotonEt, eventWeight);
+
+                TH1F* hPhotonEta = (TH1F*)gDirectory->Get("hPhotonEta");
+                if (hPhotonEta) hPhotonEta->Fill(selectedPhotonEta, eventWeight);
+
+                // Photon identification histograms
+                TH1F* hPhotonHoverE = (TH1F*)gDirectory->Get("hPhotonHoverE");
+                if (hPhotonHoverE) hPhotonHoverE->Fill(selectedPhotonHoverE, eventWeight);
+
+                TH1F* hPhotonSigmaIEtaIEta = (TH1F*)gDirectory->Get("hPhotonSigmaIEtaIEta");
+                if (hPhotonSigmaIEtaIEta) hPhotonSigmaIEtaIEta->Fill(selectedPhotonSigmaIEtaIEta, eventWeight);
+
+                TH1F* hPhotonIso = (TH1F*)gDirectory->Get("hPhotonIso");
+                if (hPhotonIso) hPhotonIso->Fill(selectedPhotonIso, eventWeight);
+
+                TH1F* hPhotonR9 = (TH1F*)gDirectory->Get("hPhotonR9");
+                if (hPhotonR9) hPhotonR9->Fill(selectedPhotonR9, eventWeight);
+
+                // Event-level histograms
+                TH1F* hNPhotons = (TH1F*)gDirectory->Get("hNPhotons");
+                if (hNPhotons) hNPhotons->Fill(nPhotons, eventWeight);
+
+                TH1F* hEventWeight = (TH1F*)gDirectory->Get("hEventWeight");
+                if (hEventWeight) hEventWeight->Fill(eventWeight);
+
+                TH1F* hVz = (TH1F*)gDirectory->Get("hVz");
+                if (hVz) hVz->Fill(vz, eventWeight);
+
+                TH1F* hHiHF = (TH1F*)gDirectory->Get("hHiHF");
+                if (hHiHF) hHiHF->Fill(hiHF, eventWeight);
+
+                TH1F* hCentrality = (TH1F*)gDirectory->Get("hCentrality");
+                if (hCentrality) hCentrality->Fill(hiBin, eventWeight);
+
+                // --- MC photon histograms ---
+                if (isMC && selectedPhotonIndex >= 0) {
+                    // Fill photon gen match index
+                    TH1F* hPhotonGenMatch = (TH1F*)gDirectory->Get("hPhotonGenMatch");
+                    if (hPhotonGenMatch && phoGenMatchedIndex) {
+                        hPhotonGenMatch->Fill(phoGenMatchedIndex->at(selectedPhotonIndex), eventWeight);
+                    }
+
+                    // Fill MC photon information if we have a valid gen match
+                    if (phoGenMatchedIndex && phoGenMatchedIndex->at(selectedPhotonIndex) >= 0) {
+                        int genIndex = phoGenMatchedIndex->at(selectedPhotonIndex);
+
+                        // Check bounds for MC vectors before accessing
+                        if (mcPt && genIndex < static_cast<int>(mcPt->size())) {
+                            TH1F* hMCPhotonPt = (TH1F*)gDirectory->Get("hMCPhotonPt");
+                            if (hMCPhotonPt) hMCPhotonPt->Fill(mcPt->at(genIndex), eventWeight);
+                        }
+
+                        if (mcEta && genIndex < static_cast<int>(mcEta->size())) {
+                            TH1F* hMCPhotonEta = (TH1F*)gDirectory->Get("hMCPhotonEta");
+                            if (hMCPhotonEta) hMCPhotonEta->Fill(mcEta->at(genIndex), eventWeight);
+                        }
+
+                        if (mcPhi && genIndex < static_cast<int>(mcPhi->size())) {
+                            TH1F* hMCPhotonPhi = (TH1F*)gDirectory->Get("hMCPhotonPhi");
+                            if (hMCPhotonPhi) hMCPhotonPhi->Fill(mcPhi->at(genIndex), eventWeight);
+                        }
+
+                        if (mcPID && genIndex < static_cast<int>(mcPID->size())) {
+                            TH1F* hMCPhotonPID = (TH1F*)gDirectory->Get("hMCPhotonPID");
+                            if (hMCPhotonPID) hMCPhotonPID->Fill(mcPID->at(genIndex), eventWeight);
+                        }
+
+                        if (mcMomPID && genIndex < static_cast<int>(mcMomPID->size())) {
+                            TH1F* hMCPhotonMomPID = (TH1F*)gDirectory->Get("hMCPhotonMomPID");
+                            if (hMCPhotonMomPID) hMCPhotonMomPID->Fill(mcMomPID->at(genIndex), eventWeight);
+                        }
+
+                        // Fill gen vs reco comparison
+                        if (mcPt && genIndex < static_cast<int>(mcPt->size())) {
+                            TH2F* h2PhotonGenVsReco = (TH2F*)gDirectory->Get("h2PhotonGenVsReco");
+                            if (h2PhotonGenVsReco) {
+                                h2PhotonGenVsReco->Fill(selectedPhotonEt, mcPt->at(genIndex), eventWeight);
+                            }
+                        }
+                    }
+                }
+            }
+        }
         
         // Reset jet selection for each collection
         for (const auto& collection : jetCollections) {
@@ -1086,7 +1186,8 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
         
         if (!passJetKinematics) {
             continue; // Skip to next event if no jets pass
-        } else {
+        } 
+        else {
             // Second pass: find the best jet among those passing cuts
             for (const auto& collection : jetCollections) {
                 int nJets = jetManager.getNJets(collection);
@@ -1194,15 +1295,6 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
                     }
                 }
                 
-                // Fill histograms for this collection
-                int centBin = -1;
-                for (size_t i = 0; i < centralityBins.size() - 1; ++i) {
-                    if (hiBin >= centralityBins[i] && hiBin < centralityBins[i+1]) {
-                        centBin = i;
-                        break;
-                    }
-                }
-                
                 if (centBin >= 0) {
                     std::string centName = "cent" + std::to_string(static_cast<int>(centralityBins[centBin])) + 
                                          "to" + std::to_string(static_cast<int>(centralityBins[centBin+1]));
@@ -1212,7 +1304,7 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
                     
                     // Navigate to subdirectory and fill histograms with weights
                     outFile->cd();
-                    if (outFile->cd((collection + "/" + centName).c_str())) {
+                    if (outFile->cd((centName + "/" + collection).c_str())) {
                         TH1F* hJetPt = (TH1F*)gDirectory->Get("hJetPt");
                         if (hJetPt) hJetPt->Fill(selectedJetPts[collection], eventWeight);
                         
@@ -1227,26 +1319,6 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
                         
                         TH1F* hXj = (TH1F*)gDirectory->Get("hXj");
                         if (hXj) hXj->Fill(selectedJetXjs[collection], eventWeight);
-                        
-                        // Photon histograms
-                        TH1F* hPhotonEt = (TH1F*)gDirectory->Get("hPhotonEt");
-                        if (hPhotonEt) hPhotonEt->Fill(selectedPhotonEt, eventWeight);
-                        
-                        TH1F* hPhotonEta = (TH1F*)gDirectory->Get("hPhotonEta");
-                        if (hPhotonEta) hPhotonEta->Fill(selectedPhotonEta, eventWeight);
-                        
-                        // Photon identification histograms
-                        TH1F* hPhotonHoverE = (TH1F*)gDirectory->Get("hPhotonHoverE");
-                        if (hPhotonHoverE) hPhotonHoverE->Fill(selectedPhotonHoverE, eventWeight);
-                        
-                        TH1F* hPhotonSigmaIEtaIEta = (TH1F*)gDirectory->Get("hPhotonSigmaIEtaIEta");
-                        if (hPhotonSigmaIEtaIEta) hPhotonSigmaIEtaIEta->Fill(selectedPhotonSigmaIEtaIEta, eventWeight);
-                        
-                        TH1F* hPhotonIso = (TH1F*)gDirectory->Get("hPhotonIso");
-                        if (hPhotonIso) hPhotonIso->Fill(selectedPhotonIso, eventWeight);
-                        
-                        TH1F* hPhotonR9 = (TH1F*)gDirectory->Get("hPhotonR9");
-                        if (hPhotonR9) hPhotonR9->Fill(selectedPhotonR9, eventWeight);
                         
                         // Jet substructure histograms
                         TH1F* hJetMass = (TH1F*)gDirectory->Get("hJetMass");
@@ -1328,23 +1400,8 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
                         }
                         
                         // Event-level histograms
-                        TH1F* hNPhotons = (TH1F*)gDirectory->Get("hNPhotons");
-                        if (hNPhotons) hNPhotons->Fill(nPhotons, eventWeight);
-                        
                         TH1F* hNJets = (TH1F*)gDirectory->Get("hNJets");
                         if (hNJets) hNJets->Fill(jetManager.getNJets(collection), eventWeight);
-                        
-                        TH1F* hEventWeight = (TH1F*)gDirectory->Get("hEventWeight");
-                        if (hEventWeight) hEventWeight->Fill(eventWeight, eventWeight);
-                        
-                        TH1F* hVz = (TH1F*)gDirectory->Get("hVz");
-                        if (hVz) hVz->Fill(vz, eventWeight);
-                        
-                        TH1F* hHiHF = (TH1F*)gDirectory->Get("hHiHF");
-                        if (hHiHF) hHiHF->Fill(hiHF, eventWeight);
-                        
-                        TH1F* hCentrality = (TH1F*)gDirectory->Get("hCentrality");
-                        if (hCentrality) hCentrality->Fill(hiBin, eventWeight);
                         
                         // 2D histograms
                         TH2F* h2JetPtVsEta = (TH2F*)gDirectory->Get("h2JetPtVsEta");
@@ -1419,55 +1476,8 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
                             TProfile* pRefPtDVsPt = (TProfile*)gDirectory->Get("pRefPtDVsPt");
                             if (pRefPtDVsPt) pRefPtDVsPt->Fill(selectedRefJetPts[collection], selectedRefJetPtDs[collection], eventWeight);
                         }
-                        
-                        // MC-specific histogram filling (only if MC data and MC branches available)
-                        if (isMC && selectedPhotonIndex >= 0) {
-                            // Fill photon gen match index
-                            TH1F* hPhotonGenMatch = (TH1F*)gDirectory->Get("hPhotonGenMatch");
-                            if (hPhotonGenMatch && phoGenMatchedIndex) {
-                                hPhotonGenMatch->Fill(phoGenMatchedIndex->at(selectedPhotonIndex), eventWeight);
-                            }
-                            
-                            // Fill MC photon information if we have a valid gen match
-                            if (phoGenMatchedIndex && phoGenMatchedIndex->at(selectedPhotonIndex) >= 0) {
-                                int genIndex = phoGenMatchedIndex->at(selectedPhotonIndex);
-                                
-                                // Check bounds for MC vectors before accessing
-                                if (mcPt && genIndex < static_cast<int>(mcPt->size())) {
-                                    TH1F* hMCPhotonPt = (TH1F*)gDirectory->Get("hMCPhotonPt");
-                                    if (hMCPhotonPt) hMCPhotonPt->Fill(mcPt->at(genIndex), eventWeight);
-                                }
-                                
-                                if (mcEta && genIndex < static_cast<int>(mcEta->size())) {
-                                    TH1F* hMCPhotonEta = (TH1F*)gDirectory->Get("hMCPhotonEta");
-                                    if (hMCPhotonEta) hMCPhotonEta->Fill(mcEta->at(genIndex), eventWeight);
-                                }
-                                
-                                if (mcPhi && genIndex < static_cast<int>(mcPhi->size())) {
-                                    TH1F* hMCPhotonPhi = (TH1F*)gDirectory->Get("hMCPhotonPhi");
-                                    if (hMCPhotonPhi) hMCPhotonPhi->Fill(mcPhi->at(genIndex), eventWeight);
-                                }
-                                
-                                if (mcPID && genIndex < static_cast<int>(mcPID->size())) {
-                                    TH1F* hMCPhotonPID = (TH1F*)gDirectory->Get("hMCPhotonPID");
-                                    if (hMCPhotonPID) hMCPhotonPID->Fill(mcPID->at(genIndex), eventWeight);
-                                }
-                                
-                                if (mcMomPID && genIndex < static_cast<int>(mcMomPID->size())) {
-                                    TH1F* hMCPhotonMomPID = (TH1F*)gDirectory->Get("hMCPhotonMomPID");
-                                    if (hMCPhotonMomPID) hMCPhotonMomPID->Fill(mcMomPID->at(genIndex), eventWeight);
-                                }
-                                
-                                // Fill gen vs reco comparison
-                                if (mcPt && genIndex < static_cast<int>(mcPt->size())) {
-                                    TH2F* h2PhotonGenVsReco = (TH2F*)gDirectory->Get("h2PhotonGenVsReco");
-                                    if (h2PhotonGenVsReco) {
-                                        h2PhotonGenVsReco->Fill(selectedPhotonEt, mcPt->at(genIndex), eventWeight);
-                                    }
-                                }
-                            }
-                        }
                     }
+                        
                 }
             }
             
@@ -1524,94 +1534,25 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
     cutFlowTracker.saveCutFlowToFile(outFile);
 }
 
-/**
- * Setup the input chain with files from the input directory
- */
-bool setupInputChain(TChain* chain, const std::string& inputDir, bool testMode, int maxFiles) {
-    if (!chain) return false;
-    
-    if (inputDir.empty()) {
-        std::cerr << "Error: Input directory not specified." << std::endl;
-        return false;
-    }
-    
-    // Check if inputDir is a single file (ends with .root)
-    if (inputDir.size() > 5 && inputDir.substr(inputDir.size() - 5) == ".root") {
-        log(LOG_INFO, "Adding single file: " + inputDir);
-        if (chain->AddFile(inputDir.c_str()) <= 0) {
-            std::cerr << "Error: Failed to add file to chain: " << inputDir << std::endl;
-            return false;
-        }
-        return true;
-    }
-    
-    // Find all ROOT files in the directory
-    std::string cmd = "find " + inputDir + " -name \"*.root\" -type f";
-    log(LOG_DEBUG, "Executing: " + cmd);
-    
-    FILE* pipe = popen(cmd.c_str(), "r");
-    if (!pipe) {
-        std::cerr << "Error: Failed to run command: " << cmd << std::endl;
-        return false;
-    }
-    
-    std::vector<std::string> files;
-    char buffer[1024];
-    while (!feof(pipe)) {
-        if (fgets(buffer, sizeof(buffer), pipe) != NULL) {
-            std::string file = buffer;
-            // Remove newline characters
-            file.erase(std::remove(file.begin(), file.end(), '\n'), file.end());
-            if (!file.empty()) {
-                files.push_back(file);
-            }
-        }
-    }
-    pclose(pipe);
-    
-    // Limit number of files in test mode
-    if (testMode && files.size() > static_cast<size_t>(maxFiles)) {
-        maxFiles = 1;
-        log(LOG_INFO, "Test mode: limiting to " + std::to_string(maxFiles) + " files out of " + std::to_string(files.size()));
-        files.resize(maxFiles);
-    }
-    
-    // Add files to chain
-    for (const auto& file : files) {
-        log(LOG_DEBUG, "Adding file: " + file);
-        if (chain->AddFile(file.c_str()) <= 0) {
-            std::cerr << "Warning: Failed to add file to chain: " << file << std::endl;
-            continue;
-        }
-    }
-    
-    if (chain->GetEntries() <= 0) {
-        std::cerr << "Error: No entries in chain." << std::endl;
-        return false;
-    }
-    
-    log(LOG_INFO, "Added " + std::to_string(files.size()) + " files with " + std::to_string(chain->GetEntries()) + " entries.");
-    return true;
-}
 
 /**
  * Create histograms for output
- */
+*/
 void createHistograms(TFile* outFile, const std::vector<std::string>& jetCollections, 
                                  const std::vector<float>& centralityBins, const PlottingConfiguration& plotConfig) {
     if (!outFile) return;
-    
+
     // Debug: Check input parameters
     log(LOG_DEBUG, "createHistograms called with:");
     log(LOG_DEBUG, "  jetCollections.size() = " + std::to_string(jetCollections.size()));
     log(LOG_DEBUG, "  centralityBins.size() = " + std::to_string(centralityBins.size()));
     log(LOG_DEBUG, "  plotConfig.histogramConfigs.size() = " + std::to_string(plotConfig.histogramConfigs.size()));
-    
+
     if (jetCollections.empty()) {
         log(LOG_INFO, "jetCollections is empty!");
         return;
     }
-    
+
     if (centralityBins.size() < 2) {
         log(LOG_INFO, "centralityBins has < 2 elements, cannot create bins!");
         std::string binContents = "centralityBins contents: ";
@@ -1621,7 +1562,7 @@ void createHistograms(TFile* outFile, const std::vector<std::string>& jetCollect
         log(LOG_INFO, binContents);
         return;
     }
-    
+
     // Determine if this is MC data by checking for DataType config
     bool isMC = false;
     if (plotConfig.configFile) {
@@ -1629,116 +1570,194 @@ void createHistograms(TFile* outFile, const std::vector<std::string>& jetCollect
         isMC = (dataType == "MC" || dataType == "mc");
         log(LOG_DEBUG, "  isMC: " + std::to_string(isMC) + " (from DataType: " + dataType + ")");
     }
-    
-    // Create histograms for each jet collection and centrality bin
-    for (const auto& collection : jetCollections) {
+
+    // New structure: centralityDir/collectionDir
+    for (size_t i = 0; i < centralityBins.size() - 1; ++i) {
+        std::string centName = "cent" + std::to_string(static_cast<int>(centralityBins[i])) + "to" + std::to_string(static_cast<int>(centralityBins[i+1]));
         outFile->cd();
-        TDirectory* collectionDir = outFile->mkdir(collection.c_str());
-        if (!collectionDir) {
-            std::cerr << "Error: Failed to create directory for collection: " << collection << std::endl;
+        TDirectory* centDir = outFile->mkdir(centName.c_str());
+        if (!centDir) {
+            std::cerr << "Error: Failed to create directory: " << centName << std::endl;
             continue;
         }
-        log(LOG_DEBUG, "Creating directory: " + collection);
+        log(LOG_DEBUG, "Creating centrality directory: " + centName);
         
-        for (size_t i = 0; i < centralityBins.size() - 1; ++i) {
-            std::string centName = "cent" + std::to_string(static_cast<int>(centralityBins[i])) + 
-                                 "to" + std::to_string(static_cast<int>(centralityBins[i+1]));
-            
-            // Create subdirectory within the collection directory
-            collectionDir->cd();
-            TDirectory* centDir = collectionDir->mkdir(centName.c_str());
-            if (!centDir) {
-                std::cerr << "Error: Failed to create directory: " << centName << " in " << collection << std::endl;
+        // === FUTURE EXPANSION: To add eta binning, insert etaDir creation here ===
+        // Example:
+        // std::vector<std::pair<float, float>> etaBins = { {-2.5, -1.0}, {-1.0, 0.0}, {0.0, 1.0}, {1.0, 2.5} };
+        // for (const auto& etaBin : etaBins) {
+        //     std::string etaName = Form("eta%.1fto%.1f", etaBin.first, etaBin.second);
+        //     TDirectory* etaDir = centDir->mkdir(etaName.c_str());
+        //     if (!etaDir) continue;
+        //     etaDir->cd();
+        //     // Then create collectionDir inside etaDir as below
+        //     for (const auto& collection : jetCollections) {
+        //         TDirectory* collectionDir = etaDir->mkdir(collection.c_str());
+        //         ...
+        //     }
+        // }
+        // For now, we proceed without etaDir:
+
+        // --- Create General directory for photon/event/MC photon histograms ---
+        centDir->cd();
+        TDirectory* generalDir = centDir->mkdir("General");
+        if (!generalDir) {
+            std::cerr << "Error: Failed to create General directory in " << centName << std::endl;
+            continue;
+        }
+        generalDir->cd();
+
+        // Helper functions for General directory
+        std::vector<TObject*> generalHistograms;
+        auto createGeneralHist1D = [&plotConfig, &generalDir, &generalHistograms](const std::string& name, const std::string& title, int bins, double xmin, double xmax) {
+            std::string configName = name;
+            if (configName.size() > 1 && configName[0] == 'h') {
+                configName = configName.substr(1);
+            }
+            TH1F* hist = nullptr;
+            auto configIter = plotConfig.histogramConfigs.find(configName);
+            if (configIter != plotConfig.histogramConfigs.end()) {
+                hist = createHistogram1D(configIter->second, name, "");
+            } else {
+                hist = new TH1F(name.c_str(), title.c_str(), bins, xmin, xmax);
+            }
+            hist->SetDirectory(generalDir);
+            generalHistograms.push_back(hist);
+            return hist;
+        };
+        auto createGeneralHist2D = [&plotConfig, &generalDir, &generalHistograms](const std::string& name, const std::string& title,
+                                                                                  int xbins, double xmin, double xmax,
+                                                                                  int ybins, double ymin, double ymax) {
+            std::string configName = name;
+            if (configName.size() > 2 && configName[0] == 'h' && configName[1] == '2') {
+                configName = configName.substr(2);
+            }
+            TH2F* hist = nullptr;
+            auto configIter = plotConfig.histogramConfigs.find(configName);
+            if (configIter != plotConfig.histogramConfigs.end()) {
+                hist = createHistogram2D(configIter->second, name, "");
+            } else {
+                hist = new TH2F(name.c_str(), title.c_str(), xbins, xmin, xmax, ybins, ymin, ymax);
+            }
+            hist->SetDirectory(generalDir);
+            generalHistograms.push_back(hist);
+            return hist;
+        };
+
+        // --- Photon and event-level histograms in General ---
+        TH1F* hPhotonEt = createGeneralHist1D("hPhotonEt", "Photon E_{T};E_{T} [GeV];Entries", 100, 0, 400);
+        TH1F* hPhotonEta = createGeneralHist1D("hPhotonEta", "Photon #eta;#eta;Entries", 50, -2.5, 2.5);
+        TH1F* hPhotonHoverE = createGeneralHist1D("hPhotonHoverE", "Photon H/E;H/E;Entries", 50, 0, 0.2);
+        TH1F* hPhotonSigmaIEtaIEta = createGeneralHist1D("hPhotonSigmaIEtaIEta", "Photon #sigma_{i#eta i#eta};#sigma_{i#eta i#eta};Entries", 50, 0, 0.03);
+        TH1F* hPhotonIso = createGeneralHist1D("hPhotonIso", "Photon Isolation;Isolation [GeV];Entries", 50, 0, 10.0);
+        TH1F* hPhotonR9 = createGeneralHist1D("hPhotonR9", "Photon R9;R9;Entries", 50, 0.8, 1.0);
+        TH1F* hNPhotons = createGeneralHist1D("hNPhotons", "Number of Photons;N_{#gamma};Entries", 20, 0, 20);
+        TH1F* hEventWeight = createGeneralHist1D("hEventWeight", "Event Weight;Weight;Entries", 100, 0, 2);
+        TH1F* hVz = createGeneralHist1D("hVz", "Primary Vertex z;v_{z} [cm];Entries", 100, -20, 20);
+        TH1F* hHiHF = createGeneralHist1D("hHiHF", "HF Energy Sum;#Sigma E_{T}^{HF} [GeV];Entries", 100, 0, 7000);
+        TH1F* hCentrality = createGeneralHist1D("hCentrality", "Centrality;Centrality [%];Entries", 100, 0, 100);
+
+        // --- MC photon histograms in General ---
+        TH1F* hMCPhotonPt = nullptr;
+        TH1F* hMCPhotonEta = nullptr;
+        TH1F* hMCPhotonPhi = nullptr;
+        TH1F* hMCPhotonPID = nullptr;
+        TH1F* hMCPhotonMomPID = nullptr;
+        TH1F* hPhotonGenMatch = nullptr;
+        TH2F* h2PhotonGenVsReco = nullptr;
+        if (isMC) {
+            hMCPhotonPt = createGeneralHist1D("hMCPhotonPt", "MC Photon p_{T};p_{T} [GeV/c];Entries", 100, 0, 400);
+            hMCPhotonEta = createGeneralHist1D("hMCPhotonEta", "MC Photon #eta;#eta;Entries", 50, -2.5, 2.5);
+            hMCPhotonPhi = createGeneralHist1D("hMCPhotonPhi", "MC Photon #phi;#phi [rad];Entries", 50, -3.14159, 3.14159);
+            hMCPhotonPID = createGeneralHist1D("hMCPhotonPID", "MC Photon PID;PID;Entries", 50, -25, 25);
+            hMCPhotonMomPID = createGeneralHist1D("hMCPhotonMomPID", "MC Photon Mother PID;Mother PID;Entries", 50, -25, 25);
+            hPhotonGenMatch = createGeneralHist1D("hPhotonGenMatch", "Photon Gen Match Index;Match Index;Entries", 50, -5, 45);
+            h2PhotonGenVsReco = createGeneralHist2D("h2PhotonGenVsReco", "Gen vs Reco Photon p_{T};Reco p_{T} [GeV/c];Gen p_{T} [GeV/c]", 50, 0, 400, 50, 0, 400);
+            log(LOG_DEBUG, "Created MC-specific photon histograms in General/" + centName);
+        }
+        
+        (void)hPhotonEt; (void)hPhotonEta; (void)hPhotonHoverE; (void)hPhotonSigmaIEtaIEta; 
+        (void)hPhotonIso; (void)hPhotonR9; (void)hNPhotons; (void)hEventWeight; (void)hVz; 
+        (void)hHiHF; (void)hCentrality; 
+        (void)hMCPhotonPt; (void)hMCPhotonEta; (void)hMCPhotonPhi; 
+        (void)hMCPhotonPID; (void)hMCPhotonMomPID; (void)hPhotonGenMatch; (void)h2PhotonGenVsReco;
+        
+
+        // Write General directory after histogram creation
+        generalDir->Write();
+        centDir->cd();
+
+        for (const auto& collection : jetCollections) {
+            centDir->cd();
+            TDirectory* collectionDir = centDir->mkdir(collection.c_str());
+            if (!collectionDir) {
+                std::cerr << "Error: Failed to create directory for collection: " << collection << " in " << centName << std::endl;
                 continue;
             }
-            centDir->cd();
-            
-            log(LOG_DEBUG, "Creating histograms in directory: " + collection + "/" + centName);
-            
+            collectionDir->cd();
+
+            log(LOG_DEBUG, "Creating histograms in directory: " + centName + "/" + collection);
+
             // Vector to store all histogram pointers for writing
             std::vector<TObject*> histograms;
-            
+
             // Helper function to create a histogram using configuration if available,
             // or use defaults if not found in the config
-            auto createHist1D = [&plotConfig, &centDir, &histograms](const std::string& name, const std::string& title, 
-                                                                  int bins, double xmin, double xmax) {
-                // Remove 'h' prefix if present for config lookup
+            auto createHist1D = [&plotConfig, &collectionDir, &histograms](const std::string& name, const std::string& title, int bins, double xmin, double xmax) {
                 std::string configName = name;
                 if (configName.size() > 1 && configName[0] == 'h') {
                     configName = configName.substr(1);
                 }
-                
                 TH1F* hist = nullptr;
-                
-                // Check if this histogram has a config
                 auto configIter = plotConfig.histogramConfigs.find(configName);
                 if (configIter != plotConfig.histogramConfigs.end()) {
-                    // Create with config
                     hist = createHistogram1D(configIter->second, name, "");
                 } else {
-                    // Create with provided defaults
                     hist = new TH1F(name.c_str(), title.c_str(), bins, xmin, xmax);
                 }
-                
-                hist->SetDirectory(centDir);
+                hist->SetDirectory(collectionDir);
                 histograms.push_back(hist);
                 return hist;
             };
-            
-            // Similar helper for 2D histograms
-            auto createHist2D = [&plotConfig, &centDir, &histograms](const std::string& name, const std::string& title, 
-                                                                  int xbins, double xmin, double xmax,
-                                                                  int ybins, double ymin, double ymax) {
-                // Remove 'h2' prefix if present for config lookup
+
+            auto createHist2D = [&plotConfig, &collectionDir, &histograms](const std::string& name, const std::string& title, 
+                                                                          int xbins, double xmin, double xmax,
+                                                                          int ybins, double ymin, double ymax) {
                 std::string configName = name;
                 if (configName.size() > 2 && configName[0] == 'h' && configName[1] == '2') {
                     configName = configName.substr(2);
                 }
-                
                 TH2F* hist = nullptr;
-                
-                // Check if this histogram has a config
                 auto configIter = plotConfig.histogramConfigs.find(configName);
                 if (configIter != plotConfig.histogramConfigs.end()) {
-                    // Create with config
                     hist = createHistogram2D(configIter->second, name, "");
                 } else {
-                    // Create with provided defaults
                     hist = new TH2F(name.c_str(), title.c_str(), xbins, xmin, xmax, ybins, ymin, ymax);
                 }
-                
-                hist->SetDirectory(centDir);
+                hist->SetDirectory(collectionDir);
                 histograms.push_back(hist);
                 return hist;
             };
-            
-            // Helper for profile histograms
-            auto createHistProfile = [&plotConfig, &centDir, &histograms](const std::string& name, const std::string& title, 
-                                                                       int xbins, double xmin, double xmax,
-                                                                       double ymin, double ymax) {
-                // Remove 'p' prefix if present for config lookup
+
+            auto createHistProfile = [&plotConfig, &collectionDir, &histograms](const std::string& name, const std::string& title, 
+                                                                               int xbins, double xmin, double xmax,
+                                                                               double ymin, double ymax) {
                 std::string configName = name;
                 if (configName.size() > 1 && configName[0] == 'p') {
                     configName = configName.substr(1);
                 }
-                
                 TProfile* hist = nullptr;
-                
-                // Check if this histogram has a config
                 auto configIter = plotConfig.histogramConfigs.find(configName);
                 if (configIter != plotConfig.histogramConfigs.end()) {
-                    // Create with config
                     hist = createProfile(configIter->second, name, "");
                 } else {
-                    // Create with provided defaults
                     hist = new TProfile(name.c_str(), title.c_str(), xbins, xmin, xmax, ymin, ymax);
                 }
-                
-                hist->SetDirectory(centDir);
+                hist->SetDirectory(collectionDir);
                 histograms.push_back(hist);
                 return hist;
             };
-            
+
             // Create all histograms using our helper functions
             // Basic kinematic histograms
             TH1F* hJetPt = createHist1D("hJetPt", "Jet p_{T};p_{T} [GeV/c];Entries", 100, 0, 500);
@@ -1746,16 +1765,6 @@ void createHistograms(TFile* outFile, const std::vector<std::string>& jetCollect
             TH1F* hJetPhi = createHist1D("hJetPhi", "Jet #phi;#phi [rad];Entries", 50, -3.14159, 3.14159);
             TH1F* hDeltaPhi = createHist1D("hDeltaPhi", "#Delta#phi;#Delta#phi;Entries", 50, 0, M_PI);
             TH1F* hXj = createHist1D("hXj", "x_{j} = p_{T}^{jet} / E_{T}^{#gamma};x_{j};Entries", 50, 0, 2.0);
-            
-            // Photon histograms
-            TH1F* hPhotonEt = createHist1D("hPhotonEt", "Photon E_{T};E_{T} [GeV];Entries", 100, 0, 400);
-            TH1F* hPhotonEta = createHist1D("hPhotonEta", "Photon #eta;#eta;Entries", 50, -2.5, 2.5);
-            
-            // Photon identification histograms
-            TH1F* hPhotonHoverE = createHist1D("hPhotonHoverE", "Photon H/E;H/E;Entries", 50, 0, 0.2);
-            TH1F* hPhotonSigmaIEtaIEta = createHist1D("hPhotonSigmaIEtaIEta", "Photon #sigma_{i#eta i#eta};#sigma_{i#eta i#eta};Entries", 50, 0, 0.03);
-            TH1F* hPhotonIso = createHist1D("hPhotonIso", "Photon Isolation;Isolation [GeV];Entries", 50, 0, 10.0);
-            TH1F* hPhotonR9 = createHist1D("hPhotonR9", "Photon R9;R9;Entries", 50, 0.8, 1.0);
             
             // Jet substructure histograms
             TH1F* hJetMass = createHist1D("hJetMass", "Jet mass;m [GeV/c^{2}];Entries", 50, 0, 50);
@@ -1787,297 +1796,94 @@ void createHistograms(TFile* outFile, const std::vector<std::string>& jetCollect
             TH1F* hRefIntJetMulti = createHist1D("hRefIntJetMulti", "Intra Jet Multiplicity;Intra Jet Multiplicity;Entries", 15, 0, 15);
             
             // Event-level histograms
-            TH1F* hNPhotons = createHist1D("hNPhotons", "Number of Photons;N_{#gamma};Entries", 20, 0, 20);
             TH1F* hNJets = createHist1D("hNJets", "Number of Jets;N_{jets};Entries", 50, 0, 50);
-            TH1F* hEventWeight = createHist1D("hEventWeight", "Event Weight;Weight;Entries", 100, 0, 2);
-            TH1F* hVz = createHist1D("hVz", "Primary Vertex z;v_{z} [cm];Entries", 100, -20, 20);
-            TH1F* hHiHF = createHist1D("hHiHF", "HF Energy Sum;#Sigma E_{T}^{HF} [GeV];Entries", 100, 0, 7000);
-            TH1F* hCentrality = createHist1D("hCentrality", "Centrality;Centrality [%];Entries", 100, 0, 100);
             
             // 2D histograms
-            TH2F* h2JetPtVsEta = createHist2D("h2JetPtVsEta", "Jet p_{T} vs #eta;#eta;p_{T} [GeV/c]", 
-                                             50, -2.5, 2.5, 100, 0, 500);
-            TH2F* h2JetMassVsPt = createHist2D("h2JetMassVsPt", "Jet Mass vs p_{T};p_{T} [GeV/c];m [GeV/c^{2}]", 
-                                              20, 40, 240, 50, 0, 50);
+            TH2F* h2JetPtVsEta = createHist2D("h2JetPtVsEta", "Jet p_{T} vs #eta;#eta;p_{T} [GeV/c]", 50, -2.5, 2.5, 100, 0, 500);
+            TH2F* h2JetMassVsPt = createHist2D("h2JetMassVsPt", "Jet Mass vs p_{T};p_{T} [GeV/c];m [GeV/c^{2}]", 20, 40, 240, 50, 0, 50);
             
             // Additional jet substructure 2D histograms
-            TH2F* h2GirthVsPt = createHist2D("h2GirthVsPt", "Jet Girth vs p_{T};p_{T} [GeV/c];Girth", 
-                                           10, 40, 240, 50, 0, 0.5);
-            TH2F* h2ThrustVsPt = createHist2D("h2ThrustVsPt", "Jet Thrust vs p_{T};p_{T} [GeV/c];Thrust", 
-                                            10, 40, 240, 50, 0, 1.0);
-            TH2F* h2PtDVsPt = createHist2D("h2PtDVsPt", "Jet p_{T}D vs p_{T};p_{T} [GeV/c];p_{T}D", 
-                                         10, 40, 240, 50, 0, 1.0);
+            TH2F* h2GirthVsPt = createHist2D("h2GirthVsPt", "Jet Girth vs p_{T};p_{T} [GeV/c];Girth", 10, 40, 240, 50, 0, 0.5);
+            TH2F* h2ThrustVsPt = createHist2D("h2ThrustVsPt", "Jet Thrust vs p_{T};p_{T} [GeV/c];Thrust", 10, 40, 240, 50, 0, 1.0);
+            TH2F* h2PtDVsPt = createHist2D("h2PtDVsPt", "Jet p_{T}D vs p_{T};p_{T} [GeV/c];p_{T}D", 10, 40, 240, 50, 0, 1.0);
             
             // Ref jet 2D histograms
-            TH2F* h2RefJetPtVsEta = createHist2D("h2RefJetPtVsEta", "Ref Jet p_{T} vs #eta;#eta;p_{T} [GeV/c]", 
-                                               50, -2.5, 2.5, 100, 0, 500);
-            TH2F* h2RefJetMassVsPt = createHist2D("h2RefJetMassVsPt", "Ref Jet Mass vs p_{T};p_{T} [GeV/c];m [GeV/c^{2}]", 
-                                                20, 40, 240, 50, 0, 50);
-            TH2F* h2RefGirthVsPt = createHist2D("h2RefGirthVsPt", "Ref Jet Girth vs p_{T};p_{T} [GeV/c];Girth", 
-                                              10, 40, 240, 50, 0, 0.5);
-            TH2F* h2RefThrustVsPt = createHist2D("h2RefThrustVsPt", "Ref Jet Thrust vs p_{T};p_{T} [GeV/c];Thrust", 
-                                               10, 40, 240, 50, 0, 1.0);
-            TH2F* h2RefPtDVsPt = createHist2D("h2RefPtDVsPt", "Ref Jet p_{T}D vs p_{T};p_{T} [GeV/c];p_{T}D", 
-                                            10, 40, 240, 50, 0, 1.0);
+            TH2F* h2RefJetPtVsEta = createHist2D("h2RefJetPtVsEta", "Ref Jet p_{T} vs #eta;#eta;p_{T} [GeV/c]", 50, -2.5, 2.5, 100, 0, 500);
+            TH2F* h2RefJetMassVsPt = createHist2D("h2RefJetMassVsPt", "Ref Jet Mass vs p_{T};p_{T} [GeV/c];m [GeV/c^{2}]", 20, 40, 240, 50, 0, 50);
+            TH2F* h2RefGirthVsPt = createHist2D("h2RefGirthVsPt", "Ref Jet Girth vs p_{T};p_{T} [GeV/c];Girth", 10, 40, 240, 50, 0, 0.5);
+            TH2F* h2RefThrustVsPt = createHist2D("h2RefThrustVsPt", "Ref Jet Thrust vs p_{T};p_{T} [GeV/c];Thrust", 10, 40, 240, 50, 0, 1.0);
+            TH2F* h2RefPtDVsPt = createHist2D("h2RefPtDVsPt", "Ref Jet p_{T}D vs p_{T};p_{T} [GeV/c];p_{T}D", 10, 40, 240, 50, 0, 1.0);
             
             // Reco vs Ref correlation histograms
-            TH2F* h2JetVsRefPt = createHist2D("h2JetVsRefPt", "Reco vs Ref Jet p_{T};Ref p_{T} [GeV/c];Reco p_{T} [GeV/c]", 
-                                            100, 0, 500, 100, 0, 500);
-            TH2F* h2JetVsRefMass = createHist2D("h2JetVsRefMass", "Reco vs Ref Jet Mass;Ref m [GeV/c^{2}];Reco m [GeV/c^{2}]", 
-                                              50, 0, 50, 50, 0, 50);
-            TH2F* h2JetVsRefGirth = createHist2D("h2JetVsRefGirth", "Reco vs Ref Jet Girth;Ref Girth;Reco Girth", 
-                                               50, 0, 0.5, 50, 0, 0.5);
-            TH2F* h2JetVsRefThrust = createHist2D("h2JetVsRefThrust", "Reco vs Ref Jet Thrust;Ref Thrust;Reco Thrust", 
-                                                50, 0, 1.0, 50, 0, 1.0);
-            TH2F* h2JetVsRefPtD = createHist2D("h2JetVsRefPtD", "Reco vs Ref Jet p_{T}D;Ref p_{T}D;Reco p_{T}D", 
-                                             50, 0, 1.0, 50, 0, 1.0);
+            TH2F* h2JetVsRefPt = createHist2D("h2JetVsRefPt", "Reco vs Ref Jet p_{T};Ref p_{T} [GeV/c];Reco p_{T} [GeV/c]", 100, 0, 500, 100, 0, 500);
+            TH2F* h2JetVsRefMass = createHist2D("h2JetVsRefMass", "Reco vs Ref Jet Mass;Ref m [GeV/c^{2}];Reco m [GeV/c^{2}]", 50, 0, 50, 50, 0, 50);
+            TH2F* h2JetVsRefGirth = createHist2D("h2JetVsRefGirth", "Reco vs Ref Jet Girth;Ref Girth;Reco Girth", 50, 0, 0.5, 50, 0, 0.5);
+            TH2F* h2JetVsRefThrust = createHist2D("h2JetVsRefThrust", "Reco vs Ref Jet Thrust;Ref Thrust;Reco Thrust", 50, 0, 1.0, 50, 0, 1.0);
+            TH2F* h2JetVsRefPtD = createHist2D("h2JetVsRefPtD", "Reco vs Ref Jet p_{T}D;Ref p_{T}D;Reco p_{T}D", 50, 0, 1.0, 50, 0, 1.0);
             
             // Profile histograms for jet substructure evolution with pT
-            TProfile* pGirthVsPt = createHistProfile("pGirthVsPt", "Jet Girth vs p_{T};p_{T} [GeV/c];<Girth>", 
-                                                   10, 40, 240, 0, 0.5);
-            TProfile* pThrustVsPt = createHistProfile("pThrustVsPt", "Jet Thrust vs p_{T};p_{T} [GeV/c];<Thrust>", 
-                                                    10, 40, 240, 0, 1.0);
-            TProfile* pPtDVsPt = createHistProfile("pPtDVsPt", "Jet p_{T}D vs p_{T};p_{T} [GeV/c];<p_{T}D>", 
-                                                 10, 40, 240, 0, 1.0);
+            TProfile* pGirthVsPt = createHistProfile("pGirthVsPt", "Jet Girth vs p_{T};p_{T} [GeV/c];<Girth>", 10, 40, 240, 0, 0.5);
+            TProfile* pThrustVsPt = createHistProfile("pThrustVsPt", "Jet Thrust vs p_{T};p_{T} [GeV/c];<Thrust>", 10, 40, 240, 0, 1.0);
+            TProfile* pPtDVsPt = createHistProfile("pPtDVsPt", "Jet p_{T}D vs p_{T};p_{T} [GeV/c];<p_{T}D>", 10, 40, 240, 0, 1.0);
             
             // Ref jet profile histograms
-            TProfile* pRefGirthVsPt = createHistProfile("pRefGirthVsPt", "Ref Jet Girth vs p_{T};p_{T} [GeV/c];<Girth>", 
-                                                      10, 40, 240, 0, 0.5);
-            TProfile* pRefThrustVsPt = createHistProfile("pRefThrustVsPt", "Ref Jet Thrust vs p_{T};p_{T} [GeV/c];<Thrust>", 
-                                                       10, 40, 240, 0, 1.0);
-            TProfile* pRefPtDVsPt = createHistProfile("pRefPtDVsPt", "Ref Jet p_{T}D vs p_{T};p_{T} [GeV/c];<p_{T}D>", 
-                                                    10, 40, 240, 0, 1.0);
+            TProfile* pRefGirthVsPt = createHistProfile("pRefGirthVsPt", "Ref Jet Girth vs p_{T};p_{T} [GeV/c];<Girth>", 10, 40, 240, 0, 0.5);
+            TProfile* pRefThrustVsPt = createHistProfile("pRefThrustVsPt", "Ref Jet Thrust vs p_{T};p_{T} [GeV/c];<Thrust>", 10, 40, 240, 0, 1.0);
+            TProfile* pRefPtDVsPt = createHistProfile("pRefPtDVsPt", "Ref Jet p_{T}D vs p_{T};p_{T} [GeV/c];<p_{T}D>", 10, 40, 240, 0, 1.0);
             
-            // MC-specific histograms (only create if this is MC data)
-            TH1F* hMCPhotonPt = nullptr;
-            TH1F* hMCPhotonEta = nullptr;
-            TH1F* hMCPhotonPhi = nullptr;
-            TH1F* hMCPhotonPID = nullptr;
-            TH1F* hMCPhotonMomPID = nullptr;
-            TH1F* hPhotonGenMatch = nullptr;
-            TH2F* h2PhotonGenVsReco = nullptr;
             
             if (isMC) {
-                hMCPhotonPt = createHist1D("hMCPhotonPt", "MC Photon p_{T};p_{T} [GeV/c];Entries", 100, 0, 400);
-                hMCPhotonEta = createHist1D("hMCPhotonEta", "MC Photon #eta;#eta;Entries", 50, -2.5, 2.5);
-                hMCPhotonPhi = createHist1D("hMCPhotonPhi", "MC Photon #phi;#phi [rad];Entries", 50, -3.14159, 3.14159);
-                hMCPhotonPID = createHist1D("hMCPhotonPID", "MC Photon PID;PID;Entries", 50, -25, 25);
-                hMCPhotonMomPID = createHist1D("hMCPhotonMomPID", "MC Photon Mother PID;Mother PID;Entries", 50, -25, 25);
-                hPhotonGenMatch = createHist1D("hPhotonGenMatch", "Photon Gen Match Index;Match Index;Entries", 50, -5, 45);
-                h2PhotonGenVsReco = createHist2D("h2PhotonGenVsReco", "Gen vs Reco Photon p_{T};Reco p_{T} [GeV/c];Gen p_{T} [GeV/c]", 
-                                               50, 0, 400, 50, 0, 400);
-                
                 log(LOG_DEBUG, "Created MC-specific histograms in " + collection + "/" + centName);
             }
 
             // Suppress unused variable warnings - these histograms are properly stored in ROOT directory
-            (void)hJetPt; (void)hJetEta; (void)hJetPhi; (void)hDeltaPhi; (void)hXj;
-            (void)hPhotonEt; (void)hPhotonEta; (void)hPhotonHoverE; (void)hPhotonSigmaIEtaIEta; 
-            (void)hPhotonIso; (void)hPhotonR9; (void)hJetMass; (void)hJetArea; (void)hDynSplit; 
+            (void)hJetPt; (void)hJetEta; (void)hJetPhi; (void)hDeltaPhi; (void)hXj; (void)hJetMass; (void)hJetArea; (void)hDynSplit; 
             (void)hDynKt; (void)hDynZ; (void)hGirth; (void)hThrust; (void)hLHA; (void)hPtD; 
             (void)hDynDeltaR; (void)hIntJetMulti; (void)hRefJetPt; (void)hRefJetEta; (void)hRefJetPhi; 
             (void)hRefJetMass; (void)hRefJetArea; (void)hRefDynSplit; (void)hRefDynKt; (void)hRefDynZ; 
             (void)hRefGirth; (void)hRefThrust; (void)hRefLHA; (void)hRefPtD; (void)hRefDynDeltaR; 
-            (void)hRefIntJetMulti; (void)hNPhotons; (void)hNJets; (void)hEventWeight; (void)hVz; 
-            (void)hHiHF; (void)hCentrality; (void)h2JetPtVsEta; (void)h2JetMassVsPt; (void)h2GirthVsPt; 
+            (void)hRefIntJetMulti; (void)h2JetPtVsEta; (void)h2JetMassVsPt; (void)h2GirthVsPt; 
             (void)h2ThrustVsPt; (void)h2PtDVsPt; (void)h2RefJetPtVsEta; (void)h2RefJetMassVsPt; 
             (void)h2RefGirthVsPt; (void)h2RefThrustVsPt; (void)h2RefPtDVsPt; (void)h2JetVsRefPt; 
             (void)h2JetVsRefMass; (void)h2JetVsRefGirth; (void)h2JetVsRefThrust; (void)h2JetVsRefPtD; 
             (void)pGirthVsPt; (void)pThrustVsPt; (void)pPtDVsPt; (void)pRefGirthVsPt; (void)pRefThrustVsPt; 
-            (void)pRefPtDVsPt; (void)hMCPhotonPt; (void)hMCPhotonEta; (void)hMCPhotonPhi; 
-            (void)hMCPhotonPID; (void)hMCPhotonMomPID; (void)hPhotonGenMatch; (void)h2PhotonGenVsReco;
-            
+            (void)pRefPtDVsPt; (void)hNJets;
             // Create any additional histograms defined in the config but not explicitly included above
             for (const auto& histConfig : plotConfig.histogramConfigs) {
                 // Skip if we've already created this histogram
                 std::string histName = "h" + histConfig.first;
-                if (centDir->FindObject(histName.c_str()) != nullptr) continue;
+                if (collectionDir->FindObject(histName.c_str()) != nullptr) continue;
+                if (generalDir->FindObject(histName.c_str()) != nullptr) continue;
+                log(LOG_ERROR, "Histogram: " + histName + " is present in config but not in the analyzer");
                 
                 // Create the histogram based on its type
-                if (histConfig.second.type == "TH1F") {
-                    createHist1D(histName, histConfig.second.title, 
-                               histConfig.second.nBinsX, histConfig.second.xMin, histConfig.second.xMax);
-                } else if (histConfig.second.type == "TH2F") {
-                    createHist2D(histName, histConfig.second.title, 
-                               histConfig.second.nBinsX, histConfig.second.xMin, histConfig.second.xMax,
-                               histConfig.second.nBinsY, histConfig.second.yMin, histConfig.second.yMax);
-                } else if (histConfig.second.type == "TProfile") {
-                    createHistProfile(histName, histConfig.second.title, 
-                                    histConfig.second.nBinsX, histConfig.second.xMin, histConfig.second.xMax,
-                                    histConfig.second.yMin, histConfig.second.yMax);
-                }
+                // if (histConfig.second.type == "TH1F") {
+                //     createHist1D(histName, histConfig.second.title, 
+                //                histConfig.second.nBinsX, histConfig.second.xMin, histConfig.second.xMax);
+                // } else if (histConfig.second.type == "TH2F") {
+                //     createHist2D(histName, histConfig.second.title, 
+                //                histConfig.second.nBinsX, histConfig.second.xMin, histConfig.second.xMax,
+                //                histConfig.second.nBinsY, histConfig.second.yMin, histConfig.second.yMax);
+                // } else if (histConfig.second.type == "TProfile") {
+                //     createHistProfile(histName, histConfig.second.title, 
+                //                     histConfig.second.nBinsX, histConfig.second.xMin, histConfig.second.xMax,
+                //                     histConfig.second.yMin, histConfig.second.yMax);
+                // }
             }
             
             // Don't write histograms individually here - they will be written with the directory
             // Write directory metadata
-            centDir->Write();
-            outFile->cd();
+            collectionDir->Write();
+            centDir->cd();
         }
+        // Write the centDir after all collections
+        centDir->Write();
+        outFile->cd();
     }
-    
+
     // Return to the main directory
     outFile->cd();
-    
+
     log(LOG_DEBUG, "Histogram creation complete with " + 
         std::to_string(plotConfig.histogramConfigs.size()) + " histogram configurations.");
-}
-
-/**
- * Create output directories using ROOT's TSystem
- */
-bool createOutputDirectories(const std::string& outputDir) {
-    if (outputDir.empty()) {
-        std::cerr << "Error: Empty output directory path" << std::endl;
-        return false;
-    }
-    
-    // Check if directory exists, create if it doesn't
-    if (gSystem->AccessPathName(outputDir.c_str())) {
-        if (gSystem->mkdir(outputDir.c_str(), kTRUE) != 0) {
-            std::cerr << "Error: Failed to create output directory: " << outputDir << std::endl;
-            return false;
-        }
-        log(LOG_INFO, "Created output directory: " + outputDir);
-    } else {
-        log(LOG_INFO, "Output directory exists: " + outputDir);
-    }
-    
-    return true;
-}
-
-/**
- * Print configuration summary
- */
-void printConfig(TEnv* config) {
-    if (!config) {
-        std::cerr << "Error: Configuration is null" << std::endl;
-        return;
-    }
-    
-    // Get DataType and compute isMC status
-    std::string dataType = config->GetValue("DataType", "Data");
-    bool isMC = (dataType == "MC" || dataType == "mc");
-    
-    log(LOG_INFO, "=== Configuration Summary ===");
-    log(LOG_INFO, "System: " + std::string(config->GetValue("System", "Unknown")));
-    log(LOG_INFO, "DataType: " + dataType);
-    log(LOG_INFO, "IsMC: " + std::to_string(isMC) + " (computed from DataType)");
-    log(LOG_INFO, "InputDir: " + std::string(config->GetValue("InputDir", "")));
-    log(LOG_INFO, "OutputDir: " + std::string(config->GetValue("OutputDir", "")));
-    log(LOG_INFO, "OutputPrefix: " + std::string(config->GetValue("OutputPrefix", "")));
-    log(LOG_INFO, "AnalysisCases: " + std::string(config->GetValue("AnalysisCases", "")));
-    log(LOG_INFO, "PhotonEtMin: " + std::to_string(config->GetValue("PhotonEtMin", 60.0)));
-    log(LOG_INFO, "JetPtMin: " + std::to_string(config->GetValue("JetPtMin", 40.0)));
-    log(LOG_INFO, "VzCut: " + std::to_string(config->GetValue("VzCut", 15.0)));
-    log(LOG_INFO, "===========================");
-}
-
-/**
- * Parse comma-separated float values from config
- */
-std::vector<float> getFloatVector(TEnv* config, const std::string& param) {
-    std::vector<float> result;
-    std::string valueStr = config->GetValue(param.c_str(), "");
-    
-    if (valueStr.empty()) {
-        // Return default centrality bins if not specified
-        return {0, 10, 30, 50, 70, 100, 200};
-    }
-    
-    // Handle both space and comma separated values
-    std::stringstream ss(valueStr);
-    std::string item;
-    
-    // First try comma-separated parsing
-    if (valueStr.find(',') != std::string::npos) {
-        while (std::getline(ss, item, ',')) {
-            // Trim whitespace
-            item.erase(0, item.find_first_not_of(" \t\n\r\f\v"));
-            item.erase(item.find_last_not_of(" \t\n\r\f\v") + 1);
-            
-            if (!item.empty()) {
-                try {
-                    float value = std::stof(item);
-                    result.push_back(value);
-                } catch (const std::exception& e) {
-                    std::cerr << "Warning: Failed to parse float value '" << item 
-                             << "' in parameter " << param << std::endl;
-                }
-            }
-        }
-    } else {
-        // Space-separated parsing
-        while (ss >> item) {
-            try {
-                float value = std::stof(item);
-                result.push_back(value);
-            } catch (const std::exception& e) {
-                std::cerr << "Warning: Failed to parse float value '" << item 
-                         << "' in parameter " << param << std::endl;
-            }
-        }
-    }
-    
-    return result;
-}
-
-/**
- * Parse comma-separated string values from config
- */
-std::vector<std::string> getStringVector(TEnv* config, const std::string& param) {
-    std::vector<std::string> result;
-    std::string valueStr = config->GetValue(param.c_str(), "");
-    
-    if (valueStr.empty()) {
-        return result;
-    }
-    
-    std::stringstream ss(valueStr);
-    std::string item;
-    while (std::getline(ss, item, ',')) {
-        // Trim whitespace
-        item.erase(0, item.find_first_not_of(" \t\n\r\f\v"));
-        item.erase(item.find_last_not_of(" \t\n\r\f\v") + 1);
-        
-        if (!item.empty()) {
-            result.push_back(item);
-        }
-    }
-    
-    return result;
-}
-
-/**
- * Calculate delta phi between two angles, returned in [0, pi]
- */
-float getDeltaPhi(float phi1, float phi2) {
-    float dPhi = std::abs(phi1 - phi2);
-    while (dPhi > M_PI) dPhi = 2 * M_PI - dPhi;
-    return dPhi;
-}
-
-/**
- * Calculate xj = jetPt / photonPt
- */
-float getXj(float jetPt, float photonPt) {
-    if (photonPt <= 0) return 0;
-    return jetPt / photonPt;
-}
-
-/**
- * Print usage information
- */
-void printUsage() {
-    std::cout << "Usage: gammaJetAnalyzer [options]" << std::endl;
-    std::cout << "Options:" << std::endl;
-    std::cout << "  --config, -c FILE          Analysis config file path" << std::endl;
-    std::cout << "  --plot-config, -p FILE     Plotting config file path" << std::endl;
-    std::cout << "  --test, -t [N]             Run in test mode with N events (default: 1000)" << std::endl;
-    std::cout << "  --production               Run in production mode (all events)" << std::endl;
-    std::cout << "  --help, -h                 Print this help message" << std::endl;
-    std::cout << std::endl;
-    std::cout << "Examples:" << std::endl;
-    std::cout << "  ./gammaJetAnalyzer -c analysis.config -p plotting.config -t 10000" << std::endl;
-    std::cout << "  ./gammaJetAnalyzer --config analysis.config --plot-config plotting.config --test 5000" << std::endl;
-    std::cout << "  ./gammaJetAnalyzer -c analysis.config -p plotting.config --production" << std::endl;
 }

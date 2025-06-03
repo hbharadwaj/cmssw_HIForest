@@ -19,7 +19,7 @@ import re
 
 
 def parse_config(config_path):
-    """Parse the plotting config file into a dictionary of keys and values."""
+    """Parse the plotting config file into a dictionary of keys and values. Supports HistogramConfigFile chaining."""
     config = {}
     with open(config_path) as f:
         for line in f:
@@ -29,6 +29,22 @@ def parse_config(config_path):
             if ':' in line:
                 key, value = line.split(':', 1)
                 config[key.strip()] = value.strip()
+    # If HistogramConfigFile is present, load and merge it
+    hist_config_file = config.get('HistogramConfigFile', '')
+    if hist_config_file:
+        # Support relative paths
+        if not os.path.isabs(hist_config_file):
+            hist_config_file = os.path.join(os.path.dirname(config_path), hist_config_file)
+        with open(hist_config_file) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                if ':' in line:
+                    key, value = line.split(':', 1)
+                    # Only add if not already present (main config overrides)
+                    if key.strip() not in config:
+                        config[key.strip()] = value.strip()
     return config
 
 
