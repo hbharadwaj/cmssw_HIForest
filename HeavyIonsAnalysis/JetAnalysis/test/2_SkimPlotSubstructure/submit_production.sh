@@ -23,6 +23,9 @@ show_help() {
     echo "  -v, --verbose           Enable verbose output (level 2)"
     echo "  --verbosity LEVEL       Set verbosity level: 0=minimal, 1=normal, 2=debug, 3=trace (default: 1)"
     echo "  --job-name NAME         Custom job name prefix (default: auto-generated)"
+    echo "  --os-version VERSION    Specify OS version to use (e.g., 'el8' or 'el9')"
+    echo "  --cmssw-version VERSION  Specify CMSSW version to use"
+    echo "  --arch, --architecture, --scram-arch ARCH  Specify architecture (e.g., 'slc7_amd64_gcc820')"
     echo ""
     echo "Examples:"
     echo "  $0 ../configs/JetSub_2023_PbPb_MC.config ../configs/PlotJetSub_2023_PbPb_MC.config"
@@ -38,6 +41,7 @@ JOB_FLAVOUR="longlunch"
 DRY_RUN=false
 VERBOSITY=1    # Default verbosity level: 0=minimal, 1=normal, 2=debug, 3=trace
 CUSTOM_JOB_NAME=""
+OS_VERSION="el8"
 ANALYSIS_CONFIG=""
 PLOT_CONFIG=""
 
@@ -67,9 +71,33 @@ log() {
     fi
 }
 
-# Parse command line arguments
+# --- CMSSW Environment Detection and Management ---
+# Detect current CMSSW environment, version, and architecture
+if [ -n "$CMSSW_BASE" ]; then
+    DETECTED_CMSSW_VERSION=$(basename "$CMSSW_BASE")
+    DETECTED_CMSSW_ARCH=${SCRAM_ARCH:-"unknown"}
+    log 1 "Detected CMSSW environment: $DETECTED_CMSSW_VERSION, arch: $DETECTED_CMSSW_ARCH"
+else
+    DETECTED_CMSSW_VERSION=""
+    DETECTED_CMSSW_ARCH=""
+    log 1 "No CMSSW environment detected."
+fi
+
+# Allow user to override or specify CMSSW version and architecture
+CMSSW_VERSION="$DETECTED_CMSSW_VERSION"
+CMSSW_ARCH="$DETECTED_CMSSW_ARCH"
+
+# Add options for user to specify CMSSW version and architecture
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --cmssw-version)
+            CMSSW_VERSION="$2"
+            shift 2
+            ;;
+        --arch|--architecture|--scram-arch)
+            CMSSW_ARCH="$2"
+            shift 2
+            ;;
         -h|--help)
             show_help
             exit 0
@@ -106,6 +134,10 @@ while [[ $# -gt 0 ]]; do
             CUSTOM_JOB_NAME="$2"
             shift 2
             ;;
+        --os-version)
+            OS_VERSION="$2"
+            shift 2
+            ;;
         -*|--*)
             log 0 "Unknown option: $1"
             show_help
@@ -126,6 +158,10 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+log 1 "CMSSW version to use: ${CMSSW_VERSION:-none}"
+log 1 "CMSSW architecture to use: ${CMSSW_ARCH:-none}"
+# --- End CMSSW Environment Detection and Management ---
 
 # Validate inputs
 if [[ -z "$ANALYSIS_CONFIG" || -z "$PLOT_CONFIG" ]]; then
@@ -195,6 +231,7 @@ split_files_into_batches() {
     done
 }
 
+
 # Main execution
 log 1 "Starting simplified batch submission for gammaJetAnalyzer"
 log 1 "Analysis config: $ANALYSIS_CONFIG"
@@ -244,72 +281,206 @@ if [ -n "$CUSTOM_JOB_NAME" ]; then
 else
     job_name="${config_name}_${timestamp}"
 fi
-batch_dir="batch/job_${job_name}"
+batch_dir=$SCRIPT_DIR"/batch/job_${job_name}"
+
+# --- Enhanced Compilation Strategy ---
+# Decide where to compile: locally or inside the job
+COMPILE_IN_JOB=false
+if [ -n "$CMSSW_VERSION" ] && [ -n "$CMSSW_ARCH" ]; then
+    # If the detected or requested environment does not match, recommend compiling in job
+    if [ "$CMSSW_VERSION" != "$DETECTED_CMSSW_VERSION" ] || [ "$CMSSW_ARCH" != "$DETECTED_CMSSW_ARCH" ]; then
+        log 1 "Warning: Current environment ($DETECTED_CMSSW_VERSION/$DETECTED_CMSSW_ARCH) does not match requested ($CMSSW_VERSION/$CMSSW_ARCH)."
+        log 1 "Will compile inside the job for compatibility."
+        COMPILE_IN_JOB=true
+    fi
+fi
+
+# Optionally allow user to force compilation in job
+# (add --compile-in-job flag if desired in future)
 
 if [ "$DRY_RUN" = false ]; then
     mkdir -p "$batch_dir"
     log 2 "Created batch directory: $batch_dir"
     
+    # Prepare include directory
+    INCLUDE_DIR="$batch_dir/include"
+    mkdir -p "$INCLUDE_DIR"
+
+    # Prepare logs directory
+    LOGS_DIR="$batch_dir/logs"
+    mkdir -p "$LOGS_DIR"
+    
     # Copy necessary files
-    log 2 "Copying files to batch directory..."
-    cp gammaJetAnalyzer.cpp "$batch_dir/" 2>/dev/null || log 1 "Warning: gammaJetAnalyzer.cpp not found"
-    cp -r include "$batch_dir/" 2>/dev/null || log 1 "Warning: include directory not found"
-    cp Makefile "$batch_dir/" 2>/dev/null || log 1 "Warning: Makefile not found"
+    log 1 "Copying files to batch directory..."
+    cp $SCRIPT_DIR/gammaJetAnalyzer.cpp "$batch_dir/" 2>/dev/null || log 1 "Warning: gammaJetAnalyzer.cpp not found"
+    cp $SCRIPT_DIR/include/helpers.h include/JetCollectionManager.h "$INCLUDE_DIR" 2>/dev/null || log 1 "Warning: include directory not found"
+    cp $SCRIPT_DIR/Makefile "$batch_dir/" 2>/dev/null || log 1 "Warning: Makefile not found"
     cp "$ANALYSIS_CONFIG" "$batch_dir/" 2>/dev/null || log 1 "Warning: analysis config not found"
     cp "$PLOT_CONFIG" "$batch_dir/" 2>/dev/null || log 1 "Warning: plot config not found"
+
+    if [ "$COMPILE_IN_JOB" = false ]; then
+        # Compile locally as before
+        log 1 "Compiling gammaJetAnalyzer inside batch directory (local build)..."
+        (cd "$batch_dir" && make -j) || { log 0 "Compilation failed in batch directory"; exit 1; }
+        log 1 "Compiled gammaJetAnalyzer in batch directory."
+    else
+        log 1 "Skipping local compilation; will compile inside the job."
+    fi
 fi
 
 analysis_config_basename=$(basename "$ANALYSIS_CONFIG")
 plot_config_basename=$(basename "$PLOT_CONFIG")
 
 # Create job script
-job_script_content="#!/bin/bash
+job_script_path="$batch_dir/run_job.sh"
+
+# Write the job script template to file (if not dry run) with proper variable substitution
+if [ "$DRY_RUN" = false ]; then
+    cat > "$job_script_path" << EOF
+#!/bin/bash
+
+echo "=== gammaJetAnalyzer Job Start ==="
+echo "Job started: \$(date) on \$(hostname)"
+echo "Working directory: \$(pwd)"
+echo "HTCondor Process: \${_CONDOR_PROCNO:-0}"
+echo ""
+
+# Setup CMSSW environment if needed
+if [ "\$COMPILE_IN_JOB" = true ]; then
+    if [ -z "\$CMSSW_VERSION" ] || [ -z "\$CMSSW_ARCH" ]; then
+        echo "[ERROR] CMSSW version or architecture not specified. Exiting."
+        exit 10
+    fi
+    echo "Setting up CMSSW environment: \$CMSSW_VERSION (\$CMSSW_ARCH)"
+    export SCRAM_ARCH=\$CMSSW_ARCH
+    source /cvmfs/cms.cern.ch/cmsset_default.sh
+    if [ ! -d \$CMSSW_VERSION ]; then
+        scramv1 project CMSSW \$CMSSW_VERSION || { echo "[ERROR] Failed to create CMSSW project"; exit 11; }
+    fi
+    cd \$CMSSW_VERSION/src
+    eval "\$(scramv1 runtime -sh)"
+    cd -
+    if [ ! -f Makefile ]; then echo "[ERROR] Makefile not found in job directory"; exit 12; fi
+    echo "Compiling gammaJetAnalyzer in job..."
+    make -j || { echo "[ERROR] Compilation failed in job"; exit 13; }
+    echo "Compilation finished."
+fi
+
+FILES_LIST="\${JOB_FILES:-""}"
+echo "Files for this job: \$FILES_LIST"
+echo ""
+echo "Available files in job directory:"
+ls -la
+echo ""
+echo "=== Running Analysis ==="
+if [ -n "\$FILES_LIST" ]; then
+    if [ ! -x ./gammaJetAnalyzer ]; then echo "[ERROR] gammaJetAnalyzer binary not found or not executable"; exit 14; fi
+    echo "Running with files: \$FILES_LIST"
+    ./gammaJetAnalyzer -c $analysis_config_basename -p $plot_config_basename -b \$1 --files "\$FILES_LIST"
+else
+    echo "Error: No files specified"
+    exit 1
+fi
+exit_code=\$?
+echo ""
+echo "=== Job Completion ==="
+echo "Analysis exit code: \$exit_code"
+echo "Job completed: \$(date)"
+echo "Output files:"
+ls -la *.root 2>/dev/null || echo "No ROOT files produced"
+exit \$exit_code
+EOF
+    chmod +x "$job_script_path"
+fi
+
+# For dry run, create the content for display
+job_script_template="#!/bin/bash
+
 echo \"=== gammaJetAnalyzer Job Start ===\"
 echo \"Job started: \$(date) on \$(hostname)\"
 echo \"Working directory: \$(pwd)\"
 echo \"HTCondor Process: \${_CONDOR_PROCNO:-0}\"
 echo \"\"
 
-# Get job files from environment
-FILES_LIST=\${JOB_FILES:-\"\"}
+# Setup CMSSW environment if needed
+if [ \"\$COMPILE_IN_JOB\" = true ]; then
+    if [ -z \"\$CMSSW_VERSION\" ] || [ -z \"\$CMSSW_ARCH\" ]; then
+        echo \"[ERROR] CMSSW version or architecture not specified. Exiting.\"
+        exit 10
+    fi
+    echo \"Setting up CMSSW environment: \$CMSSW_VERSION (\$CMSSW_ARCH)\"
+    export SCRAM_ARCH=\$CMSSW_ARCH
+    source /cvmfs/cms.cern.ch/cmsset_default.sh
+    if [ ! -d \$CMSSW_VERSION ]; then
+        scramv1 project CMSSW \$CMSSW_VERSION || { echo \"[ERROR] Failed to create CMSSW project\"; exit 11; }
+    fi
+    cd \$CMSSW_VERSION/src
+    eval \"\$(scramv1 runtime -sh)\"
+    cd -
+    if [ ! -f Makefile ]; then echo \"[ERROR] Makefile not found in job directory\"; exit 12; fi
+    echo \"Compiling gammaJetAnalyzer in job...\"
+    make -j || { echo \"[ERROR] Compilation failed in job\"; exit 13; }
+    echo \"Compilation finished.\"
+fi
+
+FILES_LIST=\"\${JOB_FILES:-\"\"}\"
 echo \"Files for this job: \$FILES_LIST\"
 echo \"\"
-
 echo \"Available files in job directory:\"
 ls -la
 echo \"\"
-
-echo \"=== Compiling gammaJetAnalyzer ===\"
-make -j || exit 1
-echo \"Compilation successful\"
-echo \"\"
-
 echo \"=== Running Analysis ===\"
 if [ -n \"\$FILES_LIST\" ]; then
+    if [ ! -x ./gammaJetAnalyzer ]; then echo \"[ERROR] gammaJetAnalyzer binary not found or not executable\"; exit 14; fi
     echo \"Running with files: \$FILES_LIST\"
-    ./gammaJetAnalyzer -c $analysis_config_basename -p $plot_config_basename --files \"\$FILES_LIST\"
+    ./gammaJetAnalyzer -c $analysis_config_basename -p $plot_config_basename -b \$1 --files "\$FILES_LIST"
 else
     echo \"Error: No files specified\"
     exit 1
 fi
 exit_code=\$?
-
 echo \"\"
 echo \"=== Job Completion ===\"
 echo \"Analysis exit code: \$exit_code\"
 echo \"Job completed: \$(date)\"
 echo \"Output files:\"
 ls -la *.root 2>/dev/null || echo \"No ROOT files produced\"
-
 exit \$exit_code"
+
+# --- Improved File Transfer Logic ---
+# Build up the list of files to transfer for condor jobs
+TRANSFER_FILES=""
+if [ "$COMPILE_IN_JOB" = true ]; then
+    # Transfer all sources, headers, and Makefile for in-job compilation
+    TRANSFER_FILES="$batch_dir/gammaJetAnalyzer.cpp,$batch_dir/Makefile,$batch_dir/$analysis_config_basename,$batch_dir/$plot_config_basename"
+    # Add all headers in batch_dir/include
+    for header in $INCLUDE_DIR/*.h; do
+        if [ -f "$header" ]; then
+            TRANSFER_FILES+="\,$header"
+        fi
+    done
+else
+    # Only transfer the binary and configs
+    TRANSFER_FILES="$batch_dir/gammaJetAnalyzer,$batch_dir/$analysis_config_basename,$batch_dir/$plot_config_basename"
+fi
+
+# Warn if any required file is missing
+for f in $(echo $TRANSFER_FILES | tr ',' ' '); do
+    if [ ! -f "$f" ]; then
+        log 1 "Warning: transfer file missing: $f"
+    fi
+done
+# --- End Improved File Transfer Logic ---
 
 # Create HTCondor submit file
 submit_file_content="# HTCondor submit file for gammaJetAnalyzer
 universe = vanilla
 executable = run_job.sh
-output = gammaJetAnalyzer_\$(ClusterId).\$(ProcId).out
-error = gammaJetAnalyzer_\$(ClusterId).\$(ProcId).err
-log = gammaJetAnalyzer_\$(ClusterId).\$(ProcId).log
+arguments = \$(Process)
+transfer_input_files = $TRANSFER_FILES
+output = $LOGS_DIR/gammaJetAnalyzer_\$(ClusterId).\$(ProcId).out
+error = $LOGS_DIR/gammaJetAnalyzer_\$(ClusterId).\$(ProcId).err
+log = $LOGS_DIR//gammaJetAnalyzer_\$(ClusterId).\$(ProcId).log
 
 # File transfer settings
 should_transfer_files = YES
@@ -324,11 +495,21 @@ RequestMemory = 2GB
 JobBatchName = gammaJetAnalyzer_$job_name
 "
 
+# Insert OS version requirement if specified
+if [ -n "$OS_VERSION" ]; then
+    submit_file_content+=$'\nMY.WantOS = "'$OS_VERSION'"'
+fi
+
 # Add queue entries for each job
+# Use modern HTCondor syntax with single queue statement
+submit_file_content+="
+environment = \"JOB_FILES=\$(JOB_FILES)\"
+queue JOB_FILES from ("
 for ((job_id=0; job_id<num_jobs; job_id++)); do
-    submit_file_content+="\nenvironment = \"JOB_FILES=${file_batches[job_id]}\""
-    submit_file_content+="\nqueue 1"
+    submit_file_content+="${file_batches[job_id]}
+"
 done
+submit_file_content+=")"
 
 if [ "$DRY_RUN" = true ]; then
     log 1 "=== DRY RUN OUTPUT ==="
@@ -339,16 +520,16 @@ if [ "$DRY_RUN" = true ]; then
     done
     log 2 "Job script content:"
     log 2 "-------------------"
-    echo "$job_script_content"
+    log 2 "$job_script_template"
     log 2 "-------------------"
     log 2 "HTCondor submit file content:"
     log 2 "----------------------------"
-    echo "$submit_file_content"
+    log 2 "$submit_file_content"
     log 2 "----------------------------"
     log 1 "Would execute: cd $batch_dir && condor_submit submit.sub"
 else
     # Write files and submit
-    echo "$job_script_content" > "$batch_dir/run_job.sh"
+    echo "$job_script_template" > "$batch_dir/run_job.sh"
     chmod +x "$batch_dir/run_job.sh"
     
     echo "$submit_file_content" > "$batch_dir/submit.sub"
@@ -360,7 +541,7 @@ else
         log 1 "Job name: $job_name"
         log 1 "Job directory: $batch_dir"
         log 1 "Monitor with: condor_q"
-        log 1 "Check logs: ls -la $batch_dir/gammaJetAnalyzer_*.{out,err,log}"
+        log 1 "Check logs: ls -la $LOGS_DIR/gammaJetAnalyzer_*.{out,err,log}"
     else
         log 0 "❌ Failed to submit jobs"
         exit 1

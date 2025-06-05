@@ -365,37 +365,44 @@ def get_available_centrality_bins(root_file, jet_dir, config):
 
 
 def get_histogram_from_path(root_file, jet_dir, cent_bin, hist_name, config):
-    """Get histogram from nested ROOT file structure."""
-    # Handle both nested and flat structures
+    """Get histogram from nested ROOT file structure, supporting both directory orders and General subdir."""
     use_nested = config.get('UseNestedStructure', '1') == '1'
     hist_subdir = config.get('HistogramSubdir', '').strip()
-    
+
+    # Try both directory orders for nested structure
+    paths_to_try = []
     if use_nested:
-        # Nested structure: JetDir/CentBin/[HistogramSubdir/]HistName
+        # Old: JetDir/CentBin/[HistogramSubdir/]HistName
         if hist_subdir:
-            full_path = f"{jet_dir}/{cent_bin}/{hist_subdir}/{hist_name}"
+            paths_to_try.append(f"{jet_dir}/{cent_bin}/{hist_subdir}/{hist_name}")
+            paths_to_try.append(f"{cent_bin}/{jet_dir}/{hist_subdir}/{hist_name}")
+            # Also try General subdir under cent_bin
+            paths_to_try.append(f"{cent_bin}/General/{hist_subdir}/{hist_name}")
         else:
-            full_path = f"{jet_dir}/{cent_bin}/{hist_name}"
+            paths_to_try.append(f"{jet_dir}/{cent_bin}/{hist_name}")
+            paths_to_try.append(f"{cent_bin}/{jet_dir}/{hist_name}")
+            # Also try General subdir under cent_bin
+            paths_to_try.append(f"{cent_bin}/General/{hist_name}")
     else:
         # Flat structure: HistName_JetDir_CentBin
-        full_path = f"{hist_name}_{jet_dir}_{cent_bin}"
-    
-    hist = root_file.Get(full_path)
-    if not hist:
-        # Try alternative paths
-        alt_paths = [
-            f"{jet_dir}/{cent_bin}/{hist_name}",  # Direct path
-            f"{cent_bin}/{hist_name}",            # Without jet dir
-            f"{hist_name}_{cent_bin}",            # Flat with cent only
-            hist_name                             # Just histogram name
-        ]
-        
-        for alt_path in alt_paths:
-            hist = root_file.Get(alt_path)
-            if hist:
-                break
-    
-    return hist
+        paths_to_try.append(f"{hist_name}_{jet_dir}_{cent_bin}")
+
+    # Add fallback/alternative paths
+    paths_to_try.extend([
+        f"{jet_dir}/{cent_bin}/{hist_name}",
+        f"{cent_bin}/{jet_dir}/{hist_name}",
+        f"{cent_bin}/General/{hist_name}",
+        f"{cent_bin}/{hist_name}",
+        f"{jet_dir}/{hist_name}",
+        f"{hist_name}_{cent_bin}",
+        hist_name
+    ])
+
+    for path in paths_to_try:
+        hist = root_file.Get(path)
+        if hist:
+            return hist
+    return None
 
 
 def load_histogram_from_file(root_file, hist_path):
@@ -412,30 +419,28 @@ def load_histogram_from_file(root_file, hist_path):
 
 def find_histogram_in_structure(root_file, hist_name, jet_dir=None, cent_bin=None):
     """
-    Find histogram in nested ROOT structure.
+    Find histogram in nested ROOT structure, supporting both directory orders and General subdir.
     Returns the full path to the histogram if found, None otherwise.
     """
     search_paths = []
-    
     if jet_dir and cent_bin:
-        # Nested structure: JetDir/CentBin/HistName
+        # Try both orders
         search_paths.append(f"{jet_dir}/{cent_bin}/{hist_name}")
-    elif jet_dir:
-        # Only jet directory specified
+        search_paths.append(f"{cent_bin}/{jet_dir}/{hist_name}")
+        # Also try General subdir under cent_bin
+        search_paths.append(f"{cent_bin}/General/{hist_name}")
+    if jet_dir:
         search_paths.append(f"{jet_dir}/{hist_name}")
-    elif cent_bin:
-        # Only centrality specified
+    if cent_bin:
+        search_paths.append(f"{cent_bin}/General/{hist_name}")
         search_paths.append(f"{cent_bin}/{hist_name}")
-    else:
-        # Flat structure
-        search_paths.append(hist_name)
-    
-    # Try each path
+    # Flat structure
+    search_paths.append(hist_name)
+
     for path in search_paths:
         hist = root_file.Get(path)
         if hist:
             return path
-    
     return None
 
 
@@ -600,8 +605,8 @@ def draw_cms_label(canvas, config, selection_text=""):
     # based on legend position
 
 
-def create_output_dirs(base_dir, config, jet_dirs=None):
-    """Create organized output directory structure with jet collection subdirectories."""
+def create_output_dirs(base_dir, config, jet_dirs=None, cent_bins=None):
+    """Create organized output directory structure with centDir/JetDir subdirectories."""
     dirs = {
         'base': base_dir,
         '1D': os.path.join(base_dir, '1D'),
@@ -611,26 +616,23 @@ def create_output_dirs(base_dir, config, jet_dirs=None):
         'ratios': os.path.join(base_dir, 'ratios'),
         'comparisons': os.path.join(base_dir, 'comparisons')
     }
-    
     # Create the basic directory structure
     for dir_path in dirs.values():
         os.makedirs(dir_path, exist_ok=True)
-    
-    # If jet directories are provided, create subdirectories for each jet collection
-    if jet_dirs:
-        # Create specific jet directories for 1D, 2D and profile plots
-        for jet_dir in jet_dirs:
-            jet_dir = jet_dir.strip()
-            # Create jet-specific subdirectories in 1D, 2D and profiles
-            dirs[f'1D_{jet_dir}'] = os.path.join(dirs['1D'], jet_dir)
-            dirs[f'2D_{jet_dir}'] = os.path.join(dirs['2D'], jet_dir)
-            dirs[f'profiles_{jet_dir}'] = os.path.join(dirs['profiles'], jet_dir)
-            
-            # Make the directories
-            os.makedirs(dirs[f'1D_{jet_dir}'], exist_ok=True)
-            os.makedirs(dirs[f'2D_{jet_dir}'], exist_ok=True)
-            os.makedirs(dirs[f'profiles_{jet_dir}'], exist_ok=True)
-    
+
+    # If jet directories and centrality bins are provided, create centDir/JetDir subdirectories
+    if jet_dirs and cent_bins:
+        for cent_bin in cent_bins:
+            cent_bin = cent_bin.strip()
+            for jet_dir in jet_dirs:
+                jet_dir = jet_dir.strip()
+                # centDir/JetDir for 1D, 2D, profiles
+                dirs[f'1D_{cent_bin}_{jet_dir}'] = os.path.join(dirs['1D'], cent_bin, jet_dir)
+                dirs[f'2D_{cent_bin}_{jet_dir}'] = os.path.join(dirs['2D'], cent_bin, jet_dir)
+                dirs[f'profiles_{cent_bin}_{jet_dir}'] = os.path.join(dirs['profiles'], cent_bin, jet_dir)
+                os.makedirs(dirs[f'1D_{cent_bin}_{jet_dir}'], exist_ok=True)
+                os.makedirs(dirs[f'2D_{cent_bin}_{jet_dir}'], exist_ok=True)
+                os.makedirs(dirs[f'profiles_{cent_bin}_{jet_dir}'], exist_ok=True)
     return dirs
 
 
@@ -1229,11 +1231,11 @@ def plot_datamc_comparison(data_file, mc_file, hist_name, config, outdir, format
     """
     # Get Data-MC configuration
     datamc_config = get_datamc_config(config)
-    
+
     # Find histograms in both files
     data_path = find_histogram_in_structure(data_file, hist_name, jet_dir, cent_bin)
     mc_path = find_histogram_in_structure(mc_file, hist_name, jet_dir, cent_bin)
-    
+
     if not data_path or not mc_path:
         if config.get('Verbose', '0') == '1':
             print(f"Warning: Could not find {hist_name} in both files")
@@ -1242,14 +1244,14 @@ def plot_datamc_comparison(data_file, mc_file, hist_name, config, outdir, format
             if not mc_path:
                 print(f"  Missing in MC file: {hist_name}")
         return False
-    
+
     # Load histograms
     data_hist = load_histogram_from_file(data_file, data_path)
     mc_hist = load_histogram_from_file(mc_file, mc_path)
-    
+
     if not data_hist or not mc_hist:
         return False
-    
+
     # Normalize histograms if requested
     if config.get('DataMC.Normalize', '0') == '1':
         if data_hist.Integral() > 0:
@@ -1257,6 +1259,16 @@ def plot_datamc_comparison(data_file, mc_file, hist_name, config, outdir, format
         if mc_hist.Integral() > 0:
             mc_hist.Scale(1.0 / mc_hist.Integral())
     
+    # Create output directory for this cent_bin/jet_dir
+    outdir_full = outdir
+    if cent_bin and jet_dir:
+        outdir_full = os.path.join(outdir, cent_bin, jet_dir)
+    elif cent_bin:
+        outdir_full = os.path.join(outdir, cent_bin)
+    elif jet_dir:
+        outdir_full = os.path.join(outdir, jet_dir)
+    os.makedirs(outdir_full, exist_ok=True)
+
     # Create canvas with two pads (main plot + ratio)
     canvas_name = f"c_datamc_{hist_name}"
     if jet_dir:
@@ -1421,14 +1433,14 @@ def plot_datamc_comparison(data_file, mc_file, hist_name, config, outdir, format
     line.Draw()
     
     # Save canvas
+    # Construct filename as datamc_{hist_name}_{cent_bin}_{jet_dir} (no duplication)
     filename = f"datamc_{hist_name}"
-    if jet_dir:
-        filename += f"_{jet_dir}"
     if cent_bin:
         filename += f"_{cent_bin}"
-    
-    save_canvas(c, outdir, filename, formats, jet_dir, cent_bin, config)
-    
+    if jet_dir:
+        filename += f"_{jet_dir}"
+
+    save_canvas(c, outdir_full, filename, formats, config=config)  # Do not pass jet_dir/cent_bin again
     c.Close()
     return True
 
@@ -1507,31 +1519,25 @@ def process_individual_file(root_file, config, base_outdir, formats, hist_config
     """
     print(f"Processing {file_type} file: {root_file.GetName()}")
     
-    # Create output directories for this file similar to main processing
+    # Create output directories for this file similar to main function
     individual_output_dirs = create_output_dirs(base_outdir, config, jet_dirs)
     
     plotted_count = 0
     use_nested = config.get('UseNestedStructure', '1') == '1'
     
     if use_nested:
-        # Process nested structure (same logic as main function)
         for jet_dir in jet_dirs:
             jet_dir = jet_dir.strip()
-            if args.verbose:
-                print(f"  Processing Jet Collection: {jet_dir}")
-            
+            if args.verbose or True:
+                print(f"\n=== Individual File Processing for Jet Collection: {jet_dir} ===")
             cent_bins = [args.cent_bin] if args.cent_bin else get_available_centrality_bins(root_file, jet_dir, config)
             if not cent_bins:
-                # Parse from config
                 cent_config = config.get('CentralityBins', '0,60,180').split(',')
-                cent_bins = []
-                for i in range(len(cent_config)-1):
-                    cent_bins.append(f"cent{int(float(cent_config[i]))}to{int(float(cent_config[i+1]))}")
-            
+                cent_bins = [f"cent{int(float(cent_config[i]))}to{int(float(cent_config[i+1]))}" for i in range(len(cent_config)-1)]
             for cent_bin in cent_bins:
                 cent_bin = cent_bin.strip()
-                if args.verbose:
-                    print(f"    Processing Centrality Bin: {cent_bin}")
+                if args.verbose or True:
+                    print(f"  Processing centrality bin: {cent_bin}")
                 
                 # Plot individual histograms
                 for plot_key, hist_config in hist_configs.items():
@@ -1546,7 +1552,7 @@ def process_individual_file(root_file, config, base_outdir, formats, hist_config
                     
                     if hist_config.plot_type == '1D':
                         # Use jet-specific directory if available, otherwise use default
-                        jet_specific_dir_key = f'1D_{jet_dir}'
+                        jet_specific_dir_key = f'1D_{cent_bin}_{jet_dir}'
                         if jet_specific_dir_key in individual_output_dirs:
                             outdir = individual_output_dirs[jet_specific_dir_key]
                         else:
@@ -1559,7 +1565,7 @@ def process_individual_file(root_file, config, base_outdir, formats, hist_config
                         
                     elif hist_config.plot_type == '2D':
                         # Use jet-specific directory if available, otherwise use default
-                        jet_specific_dir_key = f'2D_{jet_dir}'
+                        jet_specific_dir_key = f'2D_{cent_bin}_{jet_dir}'
                         if jet_specific_dir_key in individual_output_dirs:
                             outdir = individual_output_dirs[jet_specific_dir_key]
                         else:
@@ -1624,7 +1630,7 @@ def process_individual_file(root_file, config, base_outdir, formats, hist_config
                 if args.verbose:
                     print(f"    Plotted 1D: {hist_config.name}")
                 plotted_count += 1
-    
+
     print(f"  {file_type} file processing completed: {plotted_count} plots created")
     return plotted_count
 
@@ -1710,6 +1716,7 @@ def clean_output_directory(outdir, batch_mode=False, verbose=False):
                     print("✅ Output directory cleaned successfully.")
                     return True
                 except Exception as e:
+                                      
                     print(f"❌ Error cleaning directory: {e}")
                     return False
                     
@@ -1802,12 +1809,20 @@ def main():
         if not jet_dirs:
             jet_dirs = [x.strip() for x in config.get('JetDirectories', 'AK4Z2').split(',')]
         
-        # Set up output directories
-        output_dirs = create_output_dirs(args.outdir, config, jet_dirs)
+        # Get available centrality bins (use data file as reference)
+        cent_bins = [args.cent_bin] if args.cent_bin else get_available_centrality_bins(data_file, jet_dirs[0], config)
+        if not cent_bins:
+            cent_config = config.get('CentralityBins', '0,60,180').split(',')
+            cent_bins = [f"cent{cent_config[i]}to{cent_config[i+1]}" for i in range(len(cent_config)-1)]
         
-        # Add DataMC subdirectory
+        # Set up output directories for DataMC, Data, MC
         datamc_outdir = os.path.join(args.outdir, 'DataMC')
-        os.makedirs(datamc_outdir, exist_ok=True)
+        data_outdir = os.path.join(args.outdir, 'Data')
+        mc_outdir = os.path.join(args.outdir, 'MC')
+        for sub in ['profiles', 'overlays', 'ratios', 'comparisons']:
+            os.makedirs(os.path.join(datamc_outdir, sub), exist_ok=True)
+            os.makedirs(os.path.join(data_outdir, sub), exist_ok=True)
+            os.makedirs(os.path.join(mc_outdir, sub), exist_ok=True)
         
         # Set CMS style
         set_cms_style(config)
@@ -1832,32 +1847,29 @@ def main():
         
         # Process Data-MC comparisons
         if use_nested:
+            # Outer loop: centrality bins, inner loop: jet_dirs
+            # Get all unique centrality bins across all jet_dirs
+            all_cent_bins = set()
             for jet_dir in jet_dirs:
-                jet_dir = jet_dir.strip()
-                print(f"\n=== Data-MC Comparison for Jet Collection: {jet_dir} ===")
-                
                 cent_bins = [args.cent_bin] if args.cent_bin else get_available_centrality_bins(data_file, jet_dir, config)
                 if not cent_bins:
                     cent_config = config.get('CentralityBins', '0,60,180').split(',')
-                    cent_bins = [f"cent{cent_config[i]}to{cent_config[i+1]}" 
-                               for i in range(len(cent_config)-1)]
-                
-                for cent_bin in cent_bins:
-                    cent_bin = cent_bin.strip()
-                    print(f"  Processing centrality bin: {cent_bin}")
-                    
-                    jet_cent_outdir = os.path.join(datamc_outdir, jet_dir, cent_bin)
-                    os.makedirs(jet_cent_outdir, exist_ok=True)
-                    
+                    cent_bins = [f"cent{cent_config[i]}to{cent_config[i+1]}" for i in range(len(cent_config)-1)]
+                all_cent_bins.update([c.strip() for c in cent_bins])
+            all_cent_bins = sorted(all_cent_bins)
+            for cent_bin in all_cent_bins:
+                cent_bin = cent_bin.strip()
+                print(f"\n=== Data-MC Comparison for Centrality bin: {cent_bin} ===")
+                for jet_dir in jet_dirs:
+                    jet_dir = jet_dir.strip()
+                    print(f"  Processing Jet Collection: {jet_dir}")
+                    # Pass only the base datamc_outdir, let plot_datamc_comparison handle cent_bin/jet_dir
                     for plot_key, hist_config in hist_configs.items():
                         if args.test and plotted_count >= 10:
                             break
-                        
                         if plot_datamc_comparison(data_file, mc_file, hist_config.name, 
-                                                config, jet_cent_outdir, formats, 
+                                                config, datamc_outdir, formats, 
                                                 jet_dir, cent_bin):
-                            if args.verbose:
-                                print(f"    Created Data-MC comparison: {hist_config.name}")
                             plotted_count += 1
         else:
             # Flat structure Data-MC comparison
@@ -1865,7 +1877,6 @@ def main():
             for plot_key, hist_config in hist_configs.items():
                 if args.test and plotted_count >= 5:
                     break
-                
                 if plot_datamc_comparison(data_file, mc_file, hist_config.name, 
                                         config, datamc_outdir, formats):
                     if args.verbose:
@@ -1963,10 +1974,7 @@ def main():
             if not cent_bins:
                 # Parse from config
                 cent_config = config.get('CentralityBins', '0,60,180').split(',')
-                cent_bins = []
-                for i in range(len(cent_config)-1):
-                    cent_bins.append(f"cent{int(float(cent_config[i]))}to{int(float(cent_config[i+1]))}")
-            
+                cent_bins = [f"cent{int(float(cent_config[i]))}to{int(float(cent_config[i+1]))}" for i in range(len(cent_config)-1)]
             for cent_bin in cent_bins:
                 cent_bin = cent_bin.strip()
                 print(f"  Processing centrality bin: {cent_bin}")
@@ -1984,7 +1992,7 @@ def main():
                     
                     if hist_config.plot_type == '1D':
                         # Use jet-specific directory if available, otherwise use default
-                        jet_specific_dir_key = f'1D_{jet_dir}'
+                        jet_specific_dir_key = f'1D_{cent_bin}_{jet_dir}'
                         if jet_specific_dir_key in output_dirs:
                             outdir = output_dirs[jet_specific_dir_key]
                         else:
@@ -1996,7 +2004,7 @@ def main():
                         plotted_count += 1
                     elif hist_config.plot_type == '2D':
                         # Use jet-specific directory if available, otherwise use default
-                        jet_specific_dir_key = f'2D_{jet_dir}'
+                        jet_specific_dir_key = f'2D_{cent_bin}_{jet_dir}'
                         if jet_specific_dir_key in output_dirs:
                             outdir = output_dirs[jet_specific_dir_key]
                         else:

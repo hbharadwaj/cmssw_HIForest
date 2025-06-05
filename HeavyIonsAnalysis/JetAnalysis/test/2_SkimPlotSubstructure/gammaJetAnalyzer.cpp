@@ -330,15 +330,18 @@ int main(int argc, char* argv[]) {
     
     std::string configFile = "../configs/JetSub_2023_PbPb_Data.config";
     std::string plotConfigFile = "../configs/PlotJetSub_2023_PbPb_Data.config";
+    std::string files = ""; // For explicit file specification (batch mode)
     bool testMode = false;
     int maxEvents = 1000;
+    std::string batchid = "";
     
     // Parse command line arguments using getopt_long
     static struct option long_options[] = {
         {"config",       required_argument, 0, 'c'},
         {"plot-config",  required_argument, 0, 'p'},
+        {"files",        required_argument, 0, 'f'},
+        {"batchid",      required_argument, 0, 'b'},
         {"test",         optional_argument, 0, 't'},
-        {"production",   no_argument,       0, 'P'},
         {"help",         no_argument,       0, 'h'},
         {0, 0, 0, 0}
     };
@@ -346,13 +349,16 @@ int main(int argc, char* argv[]) {
     int option_index = 0;
     int c;
     
-    while ((c = getopt_long(argc, argv, "c:p:t::Ph", long_options, &option_index)) != -1) {
+    while ((c = getopt_long(argc, argv, "c:p:f:b:t::h", long_options, &option_index)) != -1) {
         switch (c) {
             case 'c':
                 configFile = optarg;
                 break;
             case 'p':
                 plotConfigFile = optarg;
+                break;
+            case 'f':
+                files = optarg;
                 break;
             case 't':
                 testMode = true;
@@ -366,8 +372,8 @@ int main(int argc, char* argv[]) {
                     }
                 }
                 break;
-            case 'P':
-                testMode = false;
+            case 'b':
+                batchid = optarg;
                 break;
             case 'h':
                 printUsage();
@@ -386,6 +392,7 @@ int main(int argc, char* argv[]) {
     log(LOG_DEBUG, "Command line parsing complete:");
     log(LOG_DEBUG, "  Analysis config file: " + configFile);
     log(LOG_DEBUG, "  Plotting config file: " + plotConfigFile);
+    log(LOG_DEBUG, "  Files: " + (files.empty() ? "none (will use InputDir)" : files));
     log(LOG_DEBUG, "  Test mode: " + std::string(testMode ? "true" : "false"));
     log(LOG_DEBUG, "  Max events: " + std::to_string(maxEvents));
     
@@ -459,8 +466,9 @@ int main(int argc, char* argv[]) {
             return 1;
         }
         
-        if (inputDir.empty()) {
-            std::cerr << "Error: Input directory not specified in configuration" << std::endl;
+        // Check input specification - either files or inputDir must be provided
+        if (files.empty() && inputDir.empty()) {
+            std::cerr << "Error: Neither explicit files nor input directory specified" << std::endl;
             delete config;
             return 1;
         }
@@ -474,15 +482,37 @@ int main(int argc, char* argv[]) {
         
         // Setup input files
         TChain* chain = new TChain("jet_tree");
-        if (!setupInputChain(chain, inputDir, testMode)) {
+        
+        // Use explicit files if provided (batch mode), otherwise use directory
+        bool setupSuccess = false;
+        if (!files.empty()) {
+            log(LOG_INFO, "Using explicit file list (batch mode)");
+            std::vector<std::string> fileList = parseFileList(files);
+            setupSuccess = setupInputChain(chain, fileList, testMode);
+        } else {
+            log(LOG_INFO, "Using input directory: " + inputDir);
+            setupSuccess = setupInputChain(chain, inputDir, testMode);
+        }
+        
+        if (!setupSuccess) {
             std::cerr << "Error: Failed to setup input chain" << std::endl;
             delete chain;
             delete config;
             return 1;
         }
         
-        // Setup output file
-        std::string outputFile = outputDir + "/" + outputPrefix + "_output.root";
+        // Setup output file with unique naming for batch mode
+        std::string outputFile = outputDir + "/" + outputPrefix + "_output";
+        
+        // Add unique identifier for batch mode to prevent file conflicts
+        if (!files.empty()||!batchid.empty()) {
+            // Batch mode - add process ID to avoid filename conflicts
+            outputFile += "_batch_" + batchid;
+            log(LOG_INFO, "Batch mode detected: adding process ID to output filename");
+        }
+        
+        outputFile += ".root";
+        log(LOG_INFO, "Output file: " + outputFile);
         
         TFile* outFile = new TFile(outputFile.c_str(), "RECREATE");
         if (!outFile || outFile->IsZombie()) {
@@ -623,7 +653,12 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
     std::vector<float> *phoPhi = nullptr;
     std::vector<float> *phoHoverE = nullptr;
     std::vector<float> *phoSigmaIEtaIEta = nullptr;
-    std::vector<float> *phoIso = nullptr;
+    std::vector<float> *pho_ecalClusterIsoR3 = nullptr;
+    std::vector<float> *pho_hcalRechitIsoR3 = nullptr;
+    std::vector<float> *pho_trackIsoR3PtCut20 = nullptr;
+    std::vector<float> *pfpIso3subUEec = nullptr;
+    std::vector<float> *pfcIso3subUEec = nullptr;
+    std::vector<float> *pfnIso3subUEec = nullptr;
     std::vector<float> *phoR9 = nullptr;
     
     // MC specific variables
@@ -649,8 +684,13 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
     chain->SetBranchAddress("ggHi_phoPhi", &phoPhi);
     chain->SetBranchAddress("ggHi_phoHoverE", &phoHoverE);
     chain->SetBranchAddress("ggHi_phoSigmaIEtaIEta_2012", &phoSigmaIEtaIEta);
-    chain->SetBranchAddress("ggHi_pho_ecalClusterIsoR3", &phoIso);
-    chain->SetBranchAddress("ggHi_pho_swissCrx", &phoR9);
+    chain->SetBranchAddress("ggHi_pho_ecalClusterIsoR3", &pho_ecalClusterIsoR3);
+    chain->SetBranchAddress("ggHi_pho_hcalRechitIsoR3", &pho_hcalRechitIsoR3);
+    chain->SetBranchAddress("ggHi_pho_trackIsoR3PtCut20", &pho_trackIsoR3PtCut20);
+    chain->SetBranchAddress("ggHi_pfpIso3subUEec", &pfpIso3subUEec);
+    chain->SetBranchAddress("ggHi_pfcIso3subUEec", &pfcIso3subUEec);
+    chain->SetBranchAddress("ggHi_pfnIso3subUEec", &pfnIso3subUEec);
+    chain->SetBranchAddress("ggHi_phoR9_2012", &phoR9);
     
     // MC specific branch addresses
     if (isMC) {
@@ -724,6 +764,12 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
     float selectedPhotonPhi = 0;
     float selectedPhotonHoverE = 0;
     float selectedPhotonSigmaIEtaIEta = 0;
+    float selectedPhotonECALIso = 0;
+    float selectedPhotonHCALIso = 0;
+    float selectedPhotonTRKIso = 0;
+    float selectedPhotonPFPIso = 0;
+    float selectedPhotonPFCIso = 0;
+    float selectedPhotonPFNIso = 0;
     float selectedPhotonIso = 0;
     float selectedPhotonR9 = 0;
     
@@ -771,6 +817,12 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
     outTree->Branch("photonPhi", &selectedPhotonPhi);
     outTree->Branch("photonHoverE", &selectedPhotonHoverE);
     outTree->Branch("photonSigmaIEtaIEta", &selectedPhotonSigmaIEtaIEta);
+    outTree->Branch("photonECALIso", &selectedPhotonECALIso);
+    outTree->Branch("photonHCALIso", &selectedPhotonHCALIso);
+    outTree->Branch("photonTRKIso", &selectedPhotonTRKIso);
+    outTree->Branch("photonPFPIso", &selectedPhotonPFPIso);
+    outTree->Branch("photonPFCIso", &selectedPhotonPFCIso);
+    outTree->Branch("photonPFNIso", &selectedPhotonPFNIso);
     outTree->Branch("photonIso", &selectedPhotonIso);
     outTree->Branch("photonR9", &selectedPhotonR9);
     
@@ -934,7 +986,8 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
             }
             
             // Check isolation cut
-            bool passIso = (phoIso->at(selectedPhotonIndex) <= photonIsoMax);
+            float phoIso = pho_ecalClusterIsoR3->at(selectedPhotonIndex) + pho_hcalRechitIsoR3->at(selectedPhotonIndex) + pho_trackIsoR3PtCut20->at(selectedPhotonIndex);
+            bool passIso = (phoIso <= photonIsoMax);
             cutFlowTracker.applyCut("PhotonIsolation", passIso);
             if (!passIso) {
                 selectedPhotonIndex = -1;
@@ -1025,7 +1078,13 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
         selectedPhotonPhi = phoPhi->at(selectedPhotonIndex);
         selectedPhotonHoverE = phoHoverE->at(selectedPhotonIndex);
         selectedPhotonSigmaIEtaIEta = phoSigmaIEtaIEta->at(selectedPhotonIndex);
-        selectedPhotonIso = phoIso->at(selectedPhotonIndex);
+        selectedPhotonECALIso = pho_ecalClusterIsoR3->at(selectedPhotonIndex);
+        selectedPhotonHCALIso = pho_hcalRechitIsoR3->at(selectedPhotonIndex);
+        selectedPhotonTRKIso = pho_trackIsoR3PtCut20->at(selectedPhotonIndex);
+        selectedPhotonPFPIso = pfpIso3subUEec->at(selectedPhotonIndex);
+        selectedPhotonPFCIso = pfcIso3subUEec->at(selectedPhotonIndex);
+        selectedPhotonPFNIso = pfnIso3subUEec->at(selectedPhotonIndex);
+        selectedPhotonIso = pho_ecalClusterIsoR3->at(selectedPhotonIndex) + pho_hcalRechitIsoR3->at(selectedPhotonIndex) + pho_trackIsoR3PtCut20->at(selectedPhotonIndex);
         selectedPhotonR9 = phoR9->at(selectedPhotonIndex);
 
         // Fill histograms for this collection
@@ -1046,10 +1105,10 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
                 if (it != hist1DMap.end() && it->second) it->second->Fill(value, weight);
                 log(LOG_TRACE, "Filling 1D hist: " + centName + "/General/" + hname + " with value " + std::to_string(value));
             };
-            // auto fill2D = [&](const std::string& hname, double x, double y, double weight=1.0) {
-            //     auto it = hist2DMap.find(centName + "/General/" + hname);
-            //     if (it != hist2DMap.end() && it->second) it->second->Fill(x, y, weight);
-            // };
+            auto fill2D = [&](const std::string& hname, double x, double y, double weight=1.0) {
+                auto it = hist2DMap.find(centName + "/General/" + hname);
+                if (it != hist2DMap.end() && it->second) it->second->Fill(x, y, weight);
+            };
             // auto fillProfile = [&](const std::string& hname, double x, double y, double weight=1.0) {
             //     auto it = profileMap.find(centName + "/General/" + hname);
             //     if (it != profileMap.end() && it->second) it->second->Fill(x, y, weight);
@@ -1068,23 +1127,15 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
             fill1D("hCentrality", hiBin, eventWeight);
             // --- MC photon histograms ---
             if (isMC && selectedPhotonIndex >= 0) {
-                auto fill1Dmc = [&](const std::string& hname, double value, double weight=1.0) {
-                    auto it = hist1DMap.find(centName + "/General/" + hname);
-                    if (it != hist1DMap.end() && it->second) it->second->Fill(value, weight);
-                };
-                auto fill2Dmc = [&](const std::string& hname, double x, double y, double weight=1.0) {
-                    auto it = hist2DMap.find(centName + "/General/" + hname);
-                    if (it != hist2DMap.end() && it->second) it->second->Fill(x, y, weight);
-                };
-                if (phoGenMatchedIndex) fill1Dmc("hPhotonGenMatch", phoGenMatchedIndex->at(selectedPhotonIndex), eventWeight);
+                if (phoGenMatchedIndex) fill1D("hPhotonGenMatch", phoGenMatchedIndex->at(selectedPhotonIndex), eventWeight);
                 if (phoGenMatchedIndex && phoGenMatchedIndex->at(selectedPhotonIndex) >= 0) {
                     int genIndex = phoGenMatchedIndex->at(selectedPhotonIndex);
-                    if (mcPt && genIndex < static_cast<int>(mcPt->size())) fill1Dmc("hMCPhotonEt", mcPt->at(genIndex), eventWeight);
-                    if (mcEta && genIndex < static_cast<int>(mcEta->size())) fill1Dmc("hMCPhotonEta", mcEta->at(genIndex), eventWeight);
-                    if (mcPhi && genIndex < static_cast<int>(mcPhi->size())) fill1Dmc("hMCPhotonPhi", mcPhi->at(genIndex), eventWeight);
-                    if (mcPID && genIndex < static_cast<int>(mcPID->size())) fill1Dmc("hMCPhotonPID", mcPID->at(genIndex), eventWeight);
-                    if (mcMomPID && genIndex < static_cast<int>(mcMomPID->size())) fill1Dmc("hMCPhotonMomPID", mcMomPID->at(genIndex), eventWeight);
-                    if (mcPt && genIndex < static_cast<int>(mcPt->size())) fill2Dmc("h2PhotonGenVsReco", selectedPhotonEt, mcPt->at(genIndex), eventWeight);
+                    if (mcPt && genIndex < static_cast<int>(mcPt->size())) fill1D("hMCPhotonEt", mcPt->at(genIndex), eventWeight);
+                    if (mcEta && genIndex < static_cast<int>(mcEta->size())) fill1D("hMCPhotonEta", mcEta->at(genIndex), eventWeight);
+                    if (mcPhi && genIndex < static_cast<int>(mcPhi->size())) fill1D("hMCPhotonPhi", mcPhi->at(genIndex), eventWeight);
+                    if (mcPID && genIndex < static_cast<int>(mcPID->size())) fill1D("hMCPhotonPID", mcPID->at(genIndex), eventWeight);
+                    if (mcMomPID && genIndex < static_cast<int>(mcMomPID->size())) fill1D("hMCPhotonMomPID", mcMomPID->at(genIndex), eventWeight);
+                    if (mcPt && genIndex < static_cast<int>(mcPt->size())) fill2D("h2PhotonGenVsReco", selectedPhotonEt, mcPt->at(genIndex), eventWeight);
                 }
             }
         }
@@ -1305,6 +1356,11 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
                         fill1Djet("hPtD", selectedJetPtDs[collection], eventWeight);
                         fill1Djet("hJetEta", selectedJetEtas[collection], eventWeight);
                         
+                        //Event-level histograms
+                        fill1Djet("hNJets", jetManager.getNJets(collection), eventWeight);
+                        fill2Djet("h2JetPtVsEta", selectedJetEtas[collection], selectedJetPts[collection], eventWeight);
+                        fill2Djet("h2JetMassVsPt", selectedJetPts[collection], selectedJetMasses[collection], eventWeight);
+                        
                         // Ref jet (MC-matched) histograms
                         if (isMC && selectedRefJetPts[collection] > -900) {
                             fill1Djet("hRefPt", selectedRefJetPts[collection], eventWeight);
@@ -1321,10 +1377,6 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
                             fill1Djet("hRefThrust", selectedRefJetThrusts[collection], eventWeight);
                             fill1Djet("hRefLHA", selectedRefJetLHAs[collection], eventWeight);
                             fill1Djet("hRefPtD", selectedRefJetPtDs[collection], eventWeight);
-                            //Event-level histograms
-                            fill1Djet("hNJets", jetManager.getNJets(collection), eventWeight);
-                            fill2Djet("h2JetPtVsEta", selectedJetEtas[collection], selectedJetPts[collection], eventWeight);
-                            fill2Djet("h2JetMassVsPt", selectedJetPts[collection], selectedJetMasses[collection], eventWeight);
 
                             // 2D and profile ref jet histograms
                             fill2Djet("h2GirthVsPt", selectedJetPts[collection], selectedJetGirths[collection], eventWeight);
@@ -1475,15 +1527,15 @@ void createHistograms(TFile* outFile, const std::vector<std::string>& jetCollect
             // Only create general histograms in General dir (not per-collection)
             if (hname.find("Jet") == std::string::npos && hname.find("Ref") == std::string::npos && hname.find("Dyn") == std::string::npos && hname.find("Girth") == std::string::npos && hname.find("Thrust") == std::string::npos && hname.find("LHA") == std::string::npos && hname.find("PtD") == std::string::npos && hname.find("Xj") == std::string::npos && hname.find("DeltaPhi") == std::string::npos) {
                 if (hcfg.type == "TH1F") {
-                    TH1F* h = createHistogram1D(hcfg);
+                    TH1F* h = createHistogram1D(hcfg,"h"+hname);
                     h->SetDirectory(generalDir);
                     hist1DMap[centName + "/General/h" + hname] = h;
                 } else if (hcfg.type == "TH2F") {
-                    TH2F* h = createHistogram2D(hcfg);
+                    TH2F* h = createHistogram2D(hcfg,"h2"+hname);
                     h->SetDirectory(generalDir);
                     hist2DMap[centName + "/General/h2" + hname] = h;
                 } else if (hcfg.type == "TProfile") {
-                    TProfile* p = createProfile(hcfg);
+                    TProfile* p = createProfile(hcfg,"p"+hname);
                     p->SetDirectory(generalDir);
                     profileMap[centName + "/General/p" + hname] = p;
                 }
@@ -1499,15 +1551,15 @@ void createHistograms(TFile* outFile, const std::vector<std::string>& jetCollect
                 // Only create jet/ref-jet/substructure histograms in collection dir
                 if (hname.find("Jet") != std::string::npos || hname.find("Ref") != std::string::npos || hname.find("Dyn") != std::string::npos || hname.find("Girth") != std::string::npos || hname.find("Thrust") != std::string::npos || hname.find("LHA") != std::string::npos || hname.find("PtD") != std::string::npos || hname.find("Xj") != std::string::npos || hname.find("DeltaPhi") != std::string::npos) {
                     if (hcfg.type == "TH1F") {
-                        TH1F* h = createHistogram1D(hcfg);
+                        TH1F* h = createHistogram1D(hcfg,"h"+hname);
                         h->SetDirectory(collDir);
                         hist1DMap[centName + "/" + collection + "/h" + hname] = h;
                     } else if (hcfg.type == "TH2F") {
-                        TH2F* h = createHistogram2D(hcfg);
+                        TH2F* h = createHistogram2D(hcfg,"h2"+hname);
                         h->SetDirectory(collDir);
                         hist2DMap[centName + "/" + collection + "/h2" + hname] = h;
                     } else if (hcfg.type == "TProfile") {
-                        TProfile* p = createProfile(hcfg);
+                        TProfile* p = createProfile(hcfg,"p"+hname);
                         p->SetDirectory(collDir);
                         profileMap[centName + "/" + collection + "/p" + hname] = p;
                     }

@@ -66,6 +66,12 @@ void printUsage();
 // Sets up a ROOT TChain with input files from a directory or file.
 bool setupInputChain(TChain* chain, const std::string& inputDir, bool testMode, int maxFiles = 1);
 
+// Sets up a ROOT TChain with list of input files for batch submission
+bool setupInputChain(TChain* chain, const std::vector<std::string>& files, bool testMode, int maxFiles = 1);
+
+// Parse comma-separated file list
+std::vector<std::string> parseFileList(const std::string& fileList);
+
 // Calculates the absolute difference in phi between two angles, returned in [0, pi].
 float getDeltaPhi(float phi1, float phi2);
 
@@ -222,6 +228,64 @@ bool setupInputChain(TChain* chain, const std::string& inputDir, bool testMode, 
     }
     
     log(LOG_INFO, "Added " + std::to_string(files.size()) + " files with " + std::to_string(chain->GetEntries()) + " entries.");
+    return true;
+}
+/**
+ * Parse comma-separated file list
+ */
+ std::vector<std::string> parseFileList(const std::string& fileList) {
+    std::vector<std::string> files;
+    if (fileList.empty()) return files;
+    
+    std::stringstream ss(fileList);
+    std::string file;
+    
+    while (std::getline(ss, file, ',')) {
+        // Trim whitespace
+        file.erase(0, file.find_first_not_of(" \t"));
+        file.erase(file.find_last_not_of(" \t") + 1);
+        if (!file.empty()) {
+            files.push_back(file);
+        }
+    }
+    
+    return files;
+}
+
+/**
+ * Setup the input chain with explicit file list (for batch mode)
+*/
+bool setupInputChain(TChain* chain, const std::vector<std::string>& files, bool testMode, int maxFiles) {
+    if (!chain) return false;
+    
+    if (files.empty()) {
+        std::cerr << "Error: No files specified." << std::endl;
+        return false;
+    }
+    
+    std::vector<std::string> filesToAdd = files;
+    
+    // Limit number of files in test mode
+    if (testMode && filesToAdd.size() > static_cast<size_t>(maxFiles)) {
+        log(LOG_INFO, "Test mode: limiting to " + std::to_string(maxFiles) + " files out of " + std::to_string(filesToAdd.size()));
+        filesToAdd.resize(maxFiles);
+    }
+    
+    // Add files to chain
+    for (const auto& file : filesToAdd) {
+        log(LOG_DEBUG, "Adding file: " + file);
+        if (chain->AddFile(file.c_str()) <= 0) {
+            std::cerr << "Warning: Failed to add file to chain: " << file << std::endl;
+            continue;
+        }
+    }
+    
+    if (chain->GetEntries() <= 0) {
+        std::cerr << "Error: No entries in chain." << std::endl;
+        return false;
+    }
+    
+    log(LOG_INFO, "Added " + std::to_string(filesToAdd.size()) + " files with " + std::to_string(chain->GetEntries()) + " entries.");
     return true;
 }
 
@@ -406,7 +470,7 @@ inline void loadHistogramConfigsFromEnv(TEnv* env, PlottingConfiguration& plotCo
         HistogramConfig hcfg;
         hcfg.name = histName;
         hcfg.title = merged.count("Title") ? merged["Title"] : histName;
-        hcfg.type = merged.count("Type") ? merged["Type"] : "TH1F";
+        hcfg.type = merged.count("PlotType") ? merged["PlotType"] : "TH1F";
         hcfg.xTitle = merged.count("XTitle") ? merged["XTitle"] : "";
         hcfg.yTitle = merged.count("YTitle") ? merged["YTitle"] : "";
         hcfg.zTitle = merged.count("ZTitle") ? merged["ZTitle"] : "";
@@ -604,14 +668,16 @@ void printUsage() {
     std::cout << "Options:" << std::endl;
     std::cout << "  --config, -c FILE          Analysis config file path" << std::endl;
     std::cout << "  --plot-config, -p FILE     Plotting config file path" << std::endl;
+    std::cout << "  --files, -f LIST           Comma-separated list of input files (batch mode)" << std::endl;
     std::cout << "  --test, -t [N]             Run in test mode with N events (default: 1000)" << std::endl;
-    std::cout << "  --production               Run in production mode (all events)" << std::endl;
+    std::cout << "  --batchid, -b [N]          Run in batch mode - batch ID" << std::endl;
     std::cout << "  --help, -h                 Print this help message" << std::endl;
     std::cout << std::endl;
     std::cout << "Examples:" << std::endl;
     std::cout << "  ./gammaJetAnalyzer -c analysis.config -p plotting.config -t 10000" << std::endl;
     std::cout << "  ./gammaJetAnalyzer --config analysis.config --plot-config plotting.config --test 5000" << std::endl;
     std::cout << "  ./gammaJetAnalyzer -c analysis.config -p plotting.config --production" << std::endl;
+    std::cout << "  ./gammaJetAnalyzer -c analysis.config -p plotting.config --files file1.root,file2.root,file3.root" << std::endl;
 }
 
 /**
