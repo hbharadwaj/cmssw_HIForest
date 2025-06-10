@@ -18,8 +18,8 @@
 #include <TFile.h>
 #include <TTree.h>
 #include <TChain.h>
-#include <TH1F.h>
-#include <TH2F.h>
+#include <TH1D.h>
+#include <TH2D.h>
 #include <TProfile.h>
 #include <TDirectory.h>
 #include <TSystem.h>
@@ -41,274 +41,6 @@
 std::map<std::string, TH1*> hist1DMap;
 std::map<std::string, TH2*> hist2DMap;
 std::map<std::string, TProfile*> profileMap;
-
-// Cut Flow Tracker Class
-class CutFlowTracker {
-public:
-    struct CutInfo {
-        std::string name;
-        std::string description;
-        int passedIndividual;   // Events passing this cut individually
-        int passedSequential;   // Events passing all cuts up to this point
-        bool isActive;          // Whether this cut is enabled in config
-        
-        CutInfo(const std::string& n, const std::string& desc, bool active = true) 
-            : name(n), description(desc), passedIndividual(0), passedSequential(0), isActive(active) {}
-    };
-    
-private:
-    std::vector<CutInfo> cuts;
-    int totalEvents;
-    int currentSequentialPassed;
-    bool isMC;
-    
-public:
-    CutFlowTracker(TEnv* config) : totalEvents(0), currentSequentialPassed(0) {
-        isMC = (std::string(config->GetValue("DataType", "Data")) == "MC");
-        initializeCuts(config);
-    }
-    
-    void initializeCuts(TEnv* config) {
-        // Define all possible cuts based on config parameters
-        cuts.clear();
-        
-        // Event-level cuts
-        // RawEvents is always enabled
-        cuts.emplace_back("RawEvents", "All input events", true);
-        
-        float vzCut = config->GetValue("VzCut", -1.0);
-        if (vzCut > 0) {
-            cuts.emplace_back("VertexCut", "Vertex |z| < " + std::to_string(vzCut) + " cm", true);
-        }
-        
-        float hiHFMin = config->GetValue("HiHFCutMin", -1.0);
-        float hiHFMax = config->GetValue("HiHFCutMax", -1.0);
-        if (hiHFMin >= 0 || hiHFMax >= 0) {
-            std::string desc = "Centrality: ";
-            if (hiHFMin >= 0) desc += "HiHF > " + std::to_string(hiHFMin);
-            if (hiHFMax >= 0) desc += (hiHFMin >= 0 ? " && " : "") + std::string("HiHF < ") + std::to_string(hiHFMax);
-            cuts.emplace_back("CentralityCut", desc, true);
-        }
-        
-        // Photon cuts
-        float photonEtMin = config->GetValue("PhotonEtMin", -1.0);
-        if (photonEtMin > 0) {
-            cuts.emplace_back("PhotonKinematics", "Photon ET > " + std::to_string(photonEtMin) + " GeV", true);
-        }
-        
-        float photonEtaMax = config->GetValue("PhotonEtaMax", -1.0);
-        if (photonEtaMax > 0) {
-            cuts.emplace_back("PhotonEta", "Photon |η| < " + std::to_string(photonEtaMax), true);
-        }
-        
-        // Photon ID cuts
-        float photonHoverEMax = config->GetValue("PhotonHoverEMax", -1.0);
-        if (photonHoverEMax > 0) {
-            cuts.emplace_back("PhotonHoverE", "Photon H/E < " + std::to_string(photonHoverEMax), true);
-        }
-        
-        float photonSigmaMax = config->GetValue("PhotonSigmaIEtaIEtaMax", -1.0);
-        if (photonSigmaMax > 0) {
-            cuts.emplace_back("PhotonSigmaIEtaIEta", "Photon σ_iηiη < " + std::to_string(photonSigmaMax), true);
-        }
-        
-        float photonIsoMax = config->GetValue("PhotonIsoMax", -1.0);
-        if (photonIsoMax > 0) {
-            cuts.emplace_back("PhotonIsolation", "Photon Iso < " + std::to_string(photonIsoMax), true);
-        }
-        
-        float photonR9Min = config->GetValue("PhotonR9Min", -1.0);
-        if (photonR9Min > 0) {
-            cuts.emplace_back("PhotonR9", "Photon R9 > " + std::to_string(photonR9Min), true);
-        }
-        
-        // MC-specific photon cuts
-        if (isMC && config->GetValue("MCPhotonMatchRequired", 0)) {
-            cuts.emplace_back("MCPhotonMatch", "MC truth photon matching", true);
-        }
-        
-        // Jet cuts
-        float jetPtMin = config->GetValue("JetPtMin", -1.0);
-        if (jetPtMin > 0) {
-            cuts.emplace_back("JetKinematics", "Jet pT > " + std::to_string(jetPtMin) + " GeV", true);
-        }
-        
-        float jetEtaMax = config->GetValue("JetEtaMax", -1.0);
-        if (jetEtaMax > 0) {
-            cuts.emplace_back("JetEta", "Jet |η| < " + std::to_string(jetEtaMax), true);
-        }
-        
-        // Angular correlation cuts
-        float deltaPhiMin = config->GetValue("DeltaPhiMin", -1.0);
-        if (deltaPhiMin > 0) {
-            cuts.emplace_back("DeltaPhi", "Δφ(γ,jet) > " + std::to_string(deltaPhiMin) + " rad", true);
-        }
-        
-        float xjMin = config->GetValue("XjMin", -1.0);
-        if (xjMin > 0) {
-            cuts.emplace_back("XjCut", "xj > " + std::to_string(xjMin), true);
-        }
-        
-        cuts.emplace_back("FinalSelection", "All cuts passed", true);
-        
-        log(LOG_INFO, "CutFlowTracker initialized with " + std::to_string(cuts.size()) + " cuts");
-        for (const auto& cut : cuts) {
-            log(LOG_DEBUG, "  Cut: " + cut.name + " - " + cut.description);
-        }
-    }
-    
-    void startEvent() {
-        totalEvents++;
-        currentSequentialPassed = 0;
-    }
-    
-    void applyCut(const std::string& cutName, bool passed) {
-        auto it = std::find_if(cuts.begin(), cuts.end(), 
-                              [&cutName](const CutInfo& cut) { return cut.name == cutName; });
-        
-        if (it != cuts.end() && it->isActive) {
-            // Track individual count regardless of previous cuts
-            if (passed) {
-                it->passedIndividual++;
-            }
-            
-            // Track sequential count only if in sequence
-            size_t cutIndex = std::distance(cuts.begin(), it);
-            
-            // For the first cut or if this is the next cut after all previous cuts have passed
-            if (cutIndex == 0) {
-                // First cut - just track if it passed
-                if (passed) {
-                    it->passedSequential++;
-                    currentSequentialPassed = 1;
-                }
-            } else if (cutIndex == (size_t)currentSequentialPassed && passed) {
-                // This is the next cut in sequence and it passed
-                it->passedSequential++;
-                currentSequentialPassed++;
-            }
-            
-            // Debug log to help understand cut flow
-            log(LOG_DEBUG, "Cut '" + cutName + "' evaluated: passed=" + std::to_string(passed) + 
-                ", individual=" + std::to_string(it->passedIndividual) + 
-                ", sequential=" + std::to_string(it->passedSequential) +
-                ", currentSequentialPassed=" + std::to_string(currentSequentialPassed));
-        }
-    }
-    
-    void printCutFlow() const {
-        log(LOG_INFO, "");
-        log(LOG_INFO, "=== CUT FLOW SUMMARY ===");
-        log(LOG_INFO, "Total events processed: " + std::to_string(totalEvents));
-        log(LOG_INFO, "");
-        log(LOG_INFO, std::string(100, '-'));
-        log(LOG_INFO, "Cut Name              | Description                    | Individual        | Sequential        | Cut-to-Cut");
-        log(LOG_INFO, "                      |                                | Count    (%)      | Count    (%)      | Efficiency (%)");
-        log(LOG_INFO, std::string(100, '-'));
-        
-        for (size_t i = 0; i < cuts.size(); ++i) {
-            const auto& cut = cuts[i];
-            if (!cut.isActive) continue;
-            
-            double individualEff = totalEvents > 0 ? 100.0 * cut.passedIndividual / totalEvents : 0.0;
-            double sequentialEff = 0.0;
-            double sequentialPercentage = 0.0;
-            
-            if (i == 0) {
-                sequentialEff = 100.0; // First cut (raw events) is always 100%
-                sequentialPercentage = 100.0;
-            } else if (cuts[i-1].passedSequential > 0) {
-                sequentialEff = 100.0 * cut.passedSequential / cuts[i-1].passedSequential;
-                sequentialPercentage = 100.0 * cut.passedSequential / totalEvents; // Percentage of total events
-            }
-            
-            char buffer[250];
-            snprintf(buffer, sizeof(buffer), "%-20s | %-30s | %7d (%5.1f%%) | %7d (%5.1f%%) | %6.2f%%",
-                    cut.name.c_str(), 
-                    cut.description.substr(0, 30).c_str(),
-                    cut.passedIndividual, individualEff,
-                    cut.passedSequential, sequentialPercentage,
-                    sequentialEff);
-            
-            log(LOG_INFO, std::string(buffer));
-        }
-        
-        log(LOG_INFO, std::string(100, '-'));
-        
-        if (cuts.size() > 1 && totalEvents > 0) {
-            double overallEff = 100.0 * cuts.back().passedSequential / totalEvents;
-            log(LOG_INFO, "Overall efficiency: " + std::to_string(cuts.back().passedSequential) + 
-                         "/" + std::to_string(totalEvents) + " = " + 
-                         std::to_string(overallEff) + "%");
-        }
-        log(LOG_INFO, "");
-    }
-    
-    void saveCutFlowToFile(TFile* outFile) const {
-        if (!outFile) return;
-        
-        outFile->cd();
-        
-        // Create histogram for cut flow
-        TH1F* hCutFlow = new TH1F("hCutFlow", "Cut Flow;Cut Stage;Events", cuts.size(), 0, cuts.size());
-        TH1F* hCutFlowEfficiency = new TH1F("hCutFlowEfficiency", "Cut Flow Efficiency;Cut Stage;Efficiency (%)", cuts.size(), 0, cuts.size());
-        
-        for (size_t i = 0; i < cuts.size(); ++i) {
-            if (!cuts[i].isActive) continue;
-            
-            hCutFlow->SetBinContent(i + 1, cuts[i].passedSequential);
-            hCutFlow->GetXaxis()->SetBinLabel(i + 1, cuts[i].name.c_str());
-            
-            double efficiency = (i == 0) ? 100.0 : 
-                               (cuts[i-1].passedSequential > 0 ? 100.0 * cuts[i].passedSequential / cuts[i-1].passedSequential : 0.0);
-            hCutFlowEfficiency->SetBinContent(i + 1, efficiency);
-            hCutFlowEfficiency->GetXaxis()->SetBinLabel(i + 1, cuts[i].name.c_str());
-        }
-        
-        hCutFlow->Write();
-        hCutFlowEfficiency->Write();
-        
-        // Save cut flow table as TTree for easy access
-        TTree* cutFlowTree = new TTree("cutFlowTree", "Cut Flow Information");
-        
-        std::string cutName, cutDescription;
-        int passedIndividual, passedSequential, totalProcessed;
-        double individualEff, sequentialEff;
-        
-        cutFlowTree->Branch("cutName", &cutName);
-        cutFlowTree->Branch("cutDescription", &cutDescription); 
-        cutFlowTree->Branch("passedIndividual", &passedIndividual);
-        cutFlowTree->Branch("passedSequential", &passedSequential);
-        cutFlowTree->Branch("totalProcessed", &totalProcessed);
-        cutFlowTree->Branch("individualEfficiency", &individualEff);
-        cutFlowTree->Branch("sequentialEfficiency", &sequentialEff);
-        
-        totalProcessed = totalEvents;
-        
-        for (size_t i = 0; i < cuts.size(); ++i) {
-            const auto& cut = cuts[i];
-            if (!cut.isActive) continue;
-            
-            cutName = cut.name;
-            cutDescription = cut.description;
-            passedIndividual = cut.passedIndividual;
-            passedSequential = cut.passedSequential;
-            individualEff = totalEvents > 0 ? 100.0 * cut.passedIndividual / totalEvents : 0.0;
-            sequentialEff = (i == 0) ? 100.0 : 
-                           (cuts[i-1].passedSequential > 0 ? 100.0 * cut.passedSequential / cuts[i-1].passedSequential : 0.0);
-            
-            cutFlowTree->Fill();
-        }
-        
-        cutFlowTree->Write();
-        
-        log(LOG_INFO, "Cut flow information saved to output file");
-    }
-    
-    int getFinalEventCount() const {
-        return cuts.empty() ? 0 : cuts.back().passedSequential;
-    }
-};
 
 // Forward declarations
 void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager, TFile* outFile, const PlottingConfiguration& plotConfig, Long64_t maxEvents = -1);
@@ -642,12 +374,14 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
     createHistograms(outFile, jetCollections, centralityBins, plotConfig);
     
     // Variables for branch addresses
-    int hiBin = 0;
-    float vz = 0;
-    float hiHF = 0;
+    int hiBin = -999;
+    float vz = -999;
+    float hiHF = -999;
+
+    float rho = -999;
     
     // Photon variables - using vectors as original implementation for compatibility
-    int nPhotons = 0;
+    int nPhotons = -999;
     std::vector<float> *phoEt = nullptr;
     std::vector<float> *phoEta = nullptr;
     std::vector<float> *phoPhi = nullptr;
@@ -668,9 +402,10 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
     std::vector<float> *mcPt = nullptr;
     std::vector<float> *mcEta = nullptr;
     std::vector<float> *mcPhi = nullptr;
+    std::vector<float> *mcCalIsoDR04 = nullptr;
     
     // Event weight for MC
-    float eventWeight = 1.0;
+    float weight = 1.0;
     
     // Setup branch addresses for event variables
     chain->SetBranchAddress("hiBin", &hiBin);
@@ -678,6 +413,7 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
     chain->SetBranchAddress("hiHF", &hiHF);
     
     // Setup branch addresses for photon variables with correct ggHi_ prefix
+    chain->SetBranchAddress("ggHi_rho", &rho);
     chain->SetBranchAddress("ggHi_nPho", &nPhotons);
     chain->SetBranchAddress("ggHi_phoEt", &phoEt);
     chain->SetBranchAddress("ggHi_phoEta", &phoEta);
@@ -701,6 +437,7 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
         TBranch* mcPtBranch = chain->GetBranch("ggHi_mcPt");
         TBranch* mcEtaBranch = chain->GetBranch("ggHi_mcEta");
         TBranch* mcPhiBranch = chain->GetBranch("ggHi_mcPhi");
+        TBranch* mcCalIsoDR04Branch = chain->GetBranch("ggHi_mcCalIsoDR04");
         
         if (genMatchedBranch) {
             chain->SetBranchAddress("ggHi_pho_genMatchedIndex", &phoGenMatchedIndex);
@@ -743,11 +480,17 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
         } else {
             log(LOG_INFO, "MC branch not found: ggHi_mcPhi");
         }
+        if (mcCalIsoDR04Branch) {
+            chain->SetBranchAddress("ggHi_mcCalIsoDR04", &mcCalIsoDR04);
+            log(LOG_DEBUG, "MC branch connected: ggHi_mcCalIsoDR04");
+        } else {
+            log(LOG_INFO, "MC branch not found: ggHi_mcCalIsoDR04");
+        }
 
         // Try to set up weight branch - check if it exists
         TBranch* weightBranch = chain->GetBranch("weight");
         if (weightBranch) {
-            chain->SetBranchAddress("weight", &eventWeight);
+            chain->SetBranchAddress("weight", &weight);
             log(LOG_INFO, "Weight branch found and connected for MC events");
         } else {
             log(LOG_INFO, "No weight branch found, using weight = 1.0 for all events");
@@ -755,23 +498,31 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
     }
     
     // Output variables
-    int selectedHiBin = 0;
-    float selectedVz = 0;
-    float selectedHiHF = 0;
-    int selectedPhotonIndex = -1;
-    float selectedPhotonEt = 0;
-    float selectedPhotonEta = 0;
-    float selectedPhotonPhi = 0;
-    float selectedPhotonHoverE = 0;
-    float selectedPhotonSigmaIEtaIEta = 0;
-    float selectedPhotonECALIso = 0;
-    float selectedPhotonHCALIso = 0;
-    float selectedPhotonTRKIso = 0;
-    float selectedPhotonPFPIso = 0;
-    float selectedPhotonPFCIso = 0;
-    float selectedPhotonPFNIso = 0;
-    float selectedPhotonIso = 0;
-    float selectedPhotonR9 = 0;
+    float selectedEventWeight = -999;
+    int selectedHiBin = -999;
+    float selectedVz = -999;
+    float selectedHiHF = -999;
+    float selectedRho = -999;
+    int selectedPhotonIndex = -999;
+    float selectedPhotonEt = -999;
+    float selectedPhotonEta = -999;
+    float selectedPhotonPhi = -999;
+    float selectedPhotonHoverE = -999;
+    float selectedPhotonSigmaIEtaIEta = -999;
+    float selectedPhotonECALIso = -999;
+    float selectedPhotonHCALIso = -999;
+    float selectedPhotonTRKIso = -999;
+    float selectedPhotonPFPIso = -999;
+    float selectedPhotonPFCIso = -999;
+    float selectedPhotonPFNIso = -999;
+    float selectedPhotonIso = -999;
+    float selectedPhotonR9 = -999;
+
+    float selectedMCPhotonEt = -999;
+    float selectedMCPhotonEta = -999;
+    float selectedMCPhotonPhi = -999;
+    float selectedMCPhotonPID = -999;
+    float selectedMCPhotonIso = -999;
     
     // Jet output variables (one entry per jet collection)
     std::map<std::string, int> selectedJetIndexes;
@@ -808,9 +559,11 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
     std::map<std::string, int> selectedRefJetIntJetMultis;
     
     // Setup output tree branches
+    outTree->Branch("eventWeight", &selectedEventWeight);
     outTree->Branch("hiBin", &selectedHiBin);
     outTree->Branch("vz", &selectedVz);
     outTree->Branch("hiHF", &selectedHiHF);
+    outTree->Branch("rho", &selectedRho);
     outTree->Branch("photonIndex", &selectedPhotonIndex);
     outTree->Branch("photonEt", &selectedPhotonEt);
     outTree->Branch("photonEta", &selectedPhotonEta);
@@ -825,26 +578,34 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
     outTree->Branch("photonPFNIso", &selectedPhotonPFNIso);
     outTree->Branch("photonIso", &selectedPhotonIso);
     outTree->Branch("photonR9", &selectedPhotonR9);
+
+    if(isMC){
+        outTree->Branch("MCphotonEt", &selectedMCPhotonEt);
+        outTree->Branch("MCphotonEta", &selectedMCPhotonEta);
+        outTree->Branch("MCphotonPhi", &selectedMCPhotonPhi);
+        outTree->Branch("MCPhotonPID", &selectedMCPhotonPID);
+        outTree->Branch("MCphotonIso", &selectedMCPhotonIso);
+    }
     
     // Initialize output variables for each jet collection
     for (const auto& collection : jetCollections) {
         selectedJetIndexes[collection] = -1;
-        selectedJetPts[collection] = 0;
-        selectedJetEtas[collection] = 0;
-        selectedJetPhis[collection] = 0;
-        selectedJetMasses[collection] = 0;
-        selectedJetAreas[collection] = 0;
-        selectedJetDynSplits[collection] = 0;
-        selectedJetDynKts[collection] = 0;
-        selectedJetDynZs[collection] = 0;
-        selectedJetGirths[collection] = 0;
-        selectedJetThrusts[collection] = 0;
-        selectedJetLHAs[collection] = 0;
-        selectedJetPtDs[collection] = 0;
-        selectedJetDeltaPhis[collection] = 0;
-        selectedJetXjs[collection] = 0;
-        selectedJetDynDeltaRs[collection] = 0;
-        selectedJetIntJetMultis[collection] = 0;
+        selectedJetPts[collection] = -999;
+        selectedJetEtas[collection] = -999;
+        selectedJetPhis[collection] = -999;
+        selectedJetMasses[collection] = -999;
+        selectedJetAreas[collection] = -999;
+        selectedJetDynSplits[collection] = -999;
+        selectedJetDynKts[collection] = -999;
+        selectedJetDynZs[collection] = -999;
+        selectedJetGirths[collection] = -999;
+        selectedJetThrusts[collection] = -999;
+        selectedJetLHAs[collection] = -999;
+        selectedJetPtDs[collection] = -999;
+        selectedJetDeltaPhis[collection] = -999;
+        selectedJetXjs[collection] = -999;
+        selectedJetDynDeltaRs[collection] = -999;
+        selectedJetIntJetMultis[collection] = -999;
         
         // Create branches for each jet collection
         outTree->Branch(("jetIndex_" + collection).c_str(), &selectedJetIndexes[collection]);
@@ -894,24 +655,24 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
     int nWithJet = 0;
     int nPassed = 0;
 
-    // Initialize cut flow tracker
-    CutFlowTracker cutFlowTracker(config);
-    
+    // Initialize multi-dimensional cut flow tracker
+    MultiDimCutFlowTracker cutFlowTracker(config, centralityBins, jetCollections);
+
     for (Long64_t iEvent = 0; iEvent < nEvents; ++iEvent) {
         if (iEvent % 1000 == 0) {
             log(LOG_INFO, "Processing event " + std::to_string(iEvent) + "/" + 
             std::to_string(nEvents) + " (" + 
             std::to_string(static_cast<double>(iEvent) / nEvents * 100) + "%)");
         }
-        
         chain->GetEntry(iEvent);
         nProcessed++;
-        
-        // Reset event weight for each event (important for MC)
-        if (!isMC) {
+        float eventWeight = 1.0;
+        if (isMC){
+            eventWeight = weight * findNcoll(hiBin);
+        }
+        else{
             eventWeight = 1.0;
         }
-        
         log(LOG_TRACE, "Event " + std::to_string(iEvent) + " weight: " + std::to_string(eventWeight));
         
         // Start new event in cut flow tracker
@@ -926,17 +687,63 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
             continue;
         }
         cutFlowTracker.applyCut("VertexCut", true);
+
+        // === Fill event-level histograms after event-level cuts ===
+        auto fillEvent1D = [&](const std::string& hname, double value, double weight=1.0) {
+            auto it = hist1DMap.find("Event/" + hname);
+            if (it != hist1DMap.end() && it->second) it->second->Fill(value, weight);
+        };
+        fillEvent1D("hVz", vz, eventWeight);
+        fillEvent1D("hHiHF", hiHF, eventWeight);
+        fillEvent1D("hCentrality", hiBin, eventWeight);
+        fillEvent1D("hEventWeight", eventWeight, 1.0);
         
-        if (hiHF < hiHFCutMin || hiHF > hiHFCutMax) {
-            cutFlowTracker.applyCut("CentralityCut", false);
+        // Determine centrality bin for this event
+        std::string centBin = cutFlowTracker.getCentralityBin(hiBin, centralityBins);
+        if (centBin.empty()) {
+            log(LOG_DEBUG, "Event centrality not in any configured bin: " + std::to_string(hiBin));
             continue;
         }
-        cutFlowTracker.applyCut("CentralityCut", true);
+        cutFlowTracker.startCentralityBin(centBin);     
+        int centBinIdx = -1;
+        for (size_t i = 0; i < centralityBins.size() - 1; ++i) {
+            if (hiBin >= centralityBins[i] && hiBin < centralityBins[i+1]) {
+                centBinIdx = i;
+                break;
+                cutFlowTracker.applyCut("CentralityCut", false);
+            }
+        }
+        if(centBinIdx<0) continue;
         
-        // FIXED: Photon selection using two-stage approach with individual cut tracking
-        // Stage 1: First apply only kinematic cuts and find leading photon
+        cutFlowTracker.applyCut("CentralityCut", true);   
+        
+        std::string centName = "cent" + std::to_string(static_cast<int>(centralityBins[centBinIdx])) + "to" + std::to_string(static_cast<int>(centralityBins[centBinIdx+1]));
+        log(LOG_TRACE, "Filling histograms for " + centName + "/General/ with weight: " + std::to_string(eventWeight));
+        // General histograms
+        auto fill1D = [&](const std::string& hname, double value, double weight=1.0) {
+            outFile->cd();
+            auto it = hist1DMap.find(centName + "/General/" + hname);
+            if (it != hist1DMap.end() && it->second) it->second->Fill(value, weight);
+            log(LOG_TRACE, "Filling 1D hist: " + centName + "/General/" + hname + " with value " + std::to_string(value));
+            if (it != hist1DMap.end() && it->second) log(LOG_TRACE, "Filling 1D hist: " + centName + "/General/" + hname + " in directory " + (it->second->GetDirectory() ? it->second->GetDirectory()->GetName() : "nullptr"));
+        };
+        auto fill2D = [&](const std::string& hname, double x, double y, double weight=1.0) {
+            outFile->cd();
+            auto it = hist2DMap.find(centName + "/General/" + hname);
+            if (it != hist2DMap.end() && it->second) it->second->Fill(x, y, weight);
+        };
+        // auto fillProfile = [&](const std::string& hname, double x, double y, double weight=1.0) {
+        //     auto it = profileMap.find(centName + "/General/" + hname);
+        //     if (it != profileMap.end() && it->second) it->second->Fill(x, y, weight);
+        // };
+        
+        selectedRho = rho;
+        outFile->cd();
+        outFile->cd((centName + "/General/").c_str());
+        fill1D("hRho", rho, eventWeight);
+
+        // Photon selection (centrality-level cuts)
         std::vector<int> kinematicCandidates;
-        
         for (int iPho = 0; iPho < nPhotons; ++iPho) {
             // Apply only basic kinematic cuts
             if (phoEt->at(iPho) < photonEtMin) continue;
@@ -945,18 +752,11 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
             // Store candidate index
             kinematicCandidates.push_back(iPho);
         }
-        
-        // Track PhotonKinematics cut (ET + eta requirements)
-        if (kinematicCandidates.empty()) {
-            cutFlowTracker.applyCut("PhotonKinematics", false);
-            continue;
-        }
-        cutFlowTracker.applyCut("PhotonKinematics", true);
-        
-        // Stage 2: Find the highest ET photon among kinematic candidates
+        bool passPhotonKinematics = !kinematicCandidates.empty();
+        cutFlowTracker.applyCut("PhotonKinematics", passPhotonKinematics, centBin);
+        if (!passPhotonKinematics) continue;
         selectedPhotonIndex = -1;
         float maxPhotonEt = 0;
-        
         for (int idx : kinematicCandidates) {
             if (phoEt->at(idx) > maxPhotonEt) {
                 maxPhotonEt = phoEt->at(idx);
@@ -964,112 +764,134 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
             }
         }
         
-        // Stage 3: Apply photon ID criteria to the leading photon with individual cut tracking
-        if (selectedPhotonIndex >= 0) {
-            // Track PhotonEta cut (should pass since we selected from kinematic candidates)
-            cutFlowTracker.applyCut("PhotonEta", true);
-            
-            // Check H/E cut
-            bool passHoverE = (phoHoverE->at(selectedPhotonIndex) <= photonHoverEMax);
-            cutFlowTracker.applyCut("PhotonHoverE", passHoverE);
-            if (!passHoverE) {
-                selectedPhotonIndex = -1;
-                continue;
-            }
-            
-            // Check sigma ieta ieta cut
-            bool passSigmaIEtaIEta = (phoSigmaIEtaIEta->at(selectedPhotonIndex) <= photonSigmaIEtaIEtaMax);
-            cutFlowTracker.applyCut("PhotonSigmaIEtaIEta", passSigmaIEtaIEta);
-            if (!passSigmaIEtaIEta) {
-                selectedPhotonIndex = -1;
-                continue;
-            }
-            
-            // Check isolation cut
-            float phoIso = pho_ecalClusterIsoR3->at(selectedPhotonIndex) + pho_hcalRechitIsoR3->at(selectedPhotonIndex) + pho_trackIsoR3PtCut20->at(selectedPhotonIndex);
-            bool passIso = (phoIso <= photonIsoMax);
-            cutFlowTracker.applyCut("PhotonIsolation", passIso);
-            if (!passIso) {
-                selectedPhotonIndex = -1;
-                continue;
-            }
-            
-            // Check R9 cut
-            bool passR9 = (phoR9->at(selectedPhotonIndex) >= photonR9Min);
-            cutFlowTracker.applyCut("PhotonR9", passR9);
-            if (!passR9) {
-                selectedPhotonIndex = -1;
-                continue;
-            }
-            // MC-specific photon requirements (only if passed previous checks)
-            if (selectedPhotonIndex >= 0 && isMC && config->GetValue("MCPhotonMatchRequired", 1)) {
-                // Check if MC branches are available before using them
-                if (!phoGenMatchedIndex) {
-                    log(LOG_INFO, "MC photon matching required but ggHi_pho_genMatchedIndex branch not available. Skipping MC checks.");
+        if (selectedPhotonIndex >= 0 && isMC && config->GetValue("MCPhotonMatchRequired", 1)) {
+            // Check if MC branches are available before using them
+            if (!phoGenMatchedIndex) {
+                log(LOG_INFO, "MC photon matching required but ggHi_pho_genMatchedIndex branch not available. Skipping MC checks.");
+            } 
+            else {
+                int genMatchedIndex = phoGenMatchedIndex->at(selectedPhotonIndex);
+                if (genMatchedIndex < 0) {
+                    selectedPhotonIndex = -1;
+                    cutFlowTracker.applyCut("MCPhotonMatch", false,centBin);
                 } 
                 else {
-                    int genMatchedIndex = phoGenMatchedIndex->at(selectedPhotonIndex);
-                    if (genMatchedIndex < 0) {
-                        selectedPhotonIndex = -1;
-                        cutFlowTracker.applyCut("MCPhotonMatch", false);
-                    } 
-                    else {
-                        // Check particle ID (only if mcPID branch is available)
-                        if (mcPID) {
-                            std::string pidStr = config->GetValue("MCPhotonPID", "22");
-                            std::vector<int> validPIDs;
-                            std::stringstream ss(pidStr);
-                            int pid;
-                            while (ss >> pid) {
-                                validPIDs.push_back(pid);
-                                if (ss.peek() == ',') ss.ignore();
-                            }
-                            
-                            // Check if mcPID matches any valid PID
-                            bool validPID = false;
-                            for (int pid : validPIDs) {
-                                if (mcPID->at(genMatchedIndex) == pid) {
-                                    validPID = true;
-                                    break;
-                                }
-                            }
-                            if (!validPID) selectedPhotonIndex = -1;
+                    // Check particle ID (only if mcPID branch is available)
+                    if (mcPID) {
+                        std::string pidStr = config->GetValue("MCPhotonPID", "22");
+                        std::vector<int> validPIDs;
+                        std::stringstream ss(pidStr);
+                        int pid;
+                        while (ss >> pid) {
+                            validPIDs.push_back(pid);
+                            if (ss.peek() == ',') ss.ignore();
                         }
                         
-                        // Check mother particle ID if specified (only if mcMomPID branch is available)
-                        if (selectedPhotonIndex >= 0 && mcMomPID) {
-                            std::string momPidStr = config->GetValue("MCPhotonMomPID", "22,-999");
-                            std::vector<int> validMomPIDs;
-                            std::stringstream momSS(momPidStr);
-                            int momPid;
-                            while (momSS >> momPid) {
-                                validMomPIDs.push_back(momPid);
-                                if (momSS.peek() == ',') momSS.ignore();
+                        // Check if mcPID matches any valid PID
+                        bool validPID = false;
+                        for (int pid : validPIDs) {
+                            if (mcPID->at(genMatchedIndex) == pid) {
+                                validPID = true;
+                                break;
                             }
-                            
-                            // Check if mcMomPID matches any valid Mom PID
-                            bool validMomPID = false;
-                            for (int momPid : validMomPIDs) {
-                                if (mcMomPID->at(genMatchedIndex) == momPid) {
-                                    validMomPID = true;
-                                    cutFlowTracker.applyCut("MCPhotonMatch", true);
-                                    break;
-                                }
-                            }
-                            if (!validMomPID) selectedPhotonIndex = -1;
                         }
+                        if (!validPID) selectedPhotonIndex = -1;
                     }
+                    // Check particle isolation (only if mcCalIsoDR04 branch is available)
+                    if (mcCalIsoDR04) {
+                        float calIsoVal = config->GetValue("MCPhotonCalIsoDR04Max", 10000);
+                                                    
+                        // Check if MCIsolation is less than given value
+                        bool validMCIso = false;
+                        if (mcCalIsoDR04->at(genMatchedIndex) < calIsoVal) {
+                            validMCIso = true;
+                        }
+                        if (!validMCIso) selectedPhotonIndex = -1;
+                    }
+                    
+                    // Check mother particle ID if specified (only if mcMomPID branch is available)
+                    if (selectedPhotonIndex >= 0 && mcMomPID) {
+                        std::string momPidStr = config->GetValue("MCPhotonMomPID", "22,-999");
+                        std::vector<int> validMomPIDs;
+                        std::stringstream momSS(momPidStr);
+                        int momPid;
+                        while (momSS >> momPid) {
+                            validMomPIDs.push_back(momPid);
+                            if (momSS.peek() == ',') momSS.ignore();
+                        }
+                        
+                        // Check if mcMomPID matches any valid Mom PID
+                        bool validMomPID = false;
+                        for (int momPid : validMomPIDs) {
+                            if (mcMomPID->at(genMatchedIndex) == momPid) {
+                                validMomPID = true;
+                                cutFlowTracker.applyCut("MCPhotonMatch", true,centBin);
+                                break;
+                            }
+                        }
+                        if (!validMomPID) selectedPhotonIndex = -1;
+                    }
+                }
+            }                
+        }
+        if(selectedPhotonIndex<0) continue; //Failed MCPhoton Match
+        cutFlowTracker.applyCut("PhotonEta", true, centBin);
+        bool passHoverE = (phoHoverE->at(selectedPhotonIndex) <= photonHoverEMax);
+        cutFlowTracker.applyCut("PhotonHoverE", passHoverE, centBin);
+        bool passSigmaIEtaIEta = (phoSigmaIEtaIEta->at(selectedPhotonIndex) <= photonSigmaIEtaIEtaMax);
+        cutFlowTracker.applyCut("PhotonSigmaIEtaIEta", passSigmaIEtaIEta, centBin);
+        float phoIso = pho_ecalClusterIsoR3->at(selectedPhotonIndex) + pho_hcalRechitIsoR3->at(selectedPhotonIndex) + pho_trackIsoR3PtCut20->at(selectedPhotonIndex);
+        bool passIso = (phoIso <= photonIsoMax);
+        cutFlowTracker.applyCut("PhotonIsolation", passIso, centBin);
+        bool passR9 = (phoR9->at(selectedPhotonIndex) >= photonR9Min);
+        cutFlowTracker.applyCut("PhotonR9", passR9, centBin);
+        
+        // Photon histograms
+        outFile->cd();
+        outFile->cd((centName + "/General/").c_str());
+        fill1D("hNPhotons", nPhotons, eventWeight);
+        fill1D("hVz", vz, eventWeight);
+        fill1D("hHiHF", hiHF, eventWeight);
+        fill1D("hCentrality", hiBin, eventWeight);
+        fill1D("hPhotonEt", phoEt->at(selectedPhotonIndex), eventWeight);
+        fill1D("hPhotonEta", phoEta->at(selectedPhotonIndex), eventWeight);
+
+        if(passSigmaIEtaIEta && passIso && passR9)
+            fill1D("hPhotonHoverE", phoHoverE->at(selectedPhotonIndex), eventWeight);
+        if(passHoverE && passIso && passR9)
+            fill1D("hPhotonSigmaIEtaIEta", phoSigmaIEtaIEta->at(selectedPhotonIndex), eventWeight);
+        if(passHoverE && passSigmaIEtaIEta && passR9)
+            fill1D("hPhotonIso", phoIso, eventWeight);
+        if(passHoverE && passSigmaIEtaIEta && passIso)
+            fill1D("hPhotonR9", phoR9->at(selectedPhotonIndex), eventWeight);
+        // --- MC photon histograms ---
+        if (isMC && selectedPhotonIndex >= 0 && passHoverE && passSigmaIEtaIEta && passIso && passR9) {
+            if (phoGenMatchedIndex) fill1D("hPhotonGenMatch", phoGenMatchedIndex->at(selectedPhotonIndex), eventWeight);
+            if (phoGenMatchedIndex && phoGenMatchedIndex->at(selectedPhotonIndex) >= 0) {
+                outFile->cd();
+                outFile->cd((centName + "/General/").c_str());
+                int genIndex = phoGenMatchedIndex->at(selectedPhotonIndex);
+                if(genIndex>=0){
+                    fill1D("hMCPhotonEt", mcPt->at(genIndex), eventWeight);
+                    fill1D("hMCPhotonEta", mcEta->at(genIndex), eventWeight);
+                    fill1D("hMCPhotonPhi", mcPhi->at(genIndex), eventWeight);
+                    fill1D("hMCPhotonPID", mcPID->at(genIndex), eventWeight); 
+                    fill1D("hMCPhotonMomPID", mcMomPID->at(genIndex), eventWeight);
+                    fill2D("h2PhotonRecoEtVsGenEt", phoEt->at(selectedPhotonIndex), mcPt->at(genIndex), eventWeight);
                 }
             }
         }
         
+
+        if (!passHoverE) { selectedPhotonIndex = -1; continue; }
+        if (!passSigmaIEtaIEta) { selectedPhotonIndex = -1; continue; }
+        if (!passIso) { selectedPhotonIndex = -1; continue; }
+        if (!passR9) { selectedPhotonIndex = -1; continue; }
         // Final photon selection check
-        if (selectedPhotonIndex < 0) {
-            continue;
-        }
         nWithPhoton++;
         
         // Store selected photon information
+        selectedEventWeight = eventWeight;
         selectedHiBin = hiBin;
         selectedVz = vz;
         selectedHiHF = hiHF;
@@ -1086,58 +908,13 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
         selectedPhotonPFNIso = pfnIso3subUEec->at(selectedPhotonIndex);
         selectedPhotonIso = pho_ecalClusterIsoR3->at(selectedPhotonIndex) + pho_hcalRechitIsoR3->at(selectedPhotonIndex) + pho_trackIsoR3PtCut20->at(selectedPhotonIndex);
         selectedPhotonR9 = phoR9->at(selectedPhotonIndex);
-
-        // Fill histograms for this collection
-        int centBin = -1;
-        for (size_t i = 0; i < centralityBins.size() - 1; ++i) {
-            if (hiBin >= centralityBins[i] && hiBin < centralityBins[i+1]) {
-                centBin = i;
-                break;
-            }
-        }
-
-        if (centBin >= 0) {
-            std::string centName = "cent" + std::to_string(static_cast<int>(centralityBins[centBin])) + "to" + std::to_string(static_cast<int>(centralityBins[centBin+1]));
-            log(LOG_TRACE, "Filling histograms for " + centName + "/General/ with weight: " + std::to_string(eventWeight));
-            // General histograms
-            auto fill1D = [&](const std::string& hname, double value, double weight=1.0) {
-                auto it = hist1DMap.find(centName + "/General/" + hname);
-                if (it != hist1DMap.end() && it->second) it->second->Fill(value, weight);
-                log(LOG_TRACE, "Filling 1D hist: " + centName + "/General/" + hname + " with value " + std::to_string(value));
-            };
-            auto fill2D = [&](const std::string& hname, double x, double y, double weight=1.0) {
-                auto it = hist2DMap.find(centName + "/General/" + hname);
-                if (it != hist2DMap.end() && it->second) it->second->Fill(x, y, weight);
-            };
-            // auto fillProfile = [&](const std::string& hname, double x, double y, double weight=1.0) {
-            //     auto it = profileMap.find(centName + "/General/" + hname);
-            //     if (it != profileMap.end() && it->second) it->second->Fill(x, y, weight);
-            // };
-            // Photon histograms
-            fill1D("hPhotonEt", selectedPhotonEt, eventWeight);
-            fill1D("hPhotonEta", selectedPhotonEta, eventWeight);
-            fill1D("hPhotonHoverE", selectedPhotonHoverE, eventWeight);
-            fill1D("hPhotonSigmaIEtaIEta", selectedPhotonSigmaIEtaIEta, eventWeight);
-            fill1D("hPhotonIso", selectedPhotonIso, eventWeight);
-            fill1D("hPhotonR9", selectedPhotonR9, eventWeight);
-            fill1D("hNPhotons", nPhotons, eventWeight);
-            fill1D("hEventWeight", eventWeight, 1.0);
-            fill1D("hVz", vz, eventWeight);
-            fill1D("hHiHF", hiHF, eventWeight);
-            fill1D("hCentrality", hiBin, eventWeight);
-            // --- MC photon histograms ---
-            if (isMC && selectedPhotonIndex >= 0) {
-                if (phoGenMatchedIndex) fill1D("hPhotonGenMatch", phoGenMatchedIndex->at(selectedPhotonIndex), eventWeight);
-                if (phoGenMatchedIndex && phoGenMatchedIndex->at(selectedPhotonIndex) >= 0) {
-                    int genIndex = phoGenMatchedIndex->at(selectedPhotonIndex);
-                    if (mcPt && genIndex < static_cast<int>(mcPt->size())) fill1D("hMCPhotonEt", mcPt->at(genIndex), eventWeight);
-                    if (mcEta && genIndex < static_cast<int>(mcEta->size())) fill1D("hMCPhotonEta", mcEta->at(genIndex), eventWeight);
-                    if (mcPhi && genIndex < static_cast<int>(mcPhi->size())) fill1D("hMCPhotonPhi", mcPhi->at(genIndex), eventWeight);
-                    if (mcPID && genIndex < static_cast<int>(mcPID->size())) fill1D("hMCPhotonPID", mcPID->at(genIndex), eventWeight);
-                    if (mcMomPID && genIndex < static_cast<int>(mcMomPID->size())) fill1D("hMCPhotonMomPID", mcMomPID->at(genIndex), eventWeight);
-                    if (mcPt && genIndex < static_cast<int>(mcPt->size())) fill2D("h2PhotonGenVsReco", selectedPhotonEt, mcPt->at(genIndex), eventWeight);
-                }
-            }
+        if (isMC && selectedPhotonIndex >= 0) {
+            int genIndex = phoGenMatchedIndex->at(selectedPhotonIndex);
+            selectedMCPhotonEt = mcPt->at(genIndex);
+            selectedMCPhotonEta = mcEta->at(genIndex);
+            selectedMCPhotonPhi = mcPhi->at(genIndex);
+            selectedMCPhotonPID = mcPID->at(genIndex);
+            selectedMCPhotonIso = mcCalIsoDR04->at(genIndex);
         }
         
         // Reset jet selection for each collection
@@ -1176,53 +953,19 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
         }
         
         // Jet selection for each collection with individual cut tracking
-        bool hasSelectedJet = false;
-        std::vector<int> jetsPassingKinematics;
-        
-        // First pass: collect all jets passing kinematic cuts across all collections
+        bool hasAnySelectedJet = false;
         for (const auto& collection : jetCollections) {
+            cutFlowTracker.startJetCollection(centBin, collection);
             int nJets = jetManager.getNJets(collection);
-            
+            float maxJetPt = 0;
+            int bestJetIndex = -1;
+            bool passJetKinematics = false;
             for (int iJet = 0; iJet < nJets; ++iJet) {
                 float jetPt = jetManager.getJetPt(collection, iJet);
                 float jetEta = jetManager.getJetEta(collection, iJet);
-                
-                // Apply jet kinematic selection
                 if (jetPt >= jetPtMin && std::abs(jetEta) <= jetEtaMax) {
-                    jetsPassingKinematics.push_back(1); // At least one jet passes
-                    break; // We only need to know if any jet passes
-                }
-            }
-            if (!jetsPassingKinematics.empty()) break; // Found at least one good jet
-        }
-        
-        // Track JetKinematics cut (pT requirement only)
-        bool passJetKinematics = !jetsPassingKinematics.empty();
-        cutFlowTracker.applyCut("JetKinematics", passJetKinematics);
-        
-        // Immediately add JetEta cut - this passes together with kinematics since we checked eta in the loop above
-        cutFlowTracker.applyCut("JetEta", passJetKinematics);
-        
-        if (!passJetKinematics) {
-            continue; // Skip to next event if no jets pass
-        } 
-        else {
-            // Second pass: find the best jet among those passing cuts
-            for (const auto& collection : jetCollections) {
-                int nJets = jetManager.getNJets(collection);
-                float maxJetPt = 0;
-                int bestJetIndex = -1;
-                
-                for (int iJet = 0; iJet < nJets; ++iJet) {
-                    float jetPt = jetManager.getJetPt(collection, iJet);
-                    float jetEta = jetManager.getJetEta(collection, iJet);
+                    passJetKinematics = true;
                     float jetPhi = jetManager.getJetPhi(collection, iJet);
-                    
-                    // Apply jet selection
-                    if (jetPt < jetPtMin) continue;
-                    if (std::abs(jetEta) > jetEtaMax) continue;
-                    
-                    // Calculate delta phi between photon and jet
                     float dPhi = getDeltaPhi(selectedPhotonPhi, jetPhi);
                     
                     // Select highest pT jet passing all cuts
@@ -1231,190 +974,178 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
                         bestJetIndex = iJet;
                     }
                 }
+            }
+            cutFlowTracker.applyCut("JetKinematics", passJetKinematics, centBin, collection);
+            if (!passJetKinematics) continue;
+            if (bestJetIndex >= 0) {
                 
-                // If jet found, store its information
-                if (bestJetIndex >= 0) {
-                    hasSelectedJet = true;
-                    selectedJetIndexes[collection] = bestJetIndex;
-                    
-                    // Retrieve jet properties with bounds checking
-                    selectedJetPts[collection] = jetManager.getJetPt(collection, bestJetIndex);
-                    selectedJetEtas[collection] = jetManager.getJetEta(collection, bestJetIndex);
-                    selectedJetPhis[collection] = jetManager.getJetPhi(collection, bestJetIndex);
-                    selectedJetMasses[collection] = jetManager.getJetMass(collection, bestJetIndex);
-                    selectedJetAreas[collection] = jetManager.getJetArea(collection, bestJetIndex);
-                    
-                    // Jet substructure variables with validation
-                    selectedJetDynSplits[collection] = jetManager.getJetDynSplit(collection, bestJetIndex);
-                    selectedJetDynKts[collection] = jetManager.getJetDynKt(collection, bestJetIndex);
-                    selectedJetDynZs[collection] = jetManager.getJetDynZ(collection, bestJetIndex);
-                    selectedJetGirths[collection] = jetManager.getJetGirth(collection, bestJetIndex);
-                    selectedJetThrusts[collection] = jetManager.getJetThrust(collection, bestJetIndex);
-                    selectedJetLHAs[collection] = jetManager.getJetLHA(collection, bestJetIndex);
-                    selectedJetPtDs[collection] = jetManager.getJetPtD(collection, bestJetIndex);
-                    selectedJetDynDeltaRs[collection] = jetManager.getJetDynDeltaR(collection, bestJetIndex);
-                    selectedJetIntJetMultis[collection] = jetManager.getJetIntJetMulti(collection, bestJetIndex);
-                    
-                    // Retrieve ref jet properties (MC-matched jets)
-                    selectedRefJetPts[collection] = jetManager.getRefJetPt(collection, bestJetIndex);
-                    selectedRefJetEtas[collection] = jetManager.getRefJetEta(collection, bestJetIndex);
-                    selectedRefJetPhis[collection] = jetManager.getRefJetPhi(collection, bestJetIndex);
-                    selectedRefJetMasses[collection] = jetManager.getRefJetMass(collection, bestJetIndex);
-                    selectedRefJetAreas[collection] = jetManager.getRefJetArea(collection, bestJetIndex);
-                    selectedRefJetDynSplits[collection] = jetManager.getRefJetDynSplit(collection, bestJetIndex);
-                    selectedRefJetDynKts[collection] = jetManager.getRefJetDynKt(collection, bestJetIndex);
-                    selectedRefJetDynZs[collection] = jetManager.getRefJetDynZ(collection, bestJetIndex);
-                    selectedRefJetGirths[collection] = jetManager.getRefJetGirth(collection, bestJetIndex);
-                    selectedRefJetThrusts[collection] = jetManager.getRefJetThrust(collection, bestJetIndex);
-                    selectedRefJetLHAs[collection] = jetManager.getRefJetLHA(collection, bestJetIndex);
-                    selectedRefJetPtDs[collection] = jetManager.getRefJetPtD(collection, bestJetIndex);
-                    selectedRefJetDynDeltaRs[collection] = jetManager.getRefJetDynDeltaR(collection, bestJetIndex);
-                    selectedRefJetIntJetMultis[collection] = jetManager.getRefJetIntJetMulti(collection, bestJetIndex);
-                } else {
-                    // Reset values when no jet is found
-                    selectedJetPts[collection] = -999;
-                    selectedJetEtas[collection] = -999;
-                    selectedJetPhis[collection] = -999;
-                    selectedJetMasses[collection] = -999;
-                    selectedJetAreas[collection] = -999;
-                    selectedJetDynSplits[collection] = -999;
-                    selectedJetDynKts[collection] = -999;
-                    selectedJetDynZs[collection] = -999;
-                    selectedJetGirths[collection] = -999;
-                    selectedJetThrusts[collection] = -999;
-                    selectedJetLHAs[collection] = -999;
-                    selectedJetPtDs[collection] = -999;
-                }
-                
-                // Calculate correlation variables
-                selectedJetDeltaPhis[collection] = getDeltaPhi(selectedPhotonPhi, selectedJetPhis[collection]);
-                selectedJetXjs[collection] = getXj(selectedJetPts[collection], selectedPhotonEt);
-                
+                selectedJetDeltaPhis[collection] = getDeltaPhi(selectedPhotonPhi, jetManager.getJetPhi(collection, bestJetIndex));
                 // Check and apply DeltaPhi cut if configured
                 float deltaPhiMin = config->GetValue("DeltaPhiMin", -1.0);
                 if (deltaPhiMin > 0) {
                     bool passDeltaPhi = selectedJetDeltaPhis[collection] >= deltaPhiMin;
-                    cutFlowTracker.applyCut("DeltaPhi", passDeltaPhi);
-                    
-                    // Skip jets not passing delta phi cut
-                    if (!passDeltaPhi) {
-                        selectedJetIndexes[collection] = -1;
-                    }
+                    cutFlowTracker.applyCut("DeltaPhi", passDeltaPhi, centBin, collection);
+                    if (!passDeltaPhi) { selectedJetIndexes[collection] = -1; continue; }
                 }
                 
+                selectedJetXjs[collection] = getXj(jetManager.getJetPt(collection, bestJetIndex), selectedPhotonEt);
+
                 // Check and apply XJ cut if configured
                 float xjMin = config->GetValue("XjMin", -1.0);
                 if (xjMin > 0) {
                     bool passXj = selectedJetXjs[collection] >= xjMin;
-                    cutFlowTracker.applyCut("XjCut", passXj);
-                    
-                    // Skip jets not passing xj cut
-                    if (!passXj) {
-                        selectedJetIndexes[collection] = -1;
-                    }
+                    cutFlowTracker.applyCut("XjCut", passXj, centBin, collection);
+                    if (!passXj) { selectedJetIndexes[collection] = -1; continue; }
                 }
+                selectedJetIndexes[collection] = bestJetIndex;
+                selectedJetPts[collection] = jetManager.getJetPt(collection, bestJetIndex);
+                selectedJetEtas[collection] = jetManager.getJetEta(collection, bestJetIndex);
+                selectedJetPhis[collection] = jetManager.getJetPhi(collection, bestJetIndex);
+                selectedJetMasses[collection] = jetManager.getJetMass(collection, bestJetIndex);
+                selectedJetAreas[collection] = jetManager.getJetArea(collection, bestJetIndex);
+                selectedJetDynSplits[collection] = jetManager.getJetDynSplit(collection, bestJetIndex);
+                selectedJetDynKts[collection] = jetManager.getJetDynKt(collection, bestJetIndex);
+                selectedJetDynZs[collection] = jetManager.getJetDynZ(collection, bestJetIndex);
+                selectedJetGirths[collection] = jetManager.getJetGirth(collection, bestJetIndex);
+                selectedJetThrusts[collection] = jetManager.getJetThrust(collection, bestJetIndex);
+                selectedJetLHAs[collection] = jetManager.getJetLHA(collection, bestJetIndex);
+                selectedJetPtDs[collection] = jetManager.getJetPtD(collection, bestJetIndex);
+                selectedJetDynDeltaRs[collection] = jetManager.getJetDynDeltaR(collection, bestJetIndex);
+                selectedJetIntJetMultis[collection] = jetManager.getJetIntJetMulti(collection, bestJetIndex);
+                selectedRefJetPts[collection] = jetManager.getRefJetPt(collection, bestJetIndex);
+                selectedRefJetEtas[collection] = jetManager.getRefJetEta(collection, bestJetIndex);
+                selectedRefJetPhis[collection] = jetManager.getRefJetPhi(collection, bestJetIndex);
+                selectedRefJetMasses[collection] = jetManager.getRefJetMass(collection, bestJetIndex);
+                selectedRefJetAreas[collection] = jetManager.getRefJetArea(collection, bestJetIndex);
+                selectedRefJetDynSplits[collection] = jetManager.getRefJetDynSplit(collection, bestJetIndex);
+                selectedRefJetDynKts[collection] = jetManager.getRefJetDynKt(collection, bestJetIndex);
+                selectedRefJetDynZs[collection] = jetManager.getRefJetDynZ(collection, bestJetIndex);
+                selectedRefJetGirths[collection] = jetManager.getRefJetGirth(collection, bestJetIndex);
+                selectedRefJetThrusts[collection] = jetManager.getRefJetThrust(collection, bestJetIndex);
+                selectedRefJetLHAs[collection] = jetManager.getRefJetLHA(collection, bestJetIndex);
+                selectedRefJetPtDs[collection] = jetManager.getRefJetPtD(collection, bestJetIndex);
+                selectedRefJetDynDeltaRs[collection] = jetManager.getRefJetDynDeltaR(collection, bestJetIndex);
+                selectedRefJetIntJetMultis[collection] = jetManager.getRefJetIntJetMulti(collection, bestJetIndex);
                 
-                if (centBin >= 0) {
-                    std::string centName = "cent" + std::to_string(static_cast<int>(centralityBins[centBin])) + 
-                                         "to" + std::to_string(static_cast<int>(centralityBins[centBin+1]));
-                    
-                    log(LOG_TRACE, "Filling histograms for " + collection + "/" + centName + 
-                        " with weight: " + std::to_string(eventWeight));
-                    
-                    // Navigate to subdirectory and fill histograms with weights
-                    auto fill1Djet = [&](const std::string& hname, double value, double weight=1.0) {
-                        auto it = hist1DMap.find(centName + "/" + collection + "/" + hname);
-                        if (it != hist1DMap.end() && it->second) it->second->Fill(value, weight);
-                    };
-                    auto fill2Djet = [&](const std::string& hname, double x, double y, double weight=1.0) {
-                        auto it = hist2DMap.find(centName + "/" + collection + "/" + hname);
-                        if (it != hist2DMap.end() && it->second) it->second->Fill(x, y, weight);
-                    };
-                    auto fillProfilejet = [&](const std::string& hname, double x, double y, double weight=1.0) {
-                        auto it = profileMap.find(centName + "/" + collection + "/" + hname);
-                        if (it != profileMap.end() && it->second) it->second->Fill(x, y, weight);
-                    };
+                log(LOG_TRACE, "Filling histograms for " + collection + "/" + centName + 
+                    " with weight: " + std::to_string(eventWeight));
+                
+                // Navigate to subdirectory and fill histograms with weights
+                auto fill1Djet = [&](const std::string& hname, double value, double weight=1.0) {
                     outFile->cd();
-                    if (outFile->cd((centName + "/" + collection).c_str())) {
-                        fill1Djet("hJetPt", selectedJetPts[collection], eventWeight);
-                        fill1Djet("hJetEta", selectedJetEtas[collection], eventWeight);
-                        fill1Djet("hJetPhi", selectedJetDeltaPhis[collection], eventWeight);
-                        fill1Djet("hDeltaPhi", selectedJetDeltaPhis[collection], eventWeight);
-                        fill1Djet("hXj", selectedJetXjs[collection], eventWeight);
+                    auto it = hist1DMap.find(centName + "/" + collection + "/" + hname);
+                    if (it != hist1DMap.end() && it->second) it->second->Fill(value, weight);
+                };
+                auto fill2Djet = [&](const std::string& hname, double x, double y, double weight=1.0) {
+                    outFile->cd();
+                    auto it = hist2DMap.find(centName + "/" + collection + "/" + hname);
+                    if (it != hist2DMap.end() && it->second) it->second->Fill(x, y, weight);
+                };
+                auto fillProfilejet = [&](const std::string& hname, double x, double y, double weight=1.0) {
+                    auto it = profileMap.find(centName + "/" + collection + "/" + hname);
+                    if (it != profileMap.end() && it->second) it->second->Fill(x, y, weight);
+                };
+                outFile->cd();
+                if (outFile->cd((centName + "/" + collection).c_str())) {
+                    fill1Djet("hJetPt", selectedJetPts[collection], eventWeight);
+                    fill1Djet("hJetEta", selectedJetEtas[collection], eventWeight);
+                    fill1Djet("hJetPhi", selectedJetPhis[collection], eventWeight);
+                    fill1Djet("hDeltaPhi", selectedJetDeltaPhis[collection], eventWeight);
+                    fill1Djet("hJetXj", selectedJetXjs[collection], eventWeight);
 
-                        // Jet observables histograms                        
-                        fill1Djet("hJetMass", selectedJetMasses[collection], eventWeight);
-                        fill1Djet("hJetArea", selectedJetAreas[collection], eventWeight);
-                        fill1Djet("hDynDeltaR", selectedJetDynDeltaRs[collection], eventWeight);
-                        fill1Djet("hIntJetMulti", selectedJetIntJetMultis[collection], eventWeight);
-                        fill1Djet("hDynSplit", selectedJetDynSplits[collection], eventWeight);
-                        fill1Djet("hDynKt", selectedJetDynKts[collection], eventWeight);
-                        fill1Djet("hDynZ", selectedJetDynZs[collection], eventWeight);
-                        fill1Djet("hGirth", selectedJetGirths[collection], eventWeight);
-                        fill1Djet("hThrust", selectedJetThrusts[collection], eventWeight);
-                        fill1Djet("hLHA", selectedJetLHAs[collection], eventWeight);
-                        fill1Djet("hPtD", selectedJetPtDs[collection], eventWeight);
-                        fill1Djet("hJetEta", selectedJetEtas[collection], eventWeight);
-                        
-                        //Event-level histograms
-                        fill1Djet("hNJets", jetManager.getNJets(collection), eventWeight);
-                        fill2Djet("h2JetPtVsEta", selectedJetEtas[collection], selectedJetPts[collection], eventWeight);
-                        fill2Djet("h2JetMassVsPt", selectedJetPts[collection], selectedJetMasses[collection], eventWeight);
-                        
-                        // Ref jet (MC-matched) histograms
-                        if (isMC && selectedRefJetPts[collection] > -900) {
-                            fill1Djet("hRefPt", selectedRefJetPts[collection], eventWeight);
-                            fill1Djet("hRefEta", selectedRefJetEtas[collection], eventWeight);
-                            fill1Djet("hRefPhi", selectedRefJetPhis[collection], eventWeight);
-                            fill1Djet("hRefMass", selectedRefJetMasses[collection], eventWeight);
-                            fill1Djet("hRefArea", selectedRefJetAreas[collection], eventWeight);
-                            fill1Djet("hRefDynDeltaR", selectedRefJetDynDeltaRs[collection], eventWeight);
-                            fill1Djet("hRefIntJetMulti", selectedRefJetIntJetMultis[collection], eventWeight);
-                            fill1Djet("hRefDynSplit", selectedRefJetDynSplits[collection], eventWeight);
-                            fill1Djet("hRefDynKt", selectedRefJetDynKts[collection], eventWeight);
-                            fill1Djet("hRefDynZ", selectedRefJetDynZs[collection], eventWeight);
-                            fill1Djet("hRefGirth", selectedRefJetGirths[collection], eventWeight);
-                            fill1Djet("hRefThrust", selectedRefJetThrusts[collection], eventWeight);
-                            fill1Djet("hRefLHA", selectedRefJetLHAs[collection], eventWeight);
-                            fill1Djet("hRefPtD", selectedRefJetPtDs[collection], eventWeight);
+                    // Jet observables histograms                        
+                    fill1Djet("hJetMass", selectedJetMasses[collection], eventWeight);
+                    fill1Djet("hJetArea", selectedJetAreas[collection], eventWeight);
+                    fill1Djet("hJetDynDeltaR", selectedJetDynDeltaRs[collection], eventWeight);
+                    fill1Djet("hIntJetMulti", selectedJetIntJetMultis[collection], eventWeight);
+                    fill1Djet("hJetDynSplit", selectedJetDynSplits[collection], eventWeight);
+                    fill1Djet("hJetDynKt", selectedJetDynKts[collection], eventWeight);
+                    fill1Djet("hJetDynZ", selectedJetDynZs[collection], eventWeight);
+                    fill1Djet("hJetGirth", selectedJetGirths[collection], eventWeight);
+                    fill1Djet("hJetThrust", selectedJetThrusts[collection], eventWeight);
+                    fill1Djet("hJetLHA", selectedJetLHAs[collection], eventWeight);
+                    fill1Djet("hJetPtD", selectedJetPtDs[collection], eventWeight);
+                    
+                    fill1Djet("hNJets", jetManager.getNJets(collection), eventWeight);
+                    fill2Djet("h2JetEtaVsJetPt", selectedJetEtas[collection], selectedJetPts[collection], eventWeight);
+                    fill2Djet("h2JetPhiVsJetEta", selectedJetPhis[collection], selectedJetEtas[collection], eventWeight);
 
-                            // 2D and profile ref jet histograms
-                            fill2Djet("h2GirthVsPt", selectedJetPts[collection], selectedJetGirths[collection], eventWeight);
-                            fill2Djet("h2ThrustVsPt", selectedJetPts[collection], selectedJetThrusts[collection], eventWeight);
-                            fill2Djet("h2PtDVsPt", selectedJetEtas[collection], selectedJetPtDs[collection], eventWeight);
-                            fillProfilejet("pGirthVsPt", selectedJetPts[collection], selectedJetGirths[collection], eventWeight);
-                            fillProfilejet("pThrustVsPt", selectedJetPts[collection], selectedJetThrusts[collection], eventWeight);
-                            fillProfilejet("pPtDVsPt", selectedJetPts[collection], selectedJetPtDs[collection], eventWeight);
-                            fill2Djet("h2RefJetPtVsEta", selectedRefJetEtas[collection], selectedRefJetPts[collection], eventWeight);
-                            fill2Djet("h2RefJetMassVsPt", selectedRefJetPts[collection], selectedRefJetMasses[collection], eventWeight);
-                            fill2Djet("h2RefGirthVsPt", selectedRefJetPts[collection], selectedRefJetGirths[collection], eventWeight);
-                            fill2Djet("h2RefThrustVsPt", selectedRefJetPts[collection], selectedRefJetThrusts[collection], eventWeight);
-                            fill2Djet("h2RefPtDVsPt", selectedRefJetPts[collection], selectedRefJetPtDs[collection], eventWeight);
-                            // Reco vs Ref correlation
-                            fill2Djet("h2JetVsRefPt", selectedRefJetPts[collection], selectedJetPts[collection], eventWeight);
-                            fill2Djet("h2JetVsRefMass", selectedRefJetMasses[collection], selectedJetMasses[collection], eventWeight);
-                            fill2Djet("h2JetVsRefGirth", selectedRefJetGirths[collection], selectedJetGirths[collection], eventWeight);
-                            fill2Djet("h2JetVsRefThrust", selectedRefJetThrusts[collection], selectedJetThrusts[collection], eventWeight);
-                            fill2Djet("h2JetVsRefPtD", selectedRefJetPtDs[collection], selectedJetPtDs[collection], eventWeight);
-                            // Ref jet profiles
-                            fillProfilejet("pRefGirthVsPt", selectedRefJetPts[collection], selectedRefJetGirths[collection], eventWeight);
-                            fillProfilejet("pRefThrustVsPt", selectedRefJetPts[collection], selectedRefJetThrusts[collection], eventWeight);
-                            fillProfilejet("pRefPtDVsPt", selectedRefJetPts[collection], selectedRefJetPtDs[collection], eventWeight);
-                        }
+                    fill2Djet("h2JetPtVsJetMass", selectedJetPts[collection], selectedJetMasses[collection], eventWeight);                    
+                    fill2Djet("h2JetPtVsJetGirth", selectedJetPts[collection], selectedJetGirths[collection], eventWeight);
+                    fill2Djet("h2JetPtVsJetThrust", selectedJetPts[collection], selectedJetThrusts[collection], eventWeight);
+                    fill2Djet("h2JetPtVsJetPtD", selectedJetPts[collection], selectedJetPtDs[collection], eventWeight);
+                    // fillProfilejet("pGirthVsPt", selectedJetPts[collection], selectedJetGirths[collection], eventWeight);
+                    // fillProfilejet("pThrustVsPt", selectedJetPts[collection], selectedJetThrusts[collection], eventWeight);
+                    // fillProfilejet("pPtDVsPt", selectedJetPts[collection], selectedJetPtDs[collection], eventWeight);
+                    
+                    // Ref jet (MC-matched) histograms
+                    if (isMC && selectedRefJetPts[collection] > -900) {
+                        fill1Djet("hRefPt", selectedRefJetPts[collection], eventWeight);
+                        fill1Djet("hRefEta", selectedRefJetEtas[collection], eventWeight);
+                        fill1Djet("hRefPhi", selectedRefJetPhis[collection], eventWeight);
+                        fill1Djet("hRefMass", selectedRefJetMasses[collection], eventWeight);
+                        fill1Djet("hRefArea", selectedRefJetAreas[collection], eventWeight);
+                        fill1Djet("hRefDynDeltaR", selectedRefJetDynDeltaRs[collection], eventWeight);
+                        fill1Djet("hRefIntJetMulti", selectedRefJetIntJetMultis[collection], eventWeight);
+                        fill1Djet("hRefDynSplit", selectedRefJetDynSplits[collection], eventWeight);
+                        fill1Djet("hRefDynKt", selectedRefJetDynKts[collection], eventWeight);
+                        fill1Djet("hRefDynZ", selectedRefJetDynZs[collection], eventWeight);
+                        fill1Djet("hRefGirth", selectedRefJetGirths[collection], eventWeight);
+                        fill1Djet("hRefThrust", selectedRefJetThrusts[collection], eventWeight);
+                        fill1Djet("hRefLHA", selectedRefJetLHAs[collection], eventWeight);
+                        fill1Djet("hRefPtD", selectedRefJetPtDs[collection], eventWeight);
+
+                        // 2D and profile ref jet histograms
+                        fill2Djet("h2RefJetEtaVsRefJetPt", selectedRefJetEtas[collection], selectedRefJetPts[collection], eventWeight);
+                        fill2Djet("h2RefJetPtVsRefJetMass", selectedRefJetPts[collection], selectedRefJetMasses[collection], eventWeight);
+                        fill2Djet("h2RefJetPtVsRefJetGirth", selectedRefJetPts[collection], selectedRefJetGirths[collection], eventWeight);
+                        fill2Djet("h2RefJetPtVsRefJetThrust", selectedRefJetPts[collection], selectedRefJetThrusts[collection], eventWeight);
+                        fill2Djet("h2RefJetPtVsRefJetPtD", selectedRefJetPts[collection], selectedRefJetPtDs[collection], eventWeight);
+                        // Reco vs Ref correlation (new convention)
+                        fill2Djet("h2JetPtVsRefPt", selectedJetPts[collection], selectedRefJetPts[collection], eventWeight);
+                        fill2Djet("h2JetMassVsRefMass", selectedJetMasses[collection], selectedRefJetMasses[collection], eventWeight);
+                        fill2Djet("h2JetGirthVsRefGirth", selectedJetGirths[collection], selectedRefJetGirths[collection], eventWeight);
+                        fill2Djet("h2JetThrustVsRefThrust", selectedJetThrusts[collection], selectedRefJetThrusts[collection], eventWeight);
+                        fill2Djet("h2JetLHAVsRefLHA", selectedJetLHAs[collection], selectedRefJetLHAs[collection], eventWeight);
+                        fill2Djet("h2JetPtDVsRefPtD", selectedJetPtDs[collection], selectedRefJetPtDs[collection], eventWeight);
+                        // Jet resolution histograms (Reco-Gen)/Gen
+                        // if(selectedRefJetPts[collection]>=60 && selectedRefJetPts[collection]<120){
+                            outFile->cd();
+                            if (selectedRefJetPts[collection] != 0)
+                                fill1Djet("hJetPtRes", (selectedJetPts[collection] - selectedRefJetPts[collection]) / selectedRefJetPts[collection], eventWeight);
+                            if (selectedRefJetMasses[collection] != 0)
+                                fill1Djet("hJetMassRes", (selectedJetMasses[collection] - selectedRefJetMasses[collection]) / selectedRefJetMasses[collection], eventWeight);
+                            if (selectedRefJetGirths[collection] != 0)
+                                fill1Djet("hJetGirthRes", (selectedJetGirths[collection] - selectedRefJetGirths[collection]) / selectedRefJetGirths[collection], eventWeight);
+                            if (selectedRefJetThrusts[collection] != 0)
+                                fill1Djet("hJetThrustRes", (selectedJetThrusts[collection] - selectedRefJetThrusts[collection]) / selectedRefJetThrusts[collection], eventWeight);
+                            if (selectedRefJetLHAs[collection] != 0)
+                                fill1Djet("hJetLHARes", (selectedJetLHAs[collection] - selectedRefJetLHAs[collection]) / selectedRefJetLHAs[collection], eventWeight);
+                            if (selectedRefJetPtDs[collection] != 0)
+                                fill1Djet("hJetPtDRes", (selectedJetPtDs[collection] - selectedRefJetPtDs[collection]) / selectedRefJetPtDs[collection], eventWeight);
+                            if (selectedRefJetDynKts[collection] != 0)
+                                fill1Djet("hJetDynKtRes", (selectedJetDynKts[collection] - selectedRefJetDynKts[collection]) / selectedRefJetDynKts[collection], eventWeight);
+                            if (selectedRefJetDynDeltaRs[collection] != 0)
+                                fill1Djet("hJetDynDeltaRRes", (selectedJetDynDeltaRs[collection] - selectedRefJetDynDeltaRs[collection]) / selectedRefJetDynDeltaRs[collection], eventWeight);
+                            if (selectedRefJetDynZs[collection] != 0)
+                                fill1Djet("hJetDynZRes", (selectedJetDynZs[collection] - selectedRefJetDynZs[collection]) / selectedRefJetDynZs[collection], eventWeight);
+                        // }
                     }
-                        
                 }
+                bool passJetSelection = (selectedJetIndexes[collection] >= 0);
+                cutFlowTracker.applyCut("JetSelection", passJetSelection, centBin, collection);
+                if (passJetSelection) {
+                    hasAnySelectedJet = true;
+                    cutFlowTracker.applyCut("FinalSelection", true, centBin, collection);
+                } else {
+                    cutFlowTracker.applyCut("FinalSelection", false, centBin, collection);
+                }
+            } else {
+                cutFlowTracker.applyCut("JetSelection", false, centBin, collection);
+                cutFlowTracker.applyCut("FinalSelection", false, centBin, collection);
             }
-            
-            // Track final JetSelection based on whether we found any jet
-            cutFlowTracker.applyCut("JetSelection", hasSelectedJet);
         }
-        
-        // Final determination if event passes all cuts (photon and at least one good jet)
-        bool passFinalSelection = hasSelectedJet;
-        cutFlowTracker.applyCut("FinalSelection", passFinalSelection);
-        
-        if (passFinalSelection) {
+        if (hasAnySelectedJet) {
             nWithJet++;
             
             // Fill output tree
@@ -1426,20 +1157,8 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
     // Write output tree
     outFile->cd();
     outTree->Write();
-    
-    // Write all histograms explicitly
     log(LOG_INFO, "Writing histograms to file...");
-    // for (const auto& collection : jetCollections) {
-    //     TDirectory* collectionDir = outFile->GetDirectory(collection.c_str());
-    //     if (collectionDir) {
-    //         log(LOG_DEBUG, "Writing histograms for collection: " + collection);
-    //         collectionDir->Write("", TObject::kOverwrite);
-    //     }
-    // }
-    
-    // Force write everything
     outFile->Write("", TObject::kOverwrite);
-    
     log(LOG_INFO, "All histograms written successfully.");
     
     // Print summary
@@ -1458,7 +1177,6 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
     outFile->cd(); // Make sure we're in the right directory
     cutFlowTracker.saveCutFlowToFile(outFile);
 }
-
 
 /**
  * Create histograms for output
@@ -1524,14 +1242,14 @@ void createHistograms(TFile* outFile, const std::vector<std::string>& jetCollect
             const std::string& hname = kv.first;
             const HistogramConfig& hcfg = kv.second;
             log(LOG_TRACE, "Creating hist: " + centName + "/General/" + hname);
-            // Only create general histograms in General dir (not per-collection)
-            if (hname.find("Jet") == std::string::npos && hname.find("Ref") == std::string::npos && hname.find("Dyn") == std::string::npos && hname.find("Girth") == std::string::npos && hname.find("Thrust") == std::string::npos && hname.find("LHA") == std::string::npos && hname.find("PtD") == std::string::npos && hname.find("Xj") == std::string::npos && hname.find("DeltaPhi") == std::string::npos) {
-                if (hcfg.type == "TH1F") {
-                    TH1F* h = createHistogram1D(hcfg,"h"+hname);
+            // Use config-driven classification
+            if (plotConfig.generalHistograms.count(hname)) {
+                if (hcfg.type == "TH1D") {
+                    TH1D* h = createHistogram1D(hcfg,"h"+hname);
                     h->SetDirectory(generalDir);
                     hist1DMap[centName + "/General/h" + hname] = h;
-                } else if (hcfg.type == "TH2F") {
-                    TH2F* h = createHistogram2D(hcfg,"h2"+hname);
+                } else if (hcfg.type == "TH2D") {
+                    TH2D* h = createHistogram2D(hcfg,"h2"+hname);
                     h->SetDirectory(generalDir);
                     hist2DMap[centName + "/General/h2" + hname] = h;
                 } else if (hcfg.type == "TProfile") {
@@ -1548,14 +1266,13 @@ void createHistograms(TFile* outFile, const std::vector<std::string>& jetCollect
             for (const auto& kv : plotConfig.histogramConfigs) {
                 const std::string& hname = kv.first;
                 const HistogramConfig& hcfg = kv.second;
-                // Only create jet/ref-jet/substructure histograms in collection dir
-                if (hname.find("Jet") != std::string::npos || hname.find("Ref") != std::string::npos || hname.find("Dyn") != std::string::npos || hname.find("Girth") != std::string::npos || hname.find("Thrust") != std::string::npos || hname.find("LHA") != std::string::npos || hname.find("PtD") != std::string::npos || hname.find("Xj") != std::string::npos || hname.find("DeltaPhi") != std::string::npos) {
-                    if (hcfg.type == "TH1F") {
-                        TH1F* h = createHistogram1D(hcfg,"h"+hname);
+                if (plotConfig.jetHistograms.count(hname)) {
+                    if (hcfg.type == "TH1D") {
+                        TH1D* h = createHistogram1D(hcfg,"h"+hname);
                         h->SetDirectory(collDir);
                         hist1DMap[centName + "/" + collection + "/h" + hname] = h;
-                    } else if (hcfg.type == "TH2F") {
-                        TH2F* h = createHistogram2D(hcfg,"h2"+hname);
+                    } else if (hcfg.type == "TH2D") {
+                        TH2D* h = createHistogram2D(hcfg,"h2"+hname);
                         h->SetDirectory(collDir);
                         hist2DMap[centName + "/" + collection + "/h2" + hname] = h;
                     } else if (hcfg.type == "TProfile") {
@@ -1568,6 +1285,32 @@ void createHistograms(TFile* outFile, const std::vector<std::string>& jetCollect
         }
         outFile->cd();
     }
+
+    // --- Event-level histograms (not binned by centrality) ---
+    outFile->cd();
+    TDirectory* eventDir = outFile->mkdir("Event");
+    eventDir->cd();
+    for (const auto& kv : plotConfig.histogramConfigs) {
+        const std::string& hname = kv.first;
+        const HistogramConfig& hcfg = kv.second;
+        if (plotConfig.eventHistograms.count(hname)) {
+            log(LOG_TRACE, "Creating event-level hist: Event/" + hname);
+            if (hcfg.type == "TH1D") {
+                TH1D* h = createHistogram1D(hcfg, "h" + hname);
+                h->SetDirectory(eventDir);
+                hist1DMap["Event/h" + hname] = h;
+            } else if (hcfg.type == "TH2D") {
+                TH2D* h = createHistogram2D(hcfg, "h2" + hname);
+                h->SetDirectory(eventDir);
+                hist2DMap["Event/h2" + hname] = h;
+            } else if (hcfg.type == "TProfile") {
+                TProfile* p = createProfile(hcfg, "p" + hname);
+                p->SetDirectory(eventDir);
+                profileMap["Event/p" + hname] = p;
+            }
+        }
+    }
+    outFile->cd();
 
     // --- Histogram validation: config vs created ---
     

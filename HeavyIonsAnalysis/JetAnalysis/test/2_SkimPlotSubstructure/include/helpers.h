@@ -53,7 +53,7 @@
 // =====================================================
 
 // Global variables
-int g_verbosity = 1; // Global verbosity level
+int g_verbosity = 2; // Global verbosity level
 extern struct PlottingConfiguration g_plotConfig;
 
 // Structs
@@ -97,10 +97,10 @@ bool loadPlottingConfig(const std::string& configPath, PlottingConfiguration& pl
 void loadHistogramConfigsFromEnv(TEnv* env, PlottingConfiguration& plotConfig);
 
 // Creates a 1D histogram with configuration options.
-TH1F* createHistogram1D(const HistogramConfig& config, const std::string& name = "", const std::string& title = "", int colorIndex = -1);
+TH1D* createHistogram1D(const HistogramConfig& config, const std::string& name = "", const std::string& title = "", int colorIndex = -1);
 
 // Creates a 2D histogram with configuration options.
-TH2F* createHistogram2D(const HistogramConfig& config, const std::string& name = "", const std::string& title = "", int colorIndex = -1);
+TH2D* createHistogram2D(const HistogramConfig& config, const std::string& name = "", const std::string& title = "", int colorIndex = -1);
 
 // Creates a profile histogram with configuration options.
 TProfile* createProfile(const HistogramConfig& config, const std::string& name = "", const std::string& title = "", int colorIndex = -1);
@@ -138,12 +138,14 @@ bool createDirectory(const std::string& path);
 // Parses a string for marker style into a int
 int parseMarkerStyle(const std::string& style);
 
+inline std::set<std::string> parseStringSet(const std::string& str);
+
 // =====================================================
 // ================ Beginning of the code ==============
 // =====================================================
 
 // Logging system
-enum LogLevel { LOG_ERROR = 0, LOG_INFO = 1, LOG_DEBUG = 2, LOG_TRACE = 3 };
+enum LogLevel { LOG_ERROR = 0, LOG_WARNING = 2, LOG_INFO = 1, LOG_DEBUG = 3, LOG_TRACE = 4 };
 
 // Logging function with verbosity levels and colors
 void log(LogLevel level, const std::string& message) {
@@ -154,13 +156,19 @@ void log(LogLevel level, const std::string& message) {
     
     switch (level) {
         case LOG_ERROR:   colorCode = RED_COLOR;     levelStr = "ERROR"; break;
+        case LOG_WARNING: colorCode = YELLOW_COLOR;  levelStr = "WARNING"; break;
         case LOG_INFO:    colorCode = GREEN_COLOR;   levelStr = "INFO";  break;
-        case LOG_DEBUG:   colorCode = YELLOW_COLOR;  levelStr = "DEBUG"; break;
+        case LOG_DEBUG:   colorCode = MAGENTA_COLOR;  levelStr = "DEBUG"; break;
         case LOG_TRACE:   colorCode = CYAN_COLOR;    levelStr = "TRACE"; break;
     }
     
     std::cout << colorCode << "[" << levelStr << "] " << message << RESET_COLOR << std::endl;
 }
+
+float findNcoll(int hiBin) {
+    const float Ncoll[200] = {1893.13, 1867.0, 1834.16, 1805.64, 1770.84, 1744.49, 1699.76, 1661.52, 1615.89, 1579.59, 1540.62, 1499.14, 1469.01, 1432.18, 1402.8, 1368.39, 1338.12, 1302.26, 1274.91, 1245.56, 1215.28, 1183.76, 1160.61, 1131.12, 1107.67, 1078.54, 1055.72, 1026.72, 1000.57, 980.728, 958.777, 936.515, 911.397, 889.182, 869.677, 853.33, 826.999, 808.145, 792.14, 769.639, 753.513, 732.883, 716.817, 697.168, 679.091, 668.056, 650.114, 631.024, 616.203, 597.835, 583.435, 571.454, 555.478, 543.589, 526.328, 511.657, 497.023, 489.255, 471.52, 461.133, 447.767, 436.993, 426.106, 412.626, 403.224, 389.71, 382.595, 371.48, 358.899, 349.179, 339.387, 330.523, 320.094, 313.254, 302.339, 292.421, 282.594, 274.834, 268.847, 259.463, 252.027, 244.561, 236.738, 229.574, 222.898, 215.138, 207.328, 200.879, 196.592, 190.921, 183.942, 176.685, 170.919, 166.96, 161.057, 154.421, 148.816, 144.84, 139.087, 134.448, 128.72, 124.905, 121.166, 116.648, 112.367, 109.012, 104.33, 100.736, 97.3484, 93.2283, 89.3299, 85.9068, 83.6446, 80.2019, 77.5299, 73.9647, 70.7606, 68.2284, 65.793, 63.4532, 60.4738, 58.2406, 55.063, 53.7287, 51.4638, 49.241, 47.0111, 45.5443, 43.1729, 41.5041, 39.5449, 37.9282, 36.8918, 34.9287, 33.1886, 31.9177, 30.756, 29.0803, 27.6721, 26.42, 25.2678, 24.2585, 23.1429, 22.0138, 21.0169, 19.8203, 19.1043, 18.1478, 17.1715, 16.3605, 15.4763, 14.7973, 14.1594, 13.3927, 12.795, 12.1059, 11.5921, 10.9751, 10.3213, 9.94434, 9.3518, 8.94274, 8.37618, 7.94437, 7.48868, 7.06923, 6.71137, 6.31856, 6.03184, 5.67048, 5.43369, 5.13727, 4.83292, 4.58846, 4.37208, 4.15225, 3.84385, 3.63752, 3.45214, 3.24892, 3.02845, 2.81715, 2.66395, 2.5053, 2.29512, 2.13703, 1.93591, 1.79771, 1.64165, 1.54375, 1.45878, 1.36718, 1.2942, 1.23934, 1.18423, 1.14467, 1.11826, 1.0863, 1.06149, 1.04497 };
+    return Ncoll[hiBin];
+ }
 
 /**
  * Setup the input chain with files from the input directory
@@ -304,11 +312,13 @@ struct HistogramConfig {
     int nBinsX;
     double xMin;
     double xMax;
+    std::vector<double> binEdgesX;
     
     // Binning for Y axis (for 2D histograms)
     int nBinsY;
     double yMin;
     double yMax;
+    std::vector<double> binEdgesY;
     
     // Display properties
     int color;
@@ -320,7 +330,7 @@ struct HistogramConfig {
     std::string drawOption;
     
     HistogramConfig() : 
-        name(""), title(""), type("TH1F"),
+        name(""), title(""), type("TH1D"),
         xTitle(""), yTitle(""), zTitle(""),
         nBinsX(50), xMin(0), xMax(100),
         nBinsY(50), yMin(0), yMax(100),
@@ -392,6 +402,10 @@ struct PlottingConfiguration {
     
     // Histogram configurations
     std::map<std::string, HistogramConfig> histogramConfigs;
+    // Histogram category sets
+    std::set<std::string> eventHistograms;
+    std::set<std::string> generalHistograms;
+    std::set<std::string> jetHistograms;
 
     // --- Histogram config merging for TEnv-based configs ---
     // Centralized histogram style/config management using TEnv keys.
@@ -470,7 +484,7 @@ inline void loadHistogramConfigsFromEnv(TEnv* env, PlottingConfiguration& plotCo
         HistogramConfig hcfg;
         hcfg.name = histName;
         hcfg.title = merged.count("Title") ? merged["Title"] : histName;
-        hcfg.type = merged.count("PlotType") ? merged["PlotType"] : "TH1F";
+        hcfg.type = merged.count("PlotType") ? merged["PlotType"] : "TH1D";
         hcfg.xTitle = merged.count("XTitle") ? merged["XTitle"] : "";
         hcfg.yTitle = merged.count("YTitle") ? merged["YTitle"] : "";
         hcfg.zTitle = merged.count("ZTitle") ? merged["ZTitle"] : "";
@@ -480,12 +494,31 @@ inline void loadHistogramConfigsFromEnv(TEnv* env, PlottingConfiguration& plotCo
         catch (const std::exception& e) { log(LOG_ERROR, "Failed to parse XMin for " + histName + ": '" + merged["XMin"] + "' (" + e.what() + "). Using default 0.0."); hcfg.xMin = 0.0; }
         try { hcfg.xMax = merged.count("XMax") ? std::stod(merged["XMax"]) : 100.0; }
         catch (const std::exception& e) { log(LOG_ERROR, "Failed to parse XMax for " + histName + ": '" + merged["XMax"] + "' (" + e.what() + "). Using default 100.0."); hcfg.xMax = 100.0; }
+        if (merged.count("BinEdges") || merged.count("BinEdgesX")) {
+            std::string binEdgesStr = merged.count("BinEdges") ? merged["BinEdges"] : merged["BinEdgesX"];
+            hcfg.binEdgesX = parseDoubleVector(binEdgesStr);
+            if (!hcfg.binEdgesX.empty()) {
+                hcfg.nBinsX = hcfg.binEdgesX.size() - 1;
+                hcfg.xMin = hcfg.binEdgesX.front();
+                hcfg.xMax = hcfg.binEdgesX.back();
+                log(LOG_DEBUG, "Parsed variable bin edges for " + histName + " (" + std::to_string(hcfg.nBinsX) + " bins)");
+            }
+        }        
         try { hcfg.nBinsY = merged.count("YBins") ? std::stoi(merged["YBins"]) : 50; }
         catch (const std::exception& e) { log(LOG_ERROR, "Failed to parse YBins for " + histName + ": '" + merged["YBins"] + "' (" + e.what() + "). Using default 50."); hcfg.nBinsY = 50; }
         try { hcfg.yMin = merged.count("YMin") ? std::stod(merged["YMin"]) : 0.0; }
         catch (const std::exception& e) { log(LOG_ERROR, "Failed to parse YMin for " + histName + ": '" + merged["YMin"] + "' (" + e.what() + "). Using default 0.0."); hcfg.yMin = 0.0; }
         try { hcfg.yMax = merged.count("YMax") ? std::stod(merged["YMax"]) : 100.0; }
         catch (const std::exception& e) { log(LOG_ERROR, "Failed to parse YMax for " + histName + ": '" + merged["YMax"] + "' (" + e.what() + "). Using default 100.0."); hcfg.yMax = 100.0; }
+        if (merged.count("BinEdgesY")) {
+            hcfg.binEdgesY = parseDoubleVector(merged["BinEdgesY"]);
+            if (!hcfg.binEdgesY.empty()) {
+                hcfg.nBinsY = hcfg.binEdgesY.size() - 1;
+                hcfg.yMin = hcfg.binEdgesY.front();
+                hcfg.yMax = hcfg.binEdgesY.back();
+                log(LOG_DEBUG, "Parsed variable bin edges for " + histName + " (" + std::to_string(hcfg.nBinsY) + " bins)");
+            }
+        }
         try { hcfg.marker = merged.count("Marker") ? std::stoi(merged["Marker"]) : 20; }
         catch (const std::exception& e) { log(LOG_ERROR, "Failed to parse Marker for " + histName + ": '" + merged["Marker"] + "' (" + e.what() + "). Using default 20."); hcfg.marker = 20; }
         hcfg.markerStyle = merged.count("MarkerStyle") ? parseMarkerStyle(merged["MarkerStyle"]) : 20;
@@ -516,6 +549,15 @@ inline void loadHistogramConfigsFromEnv(TEnv* env, PlottingConfiguration& plotCo
         
         plotConfig.histogramConfigs[histName] = hcfg;
     }
+
+    // Parse histogram category lists from config
+    std::string eventHistStr = env->GetValue("EventHistograms", "");
+    std::string generalHistStr = env->GetValue("GeneralHistograms", "");
+    std::string jetHistStr = env->GetValue("JetHistograms", "");
+    // Robust merging: add (do not overwrite) new entries from this config
+    for (const auto& s : parseStringSet(eventHistStr)) plotConfig.eventHistograms.insert(s);
+    for (const auto& s : parseStringSet(generalHistStr)) plotConfig.generalHistograms.insert(s);
+    for (const auto& s : parseStringSet(jetHistStr)) plotConfig.jetHistograms.insert(s);
 }
 
 /**
@@ -589,7 +631,7 @@ std::vector<float> getFloatVector(TEnv* config, const std::string& param) {
         while (std::getline(ss, item, ',')) {
             // Trim whitespace
             item.erase(0, item.find_first_not_of(" \t\n\r\f\v"));
-            item.erase(item.find_last_not_of(" \t\n\r\f\v") + 1);            
+            item.erase(item.find_last_not_of(" \t\n\r\f\v") + 1);
             if (!item.empty()) {
                 try {
                     float value = std::stof(item);
@@ -758,7 +800,7 @@ bool loadPlottingConfig(const std::string& configPath, PlottingConfiguration& pl
 /**
  * Enhanced 1D histogram creation with configuration
  */
-TH1F* createHistogram1D(const HistogramConfig& config, const std::string& name, 
+TH1D* createHistogram1D(const HistogramConfig& config, const std::string& name, 
                        const std::string& title, int colorIndex) {
     // Use name and title from config if not provided
     std::string histName = name.empty() ? config.name : name;
@@ -769,9 +811,15 @@ TH1F* createHistogram1D(const HistogramConfig& config, const std::string& name,
         histTitle += ";" + config.xTitle + ";" + config.yTitle;
     }
     
-    // Create histogram with the specified binning
-    TH1F* hist = new TH1F(histName.c_str(), histTitle.c_str(), 
-                          config.nBinsX, config.xMin, config.xMax);
+    TH1D* hist = nullptr;
+    // Use variable binning if binEdgesX is set
+    if (!config.binEdgesX.empty()) {
+        hist = new TH1D(histName.c_str(), histTitle.c_str(), 
+                        config.binEdgesX.size() - 1, config.binEdgesX.data());
+    } else {
+        hist = new TH1D(histName.c_str(), histTitle.c_str(), 
+                        config.nBinsX, config.xMin, config.xMax);
+    }
     
     // Apply styling with the provided color index or default
     applyHistogramStyle(hist, config, colorIndex >= 0 ? colorIndex : 0);
@@ -782,7 +830,7 @@ TH1F* createHistogram1D(const HistogramConfig& config, const std::string& name,
 /**
  * Enhanced 2D histogram creation with configuration
  */
-TH2F* createHistogram2D(const HistogramConfig& config, const std::string& name, 
+TH2D* createHistogram2D(const HistogramConfig& config, const std::string& name, 
                        const std::string& title, int colorIndex) {
     std::string histName = name.empty() ? config.name : name;
     std::string histTitle = title.empty() ? config.title : title;
@@ -793,9 +841,24 @@ TH2F* createHistogram2D(const HistogramConfig& config, const std::string& name,
     }
     
     // Create histogram with the specified binning
-    TH2F* hist = new TH2F(histName.c_str(), histTitle.c_str(), 
-                         config.nBinsX, config.xMin, config.xMax,
-                         config.nBinsY, config.yMin, config.yMax);
+    TH2D* hist = nullptr;
+    if (!config.binEdgesX.empty() && !config.binEdgesY.empty()) {
+        hist = new TH2D(histName.c_str(), histTitle.c_str(),
+                        config.binEdgesX.size() - 1, config.binEdgesX.data(),
+                        config.binEdgesY.size() - 1, config.binEdgesY.data());
+    } else if (!config.binEdgesX.empty()) {
+        hist = new TH2D(histName.c_str(), histTitle.c_str(),
+                        config.binEdgesX.size() - 1, config.binEdgesX.data(),
+                        config.nBinsY, config.yMin, config.yMax);
+    } else if (!config.binEdgesY.empty()) {
+        hist = new TH2D(histName.c_str(), histTitle.c_str(),
+                        config.nBinsX, config.xMin, config.xMax,
+                        config.binEdgesY.size() - 1, config.binEdgesY.data());
+    } else {
+        hist = new TH2D(histName.c_str(), histTitle.c_str(),
+                        config.nBinsX, config.xMin, config.xMax,
+                        config.nBinsY, config.yMin, config.yMax);
+    }
     
     // Apply styling
     applyHistogramStyle(hist, config, colorIndex >= 0 ? colorIndex : 0);
@@ -1037,6 +1100,351 @@ inline int parseMarkerStyle(const std::string& style) {
     if (style == "kOpenDiamond") return 27;
     // Add more mappings as needed
     try { return std::stoi(style); } catch (...) { return 20; }
+}
+
+// ================= Multi-dimensional Cut Flow Tracker =====================
+#include <map>
+#include <vector>
+#include <string>
+#include <algorithm>
+#include <TEnv.h>
+#include <TFile.h>
+#include <TTree.h>
+#include <TH1D.h>
+
+struct CutInfo {
+    std::string name;
+    std::string description;
+    int passedIndividual;
+    int passedSequential;
+    bool isActive;
+    CutInfo(const std::string& n, const std::string& desc, bool active = true)
+        : name(n), description(desc), passedIndividual(0), passedSequential(0), isActive(active) {}
+};
+
+struct DimensionInfo {
+    std::string name;
+    std::vector<std::string> bins;
+    DimensionInfo(const std::string& n, const std::vector<std::string>& b) : name(n), bins(b) {}
+};
+
+struct CutDimension {
+    std::vector<CutInfo> cuts;
+    int totalEvents;
+    int currentSequentialPassed;
+    CutDimension() : totalEvents(0), currentSequentialPassed(0) {}
+};
+
+class MultiDimCutFlowTracker {
+public:
+    MultiDimCutFlowTracker(TEnv* config, const std::vector<float>& centralityBins, const std::vector<std::string>& jetCollections) {
+        isMC = (std::string(config->GetValue("DataType", "Data")) == "MC");
+        // Set up dimensions
+        std::vector<std::string> centBins;
+        for (size_t i = 0; i < centralityBins.size() - 1; ++i) {
+            centBins.push_back("cent" + std::to_string(int(centralityBins[i])) + "to" + std::to_string(int(centralityBins[i+1])));
+        }
+        dimensions.emplace_back("centrality", centBins);
+        dimensions.emplace_back("jetCollection", jetCollections);
+        defineCutLevels();
+        initializeCuts(config);
+    }
+
+    void initializeCuts(TEnv* config) {
+        initializeCutList(config, globalCuts.cuts, "global");
+        for (const auto& centBin : dimensions[0].bins) {
+            for (const auto& collection : dimensions[1].bins) {
+                CutDimension& cutDim = dimensionalCuts[centBin][collection];
+                if (collection == dimensions[1].bins[0]) {
+                    initializeCutList(config, dimensionalCuts[centBin]["centrality"].cuts, "centrality");
+                }
+                initializeCutList(config, cutDim.cuts, "collection");
+            }
+        }
+    }
+
+    void initializeCutList(TEnv* config, std::vector<CutInfo>& cuts, const std::string& level) {
+        cuts.clear();
+        if (level == "global") {
+            cuts.emplace_back("RawEvents", "All input events", true);
+            float vzCut = config->GetValue("VzCut", -999.0);
+            if (vzCut > -900.0) cuts.emplace_back("VertexCut", "Vertex |z| < " + std::to_string(vzCut) + " cm", true);
+        } else if (level == "centrality") {
+            cuts.emplace_back("CentralityCut", "Events in this centrality bin", true);
+            float photonEtMin = config->GetValue("PhotonEtMin", -999.0);
+            if (photonEtMin > -900.0) cuts.emplace_back("PhotonKinematics", "Photon ET > " + std::to_string(photonEtMin) + " GeV", true);
+            if (isMC && config->GetValue("MCPhotonMatchRequired", 0)) cuts.emplace_back("MCPhotonMatch", "MC truth photon matching", true);
+            float photonEtaMax = config->GetValue("PhotonEtaMax", -999.0);
+            if (photonEtaMax > -900.0) cuts.emplace_back("PhotonEta", "Photon |η| < " + std::to_string(photonEtaMax), true);
+            float photonHoverEMax = config->GetValue("PhotonHoverEMax", -999.0);
+            if (photonHoverEMax > -900.0) cuts.emplace_back("PhotonHoverE", "Photon H/E < " + std::to_string(photonHoverEMax), true);
+            float photonSigmaMax = config->GetValue("PhotonSigmaIEtaIEtaMax", -999.0);
+            if (photonSigmaMax > -900.0) cuts.emplace_back("PhotonSigmaIEtaIEta", "Photon σ_iηiη < " + std::to_string(photonSigmaMax), true);
+            float photonIsoMax = config->GetValue("PhotonIsoMax", -999.0);
+            if (photonIsoMax > -900.0) cuts.emplace_back("PhotonIsolation", "Photon Iso < " + std::to_string(photonIsoMax), true);
+            float photonR9Min = config->GetValue("PhotonR9Min", -999.0);
+            if (photonR9Min > -900.0) cuts.emplace_back("PhotonR9", "Photon R9 > " + std::to_string(photonR9Min), true);            
+        } else if (level == "collection") {
+            float jetPtMin = config->GetValue("JetPtMin", -999.0);
+            if (jetPtMin > -900.0) cuts.emplace_back("JetKinematics", "Jet pT > " + std::to_string(jetPtMin) + " GeV", true);
+            float deltaPhiMin = config->GetValue("DeltaPhiMin", -999.0);
+            if (deltaPhiMin > -900.0) cuts.emplace_back("DeltaPhi", "Δφ(γ,jet) > " + std::to_string(deltaPhiMin) + " rad", true);
+            float xjMin = config->GetValue("XjMin", -999.0);
+            if (xjMin > -900.0) cuts.emplace_back("XjCut", "xj > " + std::to_string(xjMin), true);
+            cuts.emplace_back("JetSelection", "Found jet passing all cuts", true);
+            cuts.emplace_back("FinalSelection", "All cuts passed", true);
+        }
+    }
+
+    void startEvent() {
+        globalCuts.totalEvents++;
+        globalCuts.currentSequentialPassed = 0;
+    }
+
+    void startCentralityBin(const std::string& centBin) {
+        for (auto& kv : dimensionalCuts[centBin]) {
+            if (kv.first == "centrality") {
+                kv.second.totalEvents++;
+                kv.second.currentSequentialPassed = 0;
+            }
+        }
+    }
+
+    void startJetCollection(const std::string& centBin, const std::string& collection) {
+        dimensionalCuts[centBin][collection].totalEvents++;
+        dimensionalCuts[centBin][collection].currentSequentialPassed = 0;
+    }
+
+    void applyCut(const std::string& cutName, bool passed, const std::string& centBin = "", const std::string& collection = "") {
+        auto levelIt = cutToLevel.find(cutName);
+        if (levelIt == cutToLevel.end()) {
+            log(LOG_WARNING, "Unknown cut: " + cutName);
+            return;
+        }
+        const std::string& level = levelIt->second;
+        if (level == "global") {
+            applyGlobalCut(cutName, passed, globalCuts);
+        } else if (level == "centrality") {
+            if (centBin.empty()) {
+                log(LOG_DEBUG, "Centrality bin not specified for centrality-level cut: " + cutName);
+                return;
+            }
+            applyGlobalCut(cutName, passed, dimensionalCuts[centBin]["centrality"]);
+        } else if (level == "collection") {
+            if (centBin.empty() || collection.empty()) {
+                log(LOG_DEBUG, "Centrality bin or collection not specified for collection-level cut: " + cutName);
+                return;
+            }
+            applyGlobalCut(cutName, passed, dimensionalCuts[centBin][collection]);
+        }
+    }
+
+    void printCutFlow() const {
+        printCutFlowForDimension("Global Cuts", globalCuts);
+        for (const auto& centBin : dimensions[0].bins) {
+            printCutFlowForDimension("Centrality Bin: " + centBin, dimensionalCuts.at(centBin).at("centrality"));
+            for (const auto& collection : dimensions[1].bins) {
+                if (collection != "centrality") {
+                    printCutFlowForDimension("Centrality: " + centBin + ", Collection: " + collection, dimensionalCuts.at(centBin).at(collection));
+                }
+            }
+        }
+    }
+
+    void printCutFlowForDimension(const std::string& title, const CutDimension& cutDim) const {
+        log(LOG_DEBUG, "");
+        log(LOG_DEBUG, "=== " + title + " ===");
+        log(LOG_DEBUG, "Total events processed: " + std::to_string(cutDim.totalEvents));
+        log(LOG_DEBUG, "");
+        log(LOG_DEBUG, std::string(100, '-'));
+        log(LOG_DEBUG, "Cut Name              | Description                    | Individual        | Sequential        | Cut-to-Cut");
+        log(LOG_DEBUG, "                      |                                | Count    (%)      | Count    (%)      | Efficiency (%)");
+        log(LOG_DEBUG, std::string(100, '-'));
+        for (size_t i = 0; i < cutDim.cuts.size(); ++i) {
+            const auto& cut = cutDim.cuts[i];
+            if (!cut.isActive) continue;
+            double individualEff = cutDim.totalEvents > 0 ? 100.0 * cut.passedIndividual / cutDim.totalEvents : 0.0;
+            double sequentialEff = 0.0;
+            double sequentialPercentage = 0.0;
+            if (i == 0) {
+                sequentialEff = 100.0;
+                sequentialPercentage = cutDim.totalEvents > 0 ? 100.0 * cut.passedSequential / cutDim.totalEvents : 0.0;
+            } else if (cutDim.cuts[i-1].passedSequential > 0) {
+                sequentialEff = 100.0 * cut.passedSequential / cutDim.cuts[i-1].passedSequential;
+                sequentialPercentage = cutDim.totalEvents > 0 ? 100.0 * cut.passedSequential / cutDim.totalEvents : 0.0;
+            }
+            char buffer[250];
+            snprintf(buffer, sizeof(buffer), "%-20s | %-30s | %7d (%5.1f%%) | %7d (%5.1f%%) | %6.2f%%",
+                    cut.name.c_str(), 
+                    cut.description.substr(0, 30).c_str(),
+                    cut.passedIndividual, individualEff,
+                    cut.passedSequential, sequentialPercentage,
+                    sequentialEff);
+            log(LOG_DEBUG, std::string(buffer));
+        }
+        log(LOG_DEBUG, std::string(100, '-'));
+        if (cutDim.cuts.size() > 1 && cutDim.totalEvents > 0) {
+            double overallEff = 100.0 * cutDim.cuts.back().passedSequential / cutDim.totalEvents;
+            log(LOG_DEBUG, "Overall efficiency: " + std::to_string(cutDim.cuts.back().passedSequential) + 
+                         "/" + std::to_string(cutDim.totalEvents) + " = " + 
+                         std::to_string(overallEff) + "%");
+        }
+        log(LOG_DEBUG, "");
+    }
+
+    void saveCutFlowToFile(TFile* outFile) const {
+        if (!outFile) return;
+        outFile->cd();
+        outFile->mkdir("cutFlow");
+        outFile->cd("cutFlow");
+        saveDimensionToFile(outFile, "global", globalCuts);
+        for (const auto& centBin : dimensions[0].bins) {
+            saveDimensionToFile(outFile, "centrality_" + centBin, dimensionalCuts.at(centBin).at("centrality"));
+            for (const auto& collection : dimensions[1].bins) {
+                if (collection != "centrality") {
+                    saveDimensionToFile(outFile, "collection_" + centBin + "_" + collection, 
+                                     dimensionalCuts.at(centBin).at(collection));
+                }
+            }
+        }
+        TTree* dimensionTree = new TTree("dimensionTree", "Dimension Information");
+        std::string dimName, binName;
+        int dimIndex, binIndex;
+        dimensionTree->Branch("dimensionIndex", &dimIndex);
+        dimensionTree->Branch("dimensionName", &dimName);
+        dimensionTree->Branch("binIndex", &binIndex);
+        dimensionTree->Branch("binName", &binName);
+        for (size_t d = 0; d < dimensions.size(); ++d) {
+            dimName = dimensions[d].name;
+            dimIndex = d;
+            for (size_t b = 0; b < dimensions[d].bins.size(); ++b) {
+                binName = dimensions[d].bins[b];
+                binIndex = b;
+                dimensionTree->Fill();
+            }
+        }
+        dimensionTree->Write();
+        log(LOG_INFO, "Multi-dimensional cut flow information saved to output file");
+        outFile->cd();
+    }
+
+    void saveDimensionToFile(TFile* outFile, const std::string& prefix, const CutDimension& cutDim) const {
+        if (!outFile) return;
+        outFile->cd();
+        outFile->cd("cutFlow");
+        TH1D* hCutFlow = new TH1D(("hCutFlow_" + prefix).c_str(), 
+                                 ("Cut Flow for " + prefix + ";Cut Stage;Events").c_str(), 
+                                 cutDim.cuts.size(), 0, cutDim.cuts.size());
+        TH1D* hCutFlowEfficiency = new TH1D(("hCutFlowEfficiency_" + prefix).c_str(), 
+                                          ("Cut Flow Efficiency for " + prefix + ";Cut Stage;Efficiency (%)").c_str(), 
+                                          cutDim.cuts.size(), 0, cutDim.cuts.size());
+        for (size_t i = 0; i < cutDim.cuts.size(); ++i) {
+            if (!cutDim.cuts[i].isActive) continue;
+            hCutFlow->SetBinContent(i + 1, cutDim.cuts[i].passedSequential);
+            hCutFlow->GetXaxis()->SetBinLabel(i + 1, cutDim.cuts[i].name.c_str());
+            double efficiency = (i == 0) ? 100.0 : 
+                               (cutDim.cuts[i-1].passedSequential > 0 ? 
+                                100.0 * cutDim.cuts[i].passedSequential / cutDim.cuts[i-1].passedSequential : 0.0);
+            hCutFlowEfficiency->SetBinContent(i + 1, efficiency);
+            hCutFlowEfficiency->GetXaxis()->SetBinLabel(i + 1, cutDim.cuts[i].name.c_str());
+        }
+        hCutFlow->Write();
+        hCutFlowEfficiency->Write();
+        TTree* cutFlowTree = new TTree(("cutFlowTree_" + prefix).c_str(), ("Cut Flow Information for " + prefix).c_str());
+        std::string cutName, cutDescription;
+        int passedIndividual, passedSequential, totalProcessed;
+        double individualEff, sequentialEff;
+        cutFlowTree->Branch("cutName", &cutName);
+        cutFlowTree->Branch("cutDescription", &cutDescription); 
+        cutFlowTree->Branch("passedIndividual", &passedIndividual);
+        cutFlowTree->Branch("passedSequential", &passedSequential);
+        cutFlowTree->Branch("totalProcessed", &totalProcessed);
+        cutFlowTree->Branch("individualEfficiency", &individualEff);
+        cutFlowTree->Branch("sequentialEfficiency", &sequentialEff);
+        totalProcessed = cutDim.totalEvents;
+        for (size_t i = 0; i < cutDim.cuts.size(); ++i) {
+            const auto& cut = cutDim.cuts[i];
+            if (!cut.isActive) continue;
+            cutName = cut.name;
+            cutDescription = cut.description;
+            passedIndividual = cut.passedIndividual;
+            passedSequential = cut.passedSequential;
+            individualEff = cutDim.totalEvents > 0 ? 100.0 * cut.passedIndividual / cutDim.totalEvents : 0.0;
+            sequentialEff = (i == 0) ? 100.0 : 
+                           (cutDim.cuts[i-1].passedSequential > 0 ? 
+                            100.0 * cut.passedSequential / cutDim.cuts[i-1].passedSequential : 0.0);
+            cutFlowTree->Fill();
+        }
+        cutFlowTree->Write();
+    }
+
+    std::string getCentralityBin(int hiBin, const std::vector<float>& centralityBinsValues) const {
+        for (size_t i = 0; i < centralityBinsValues.size() - 1; ++i) {
+            if (hiBin >= centralityBinsValues[i] && hiBin < centralityBinsValues[i+1]) {
+                return "cent" + std::to_string(int(centralityBinsValues[i])) + 
+                       "to" + std::to_string(int(centralityBinsValues[i+1]));
+            }
+        }
+        return "";
+    }
+
+private:
+    void defineCutLevels() {
+        cutToLevel["RawEvents"] = "global";
+        cutToLevel["VertexCut"] = "global";
+        cutToLevel["CentralityCut"] = "centrality";
+        cutToLevel["PhotonKinematics"] = "centrality";
+        cutToLevel["PhotonEta"] = "centrality";
+        cutToLevel["PhotonHoverE"] = "centrality";
+        cutToLevel["PhotonSigmaIEtaIEta"] = "centrality";
+        cutToLevel["PhotonIsolation"] = "centrality";
+        cutToLevel["PhotonR9"] = "centrality";
+        cutToLevel["MCPhotonMatch"] = "centrality";
+        cutToLevel["JetKinematics"] = "collection";
+        cutToLevel["DeltaPhi"] = "collection";
+        cutToLevel["XjCut"] = "collection";
+        cutToLevel["JetSelection"] = "collection";
+        cutToLevel["FinalSelection"] = "collection";
+    }
+    void applyGlobalCut(const std::string& cutName, bool passed, CutDimension& cutDim) {
+        auto it = std::find_if(cutDim.cuts.begin(), cutDim.cuts.end(), 
+                              [&cutName](const CutInfo& cut) { return cut.name == cutName; });
+        if (it != cutDim.cuts.end() && it->isActive) {
+            if (passed) it->passedIndividual++;
+            size_t cutIndex = std::distance(cutDim.cuts.begin(), it);
+            if (cutIndex == 0) {
+                if (passed) {
+                    it->passedSequential++;
+                    cutDim.currentSequentialPassed = 1;
+                }
+            } else if (cutIndex == (size_t)cutDim.currentSequentialPassed && passed) {
+                it->passedSequential++;
+                cutDim.currentSequentialPassed++;
+            }
+        }
+    }
+    std::map<std::string, std::map<std::string, CutDimension>> dimensionalCuts;
+    CutDimension globalCuts;
+    std::vector<DimensionInfo> dimensions;
+    std::map<std::string, std::string> cutToLevel;
+    bool isMC;
+};
+
+// Utility: Parse comma-separated string into set<string>
+inline std::set<std::string> parseStringSet(const std::string& str) {
+    std::set<std::string> result;
+    std::stringstream ss(str);
+    std::string item;
+    while (std::getline(ss, item, ',')) {
+        // Trim whitespace
+        size_t start = item.find_first_not_of(" \t\n\r");
+        size_t end = item.find_last_not_of(" \t\n\r");
+        if (start != std::string::npos && end != std::string::npos)
+            result.insert(item.substr(start, end - start + 1));
+        else if (start != std::string::npos)
+            result.insert(item.substr(start));
+    }
+    return result;
 }
 
 #endif

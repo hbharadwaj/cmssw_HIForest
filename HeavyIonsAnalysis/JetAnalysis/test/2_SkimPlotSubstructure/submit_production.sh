@@ -312,11 +312,12 @@ if [ "$DRY_RUN" = false ]; then
     
     # Copy necessary files
     log 1 "Copying files to batch directory..."
-    cp $SCRIPT_DIR/gammaJetAnalyzer.cpp "$batch_dir/" 2>/dev/null || log 1 "Warning: gammaJetAnalyzer.cpp not found"
-    cp $SCRIPT_DIR/include/helpers.h include/JetCollectionManager.h "$INCLUDE_DIR" 2>/dev/null || log 1 "Warning: include directory not found"
-    cp $SCRIPT_DIR/Makefile "$batch_dir/" 2>/dev/null || log 1 "Warning: Makefile not found"
-    cp "$ANALYSIS_CONFIG" "$batch_dir/" 2>/dev/null || log 1 "Warning: analysis config not found"
-    cp "$PLOT_CONFIG" "$batch_dir/" 2>/dev/null || log 1 "Warning: plot config not found"
+    cp $SCRIPT_DIR/gammaJetAnalyzer.cpp "$batch_dir/" 2>/dev/null || log 0 "Warning: gammaJetAnalyzer.cpp not found"
+    cp $SCRIPT_DIR/include/helpers.h include/JetCollectionManager.h "$INCLUDE_DIR" 2>/dev/null || log 0 "Warning: include directory not found"
+    cp $SCRIPT_DIR/Makefile "$batch_dir/" 2>/dev/null || log 0 "Warning: Makefile not found"
+    cp "$ANALYSIS_CONFIG" "$batch_dir/" 2>/dev/null || log 0 "Warning: analysis config not found"
+    cp "$PLOT_CONFIG" "$batch_dir/" 2>/dev/null || log 0 "Warning: plot config not found"
+    cp /afs/cern.ch/user/b/bharikri/private/HeavyIon/run3_gamma_jet/CMSSW_13_2_13/src/HeavyIonsAnalysis/JetAnalysis/test/configs/Histograms.config "$batch_dir/" 2>/dev/null || log 0 "Warning: Default Plotting config not found"
 
     if [ "$COMPILE_IN_JOB" = false ]; then
         # Compile locally as before

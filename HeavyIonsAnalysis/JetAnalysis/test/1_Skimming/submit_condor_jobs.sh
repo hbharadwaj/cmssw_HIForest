@@ -36,7 +36,7 @@ CLEANUP=0      # By default, don't cleanup old compilation artifacts (reuse them
 REMOVE_JOBS=0  # By default, don't remove existing jobs
 VERBOSITY=1    # Default verbosity level: 0=minimal, 1=normal, 2=debug, 3=trace
 EXECUTABLE="SkimHiForest"
-OS_VERSION=""   # Default to not specifying OS version (let HTCondor choose)
+OS_VERSION="el8"   # Default to el8 OS version
 
 # Function to create a unique logs directory for each submission
 create_logs_directory() {
