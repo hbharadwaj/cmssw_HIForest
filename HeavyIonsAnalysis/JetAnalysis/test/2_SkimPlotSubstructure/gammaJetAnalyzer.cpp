@@ -336,18 +336,16 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
     // Get parameters from config
     std::string dataType = config->GetValue("DataType", "Data");
     bool isMC = (dataType == "MC" || dataType == "mc");
-    float vzCut = config->GetValue("VzCut", 10000.0);
-    float hiHFCutMin = config->GetValue("HiHFCutMin", -1.0);
-    float hiHFCutMax = config->GetValue("HiHFCutMax", 700000.0);
-    float photonEtMin = config->GetValue("PhotonEtMin", 0.0);
+    float vzCut = config->GetValue("VzCut", -999.0);
+    float photonEtMin = config->GetValue("PhotonEtMin", -999.0);
     float photonEtaMax = config->GetValue("PhotonEtaMax", 100000.0);
     float photonHoverEMax = config->GetValue("PhotonHoverEMax", 100000.0);
     float photonSigmaIEtaIEtaMax = config->GetValue("PhotonSigmaIEtaIEtaMax", 100000.0);
     float photonIsoMax = config->GetValue("PhotonIsoMax", 10000); //! Update the defaults so it's always true if not given in the config
-    float photonR9Min = config->GetValue("PhotonR9Min", -1.0);
-    float jetPtMin = config->GetValue("JetPtMin", -1.0);
-    float jetEtaMax = config->GetValue("JetEtaMax", 1000.0);
-    float deltaPhiMin = config->GetValue("DeltaPhiMin", -1);
+    float photonR9Min = config->GetValue("PhotonR9Min", -999.0);
+    float jetPtMin = config->GetValue("JetPtMin", -999.0);
+    float jetEtaMax = config->GetValue("JetEtaMax", 100000.0);
+    float deltaPhiMin = config->GetValue("DeltaPhiMin", -999.0);
     std::vector<float> centralityBins = getFloatVector(config, "CentralityBins");
     std::vector<std::string> jetCollections = jetManager.getCollections();
     
@@ -710,12 +708,11 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
             if (hiBin >= centralityBins[i] && hiBin < centralityBins[i+1]) {
                 centBinIdx = i;
                 break;
-                cutFlowTracker.applyCut("CentralityCut", false);
             }
         }
         if(centBinIdx<0) continue;
         
-        cutFlowTracker.applyCut("CentralityCut", true);   
+        cutFlowTracker.applyCut("CentralityCut", true, centBin);   
         
         std::string centName = "cent" + std::to_string(static_cast<int>(centralityBins[centBinIdx])) + "to" + std::to_string(static_cast<int>(centralityBins[centBinIdx+1]));
         log(LOG_TRACE, "Filling histograms for " + centName + "/General/ with weight: " + std::to_string(eventWeight));
@@ -1041,10 +1038,10 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
                     auto it = hist2DMap.find(centName + "/" + collection + "/" + hname);
                     if (it != hist2DMap.end() && it->second) it->second->Fill(x, y, weight);
                 };
-                auto fillProfilejet = [&](const std::string& hname, double x, double y, double weight=1.0) {
-                    auto it = profileMap.find(centName + "/" + collection + "/" + hname);
-                    if (it != profileMap.end() && it->second) it->second->Fill(x, y, weight);
-                };
+                // auto fillProfilejet = [&](const std::string& hname, double x, double y, double weight=1.0) {
+                //     auto it = profileMap.find(centName + "/" + collection + "/" + hname);
+                //     if (it != profileMap.end() && it->second) it->second->Fill(x, y, weight);
+                // };
                 outFile->cd();
                 if (outFile->cd((centName + "/" + collection).c_str())) {
                     fill1Djet("hJetPt", selectedJetPts[collection], eventWeight);
