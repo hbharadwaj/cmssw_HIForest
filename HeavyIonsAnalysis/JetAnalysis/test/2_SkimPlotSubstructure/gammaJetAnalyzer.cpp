@@ -680,11 +680,11 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
         cutFlowTracker.applyCut("RawEvents", true);
         
         // Event selection
-        if (std::abs(vz) > vzCut) {
-            cutFlowTracker.applyCut("VertexCut", false);
-            continue;
-        }
-        cutFlowTracker.applyCut("VertexCut", true);
+        // if (std::abs(vz) > vzCut) {
+        //     cutFlowTracker.applyCut("VertexCut", false);
+        //     continue;
+        // }
+        // cutFlowTracker.applyCut("VertexCut", true);
 
         // === Fill event-level histograms after event-level cuts ===
         auto fillEvent1D = [&](const std::string& hname, double value, double weight=1.0) {
@@ -1310,6 +1310,7 @@ void createHistograms(TFile* outFile, const std::vector<std::string>& jetCollect
     outFile->cd();
 
     // --- Histogram validation: config vs created ---
+    //! TO BE UPDATED TO CHECK ACTUALLY CREATED HISTOGRAMS
     
     // Helper to extract base histogram name (removes directory and h/h2/p prefix)
     auto extractBaseName = [](const std::string& key) -> std::string {
