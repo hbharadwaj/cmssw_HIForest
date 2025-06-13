@@ -69,7 +69,7 @@ void CMS_lumi(TPad* pad, int iPeriod, int iPosX) {
     lumiText += lumi_sqrtS;
   }
 
-  std::cout << lumiText << endl;
+  // std::cout << lumiText << endl;  // Commented out to remove console spam
 
   TLatex latex;
   latex.SetNDC();

@@ -52,7 +52,7 @@ def main():
     parser.add_argument('--batch', action='store_true',
                         help='Batch mode: do not show canvases interactively')
     parser.add_argument('-v', '--verbose', action='count', default=0,
-                        help='Increase verbosity (-v for INFO, -vv for DEBUG). Default is WARNING level.')
+                        help='Increase verbosity (-v for DEBUG, -vv for TRACE). Default is INFO level.')
     parser.add_argument('--no-colors', action='store_true',
                         help='Disable colored output')
     args = parser.parse_args()
@@ -60,13 +60,13 @@ def main():
     # Import helpers to get logger
     import plot_helpers
     
-    # Configure logging based on verbosity
+    # Configure logging based on verbosity (new intuitive hierarchy)
     if args.verbose >= 2:
-        plot_helpers.set_verbosity(plot_helpers.Logger.DEBUG)
+        plot_helpers.set_verbosity(plot_helpers.Logger.TRACE)   # -vv gives TRACE (most verbose)
     elif args.verbose >= 1:
-        plot_helpers.set_verbosity(plot_helpers.Logger.DEBUG)  # -v gives DEBUG
+        plot_helpers.set_verbosity(plot_helpers.Logger.DEBUG)   # -v gives DEBUG
     else:
-        plot_helpers.set_verbosity(plot_helpers.Logger.INFO)   # Default is INFO, not WARNING
+        plot_helpers.set_verbosity(plot_helpers.Logger.INFO)    # Default is INFO level
     
     if args.no_colors:
         plot_helpers.set_colors(False)
@@ -299,6 +299,9 @@ def main():
                         # Create canvas and plot
                         c = ROOT.TCanvas(f"c_{config_key}_{cent_bin}_{jet_dir}", config_key, 800, 600)
                         
+                        # Apply consistent canvas margins to match overlay plots
+                        plot_helpers.apply_canvas_settings(c, file_cfg)
+                        
                         # Apply histogram styling from config
                         hist_config_key = f"Histogram.{config_key}"
                         hist_color = file_cfg.get(f"{hist_config_key}.Color", "1")  # Default black
@@ -322,6 +325,10 @@ def main():
                         hist.SetMarkerStyle(hist_marker_style)
                         hist.SetMarkerSize(hist_marker_size)
                         hist.SetStats(0)
+                        
+                        # Apply standardized text sizing for consistency with overlay plots
+                        plot_helpers.standardize_text_sizes(hist, 1.0, file_cfg)  # pad_height=1.0 for single plots
+                        
                         drawopt = "E1P" if hist.InheritsFrom("TH1") else "COLZ"
                         hist.Draw(drawopt)
                         
