@@ -8,6 +8,7 @@
 #include <TROOT.h>
 #include <TSystem.h>
 #include <ROOT/RDataFrame.hxx>
+#include <TError.h>
 
 // C++ Standard Library includes
 #include <iostream>
@@ -431,6 +432,10 @@ void SkimHiForest(const std::string &cfgPath = "../configs/2023_PbPb_Data_HirawP
     int fileLimit = env.GetValue("FileLimit", 99999);
     int filesPerBatch = env.GetValue("FilesPerOutput", 1); // Default to 1 file per batch if not specified
     bool batchMode = env.GetValue("BatchMode", 0) != 0; // Enable batch mode if specified in config
+
+    if (verbose<=1) {
+        gErrorIgnoreLevel = kWarning;
+    }
 
     if (verbose) {
         std::cout << "Processing config: " << cfgPath << std::endl;
