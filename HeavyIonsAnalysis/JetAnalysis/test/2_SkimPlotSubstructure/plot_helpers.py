@@ -115,6 +115,36 @@ def set_colors(enabled):
 # COLOR SCHEMES
 # =============================================================================
 
+
+# Helper to parse ROOT constant names (e.g., kFullCircle, kRed) or integers
+def parse_root_constant(val, ROOT):
+    """
+    Convert a string like 'kFullCircle' or 'kRed' to the corresponding ROOT int value.
+    If already an int or numeric string, return as int.
+    """
+    if isinstance(val, int):
+        return val
+    if isinstance(val, str):
+        val = val.strip()
+        # Try integer conversion
+        try:
+            return int(val)
+        except ValueError:
+            pass
+        # Try ROOT constant
+        if hasattr(ROOT, val):
+            return getattr(ROOT, val)
+        # Try kColor style (e.g., kRed+2)
+        if '+' in val or '-' in val:
+            import re
+            m = re.match(r'(k\w+)([+-]\d+)', val)
+            if m and hasattr(ROOT, m.group(1)):
+                base = getattr(ROOT, m.group(1))
+                offset = int(m.group(2))
+                return base + offset
+    # Fallback: black
+    return 1
+
 def get_color_scheme(scheme_name, color_blind=False):
     """Return color palette based on scheme name.
     
@@ -328,8 +358,7 @@ def apply_cms_label(canvas, config):
         if hasattr(ROOT, 'writeExtraText'):
             ROOT.writeExtraText = True
         if hasattr(ROOT, 'extraText'):
-            ROOT.extraText = cms_label
-        
+            ROOT.extraText = cms_extra if cms_extra else cms_label
         # Construct the luminosity text combining energy and luminosity
         lumi_text = ""
         if cms_lumi and cms_energy:
@@ -338,11 +367,9 @@ def apply_cms_label(canvas, config):
             lumi_text = cms_energy
         elif cms_lumi:
             lumi_text = cms_lumi
-            
         # Set the luminosity text in ROOT globals
         if hasattr(ROOT, 'lumi_sqrtS'):
             ROOT.lumi_sqrtS = lumi_text
-            
         # Call CMS_lumi with appropriate parameters
         # iPeriod=0 uses lumi_sqrtS, iPosX=0 for out-of-frame positioning
         ROOT.CMS_lumi(canvas, 0, 0)
@@ -488,7 +515,7 @@ def generate_smart_overlay_name(jet_collections, centrality_bins, histogram_name
     
     return f"{histogram_name}_overlay"
 
-def create_single_file_overlays(config_data, root_file, file_cfg, outdir, plot_formats, display_label, test_mode=False, remaining_plots=None):
+def create_single_file_overlays(config_data, root_file, file_cfg, outdir, plot_formats, display_label, test_mode=False, remaining_plots=None, plot_list=None):
     """
     Create single-file overlays: centrality overlays within jet collections,
     and jet collection overlays within centralities.
@@ -528,11 +555,14 @@ def create_single_file_overlays(config_data, root_file, file_cfg, outdir, plot_f
             jet_collections.extend(subdirs)
         jet_collections = list(set(jet_collections))  # Remove duplicates
     
-    # Get histogram list from config
+    # Get histogram list from config, or restrict to plot_list if provided
     hist_list = []
-    for key in ["GeneralHistograms", "JetHistograms"]:
-        if key in file_cfg:
-            hist_list.extend([x.strip() for x in file_cfg[key].split(',') if x.strip()])
+    if plot_list is not None and len(plot_list) > 0:
+        hist_list = plot_list
+    else:
+        for key in ["GeneralHistograms", "JetHistograms"]:
+            if key in file_cfg:
+                hist_list.extend([x.strip() for x in file_cfg[key].split(',') if x.strip()])
     
     if not hist_list:
         logger.warning("No histograms found for single-file overlays")
@@ -840,7 +870,16 @@ def create_overlay_plot(hists, hist_labels, overlay_name, config_data, out_subdi
                 elif global_ymin != float('inf') and global_ymax != float('-inf'):
                     hist.GetYaxis().SetRangeUser(global_ymin, global_ymax)
             
-            drawopt = "E1P" if hist.InheritsFrom("TH1") else "COLZ"
+            # Determine draw option from config for overlays
+            hist_name = hist_names[i] if hist_names and i < len(hist_names) else None
+            drawopt = None
+            if hist_name:
+                drawopt = config_data.get(f"Histogram.{hist_name}.DrawOption", None)
+            if not drawopt:
+                if hist.InheritsFrom("TH2"):
+                    drawopt = config_data.get("Histogram.Default.DrawOption2D", "COLZ")
+                else:
+                    drawopt = config_data.get("Histogram.Default.DrawOption", "E1P")
             if i == 0:
                 hist.Draw(drawopt)
                 
@@ -1009,7 +1048,7 @@ def create_overlay_plot(hists, hist_labels, overlay_name, config_data, out_subdi
         # Restore ROOT error level
         ROOT.gErrorIgnoreLevel = old_level
 
-def create_multi_file_overlays(config_data, root_files, file_cfgs, outdir, plot_formats, test_mode=False, max_plots=None):
+def create_multi_file_overlays(config_data, root_files, file_cfgs, outdir, plot_formats, test_mode=False, max_plots=None, plot_list=None):
     """
     Create multi-file overlays by comparing histograms at identical ROOT paths across files.
     
@@ -1034,6 +1073,10 @@ def create_multi_file_overlays(config_data, root_files, file_cfgs, outdir, plot_
     common_hists = set(hist_lists[0]) if hist_lists else set()
     for hist_list in hist_lists[1:]:
         common_hists = common_hists.intersection(set(hist_list))
+    
+    # Restrict to plot_list if provided
+    if plot_list is not None and len(plot_list) > 0:
+        common_hists = set(plot_list) & common_hists
     
     if not common_hists:
         logger.warning("No common histograms found for multi-file overlays")
@@ -1699,6 +1742,7 @@ def find_content_aware_position(element_box, hists, config_data, element_type="t
     ]
     
     best_position = None
+
     best_score = float('inf')
     best_pos_name = ""
     

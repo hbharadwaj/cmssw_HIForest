@@ -173,10 +173,21 @@ def main():
                 file_cfg_data.update(hist_cfg_data)
             file_cfgs.append(file_cfg_data)
         
-        # Create multi-file overlays
+        # Build plot_list for overlays (respect --plotlist)
+        plot_list = []
+        if args.plotlist:
+            for item in args.plotlist:
+                plot_list.extend([x.strip() for x in item.split(',') if x.strip()])
+        else:
+            for key in ["OverlayPlots", "GeneralHistograms", "JetHistograms"]:
+                if key in config_data:
+                    plot_list.extend([x.strip() for x in config_data[key].split(',') if x.strip()])
+        logger.debug(f"Overlay plot list: {plot_list}")
+        
+        # Pass plot_list to overlay creation (if supported by helper)
         overlay_count = plot_helpers.create_multi_file_overlays(
             config_data, root_files, file_cfgs, outdir, plot_formats, 
-            args.test, args.maxplots if args.test else None
+            args.test, args.maxplots if args.test else None, plot_list=plot_list
         )
         
         if args.test:
@@ -219,12 +230,44 @@ def main():
         plot_list = []
         
         if args.plotlist:
-            plot_list = args.plotlist
+            # Flatten comma-separated and space-separated input
+            for item in args.plotlist:
+                plot_list.extend([x.strip() for x in item.split(',') if x.strip()])
         else:
-            # Get from config - check multiple possible keys
-            for key in ["OverlayPlots", "GeneralHistograms", "JetHistograms"]:
+            # --- Fix: Keep JetHistograms from both configs separate before merging ---
+            jet_hist_list_plotjetsub = []
+            jet_hist_list_histconfig = []
+            jet_hist_duplicates = set()
+            # 1. JetHistograms from PlotJetSub config (before merging)
+            if len(args.config) > 0:
+                plotjetsub_cfg_path = args.config[0]
+                plotjetsub_cfg = plot_helpers.parse_configs([plotjetsub_cfg_path])
+                if "JetHistograms" in plotjetsub_cfg:
+                    jet_hist_list_plotjetsub = [x.strip() for x in plotjetsub_cfg["JetHistograms"].split(',') if x.strip()]
+            # 2. JetHistograms from Histograms.config (after merging)
+            if "HistogramConfigFile" in file_cfg:
+                hist_cfg_path = file_cfg["HistogramConfigFile"]
+                if not os.path.isabs(hist_cfg_path):
+                    hist_cfg_path = os.path.join(os.path.dirname(args.config[0]), hist_cfg_path)
+                hist_cfg = plot_helpers.parse_configs([hist_cfg_path])
+                if "JetHistograms" in hist_cfg:
+                    jet_hist_list_histconfig = [x.strip() for x in hist_cfg["JetHistograms"].split(',') if x.strip()]
+            # Find true duplicates
+            jet_hist_duplicates = set(jet_hist_list_plotjetsub) & set(jet_hist_list_histconfig)
+            # Merge, preserving order: PlotJetSub first, then Histograms.config
+            jet_hist_list = jet_hist_list_plotjetsub + [h for h in jet_hist_list_histconfig if h not in jet_hist_list_plotjetsub]
+            # Merge all other lists as before
+            plot_list = []
+            for key in ["OverlayPlots", "GeneralHistograms"]:
                 if key in file_cfg:
                     plot_list.extend([x.strip() for x in file_cfg[key].split(',') if x.strip()])
+            plot_list.extend(jet_hist_list)
+            # Remove duplicates while preserving order
+            seen = set()
+            plot_list = [x for x in plot_list if not (x in seen or seen.add(x))]
+            # Warn on true duplicates
+            if jet_hist_duplicates:
+                logger.warning(f"Duplicate JetHistograms found in both configs: {', '.join(sorted(jet_hist_duplicates))}")
         
         logger.debug(f"Plot list from config: {plot_list}")
         
@@ -253,7 +296,7 @@ def main():
             
         overlay_count = plot_helpers.create_single_file_overlays(
             config_data, root_file, file_cfg, outdir, plot_formats, display_label, 
-            args.test, remaining_for_overlays
+            args.test, remaining_for_overlays, plot_list=plot_list
         )
         
         if args.test:
@@ -306,18 +349,11 @@ def main():
                         hist_config_key = f"Histogram.{config_key}"
                         hist_color = file_cfg.get(f"{hist_config_key}.Color", "1")  # Default black
                         hist_line_width = int(file_cfg.get(f"{hist_config_key}.LineWidth", "2"))
-                        hist_marker_style = int(file_cfg.get(f"{hist_config_key}.MarkerStyle", "20"))
+                        hist_marker_style = plot_helpers.parse_root_constant(file_cfg.get(f"{hist_config_key}.MarkerStyle", "20"), ROOT)
                         hist_marker_size = float(file_cfg.get(f"{hist_config_key}.MarkerSize", "0.8"))
                         
                         # Parse color (could be named or numeric)
-                        try:
-                            if hist_color.isdigit():
-                                color_val = int(hist_color)
-                            else:
-                                # Handle named colors like "kBlue", "kRed"
-                                color_val = getattr(ROOT, hist_color) if hasattr(ROOT, hist_color) else ROOT.kBlack
-                        except:
-                            color_val = ROOT.kBlack
+                        color_val = plot_helpers.parse_root_constant(hist_color, ROOT)
                         
                         hist.SetLineWidth(hist_line_width)
                         hist.SetLineColor(color_val)
@@ -329,7 +365,13 @@ def main():
                         # Apply standardized text sizing for consistency with overlay plots
                         plot_helpers.standardize_text_sizes(hist, 1.0, file_cfg)  # pad_height=1.0 for single plots
                         
-                        drawopt = "E1P" if hist.InheritsFrom("TH1") else "COLZ"
+                        # Determine draw option from config
+                        drawopt = file_cfg.get(f"Histogram.{config_key}.DrawOption", None)
+                        if not drawopt:
+                            if hist.InheritsFrom("TH2"):
+                                drawopt = file_cfg.get("Histogram.Default.DrawOption2D", "COLZ")
+                            else:
+                                drawopt = file_cfg.get("Histogram.Default.DrawOption", "E1P")
                         hist.Draw(drawopt)
                         
                         # No legend for single plots
