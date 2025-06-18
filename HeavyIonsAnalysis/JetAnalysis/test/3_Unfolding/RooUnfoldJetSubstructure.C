@@ -15,10 +15,19 @@
 // - RooUnfold 2.0.0
 // - CMSSW environment for compatible ROOT version
 
+// Setup RooUnfold paths if compiling
+#ifdef __ACLIC__
+R__ADD_INCLUDE_PATH(./RooUnfold/src)
+R__LOAD_LIBRARY(./RooUnfold/libRooUnfold.so)
+#endif
+
 #include <iostream>
 #include <string>
 #include <map>
 #include <vector>
+#include <set>
+#include <sstream>
+#include <algorithm>
 #include <TFile.h>
 #include <TTree.h>
 #include <TH1D.h>
@@ -29,6 +38,7 @@
 #include <TStopwatch.h>
 #include <TCanvas.h>
 #include <TLegend.h>
+#include <THashList.h>
 #include <RooUnfold.h>
 #include <RooUnfoldResponse.h>
 #include <RooUnfoldBayes.h>
@@ -36,23 +46,11 @@
 #include <RooUnfoldBinByBin.h>
 #include <RooUnfoldInvert.h>
 #include <TGaxis.h>
+#include "./include/UnfoldHelpers.h"
+#include <TBranch.h>
+#include <THn.h>
 
-// Logging levels
-enum LogLevel { LOG_ERROR = 0, LOG_WARNING = 1, LOG_INFO = 2, LOG_DEBUG = 3 };
-int gVerbosity = LOG_INFO;
-
-void log(LogLevel level, const std::string& message) {
-    if (level <= gVerbosity) {
-        const char* prefix = "";
-        switch (level) {
-            case LOG_ERROR:   prefix = "[ERROR]   "; break;
-            case LOG_WARNING: prefix = "[WARNING] "; break;
-            case LOG_INFO:    prefix = "[INFO]    "; break;
-            case LOG_DEBUG:   prefix = "[DEBUG]   "; break;
-        }
-        std::cout << prefix << message << std::endl;
-    }
-}
+// Use logging from UnfoldHelpers.h - no duplicate definitions needed
 
 // Structure to hold unfolding binning
 struct UnfoldingBins {
@@ -82,285 +80,504 @@ int getGlobalBin3D(int iBinX, int iBinY, int iBinZ, int nBinsX, int nBinsY) {
     return iBinZ * (nBinsX * nBinsY) + iBinY * nBinsX + iBinX;
 }
 
-// 1D Unfolding: Jet pT
-class JetPtUnfolder {
+// Generic N-dimensional Unfolder (replaces all hardcoded classes)
+// Edit 2: Finalize GenericUnfolderND class for full config-driven operation
+class GenericUnfolderND {
 private:
-    UnfoldingBins bins;
-    TH1D* h_measured;
-    TH1D* h_truth;
+    std::vector<std::string> measuredVars;
+    std::vector<std::string> truthVars;
+    std::vector<std::vector<double>> measuredBins;
+    std::vector<std::vector<double>> truthBins;
+    int ndim;
     RooUnfoldResponse* response;
     RooUnfold* unfold;
     
-public:
-    JetPtUnfolder(const UnfoldingBins& b) : bins(b), unfold(nullptr) {
-        // Create histograms
-        h_measured = new TH1D("h_jetPt_measured", "Measured Jet p_{T};Jet p_{T} [GeV];Events", 
-                             bins.nJetPt(), &bins.jetPt[0]);
-        h_truth = new TH1D("h_jetPt_truth", "Truth Jet p_{T};Jet p_{T} [GeV];Events", 
-                          bins.nJetPt(), &bins.jetPt[0]);
-        
-        // Create response matrix
-        response = new RooUnfoldResponse(h_truth, h_measured);
-        
-        log(LOG_INFO, "Created 1D unfolding histograms for jet pT");
-    }
+    // Regular histograms instead of THnD
+    TH1D* h_measured_data_1d;
+    TH1D* h_measured_mc_1d;
+    TH1D* h_truth_mc_1d;
+    TH2D* h_response_2d;
     
-    void fillFromTree(TTree* tree, bool isMC = false) {
-        Float_t jetPt, refJetPt = -999;
-        tree->SetBranchAddress("jetPt_AK2Z2", &jetPt);
-        if (isMC) tree->SetBranchAddress("refJetPt_AK2Z2", &refJetPt);
+    TH2D* h_measured_data_2d;
+    TH2D* h_measured_mc_2d;
+    TH2D* h_truth_mc_2d;
+    
+    TH3D* h_measured_data_3d;
+    TH3D* h_measured_mc_3d;
+    TH3D* h_truth_mc_3d;
+public:
+    GenericUnfolderND(const std::vector<std::string>& mvars, const std::vector<std::vector<double>>& mbins,
+                     const std::vector<std::string>& tvars, const std::vector<std::vector<double>>& tbins)
+        : measuredVars(mvars), measuredBins(mbins), truthVars(tvars), truthBins(tbins), ndim(mvars.size()),
+          response(nullptr), unfold(nullptr), 
+          h_measured_data_1d(nullptr), h_measured_mc_1d(nullptr), h_truth_mc_1d(nullptr), h_response_2d(nullptr),
+          h_measured_data_2d(nullptr), h_measured_mc_2d(nullptr), h_truth_mc_2d(nullptr),
+          h_measured_data_3d(nullptr), h_measured_mc_3d(nullptr), h_truth_mc_3d(nullptr) {
         
+        log(LOG_INFO, "Creating " + std::to_string(ndim) + "-dimensional histograms");
+        
+        // Log the bin edges for debugging
+        for (int i = 0; i < ndim; ++i) {
+            std::string binInfo = "  Measured bins for " + measuredVars[i] + ": ";
+            for (size_t j = 0; j < measuredBins[i].size(); ++j) 
+                binInfo += std::to_string(measuredBins[i][j]) + " ";
+            log(LOG_INFO, binInfo);
+            
+            std::string truthBinInfo = "  Truth bins for " + truthVars[i] + ": ";
+            for (size_t j = 0; j < truthBins[i].size(); ++j) 
+                truthBinInfo += std::to_string(truthBins[i][j]) + " ";
+            log(LOG_INFO, truthBinInfo);
+        }
+        
+        // Create histograms based on dimension
+        if (ndim == 1) {
+            // 1D histograms
+            // Create histogram titles with .c_str() to convert std::string to const char*
+            std::string dataTitle = "Measured Data 1D;" + measuredVars[0] + ";Events";
+            std::string mcTitle = "Measured MC 1D;" + measuredVars[0] + ";Events";
+            std::string truthTitle = "Truth MC 1D;" + truthVars[0] + ";Events";
+            
+            h_measured_data_1d = new TH1D("h_measured_data_1d", dataTitle.c_str(), 
+                                       measuredBins[0].size()-1, &(measuredBins[0][0]));
+            h_measured_mc_1d = new TH1D("h_measured_mc_1d", mcTitle.c_str(), 
+                                      measuredBins[0].size()-1, &(measuredBins[0][0]));
+            h_truth_mc_1d = new TH1D("h_truth_mc_1d", truthTitle.c_str(), 
+                                   truthBins[0].size()-1, &(truthBins[0][0]));
+            
+            // 2D response matrix (reco vs truth)
+            std::string responseTitle = "Response Matrix;" + truthVars[0] + ";" + measuredVars[0];
+            h_response_2d = new TH2D("h_response_2d", responseTitle.c_str(), 
+                                    truthBins[0].size()-1, &(truthBins[0][0]),
+                                    measuredBins[0].size()-1, &(measuredBins[0][0]));
+            
+            log(LOG_INFO, "Created 1D histograms with " + std::to_string(h_measured_data_1d->GetNbinsX()) + " bins");
+        } 
+        else if (ndim == 2) {
+            // 2D histograms - convert std::string to const char*
+            std::string data2dTitle = "Measured Data 2D;" + measuredVars[0] + ";" + measuredVars[1];
+            std::string mc2dTitle = "Measured MC 2D;" + measuredVars[0] + ";" + measuredVars[1];
+            std::string truth2dTitle = "Truth MC 2D;" + truthVars[0] + ";" + truthVars[1];
+            
+            h_measured_data_2d = new TH2D("h_measured_data_2d", data2dTitle.c_str(), 
+                                       measuredBins[0].size()-1, &(measuredBins[0][0]),
+                                       measuredBins[1].size()-1, &(measuredBins[1][0]));
+            h_measured_mc_2d = new TH2D("h_measured_mc_2d", mc2dTitle.c_str(), 
+                                      measuredBins[0].size()-1, &(measuredBins[0][0]),
+                                      measuredBins[1].size()-1, &(measuredBins[1][0]));
+            h_truth_mc_2d = new TH2D("h_truth_mc_2d", truth2dTitle.c_str(), 
+                                   truthBins[0].size()-1, &(truthBins[0][0]),
+                                   truthBins[1].size()-1, &(truthBins[1][0]));
+            
+            // 2D response matrix (flattened)
+            int nBinsReco = (measuredBins[0].size()-1) * (measuredBins[1].size()-1);
+            int nBinsTruth = (truthBins[0].size()-1) * (truthBins[1].size()-1);
+            std::string response2dTitle = "Response Matrix;Truth Bin;Measured Bin";
+            h_response_2d = new TH2D("h_response_2d", response2dTitle.c_str(), 
+                                    nBinsTruth, 0, nBinsTruth, 
+                                    nBinsReco, 0, nBinsReco);
+            
+            log(LOG_INFO, "Created 2D histograms with " + 
+                std::to_string(h_measured_data_2d->GetNbinsX()) + "x" + 
+                std::to_string(h_measured_data_2d->GetNbinsY()) + " bins");
+        }
+        else if (ndim == 3) {
+            // 3D histograms - convert std::string to const char*
+            std::string data3dTitle = "Measured Data 3D;" + measuredVars[0] + ";" + measuredVars[1] + ";" + measuredVars[2];
+            std::string mc3dTitle = "Measured MC 3D;" + measuredVars[0] + ";" + measuredVars[1] + ";" + measuredVars[2];
+            std::string truth3dTitle = "Truth MC 3D;" + truthVars[0] + ";" + truthVars[1] + ";" + truthVars[2];
+            
+            h_measured_data_3d = new TH3D("h_measured_data_3d", data3dTitle.c_str(), 
+                                       measuredBins[0].size()-1, &(measuredBins[0][0]),
+                                       measuredBins[1].size()-1, &(measuredBins[1][0]),
+                                       measuredBins[2].size()-1, &(measuredBins[2][0]));
+            h_measured_mc_3d = new TH3D("h_measured_mc_3d", mc3dTitle.c_str(), 
+                                      measuredBins[0].size()-1, &(measuredBins[0][0]),
+                                      measuredBins[1].size()-1, &(measuredBins[1][0]),
+                                      measuredBins[2].size()-1, &(measuredBins[2][0]));
+            h_truth_mc_3d = new TH3D("h_truth_mc_3d", truth3dTitle.c_str(), 
+                                   truthBins[0].size()-1, &(truthBins[0][0]),
+                                   truthBins[1].size()-1, &(truthBins[1][0]),
+                                   truthBins[2].size()-1, &(truthBins[2][0]));
+            // 2D response matrix (flattened)
+            int nBinsReco = (measuredBins[0].size()-1) * (measuredBins[1].size()-1) * (measuredBins[2].size()-1);
+            int nBinsTruth = (truthBins[0].size()-1) * (truthBins[1].size()-1) * (truthBins[2].size()-1);
+            std::string response3dTitle = "Response Matrix;Truth Bin;Measured Bin";
+            h_response_2d = new TH2D("h_response_2d", response3dTitle.c_str(), 
+                                    nBinsTruth, 0, nBinsTruth, 
+                                    nBinsReco, 0, nBinsReco);
+            
+            log(LOG_INFO, "Created 3D histograms with " + 
+                std::to_string(h_measured_data_3d->GetNbinsX()) + "x" + 
+                std::to_string(h_measured_data_3d->GetNbinsY()) + "x" + 
+                std::to_string(h_measured_data_3d->GetNbinsZ()) + " bins");
+        } else {
+            log(LOG_ERROR, "Unsupported dimension: " + std::to_string(ndim));
+        }
+    }
+    void fillFromTree(TTree* tree, bool isMC, bool isData, const std::string& weightBranch) {
+        if (!tree) {
+            log(LOG_ERROR, "Null tree pointer provided to fillFromTree");
+            return;
+        }
+        
+        // Print the actual branches in the tree
+        log(LOG_INFO, "Tree branches available:");
+        TObjArray* branches = tree->GetListOfBranches();
+        for (int i = 0; i < std::min(20, branches->GetEntries()); ++i) {
+            log(LOG_INFO, "  - " + std::string(branches->At(i)->GetName()));
+        }
+        if (branches->GetEntries() > 20) {
+            log(LOG_INFO, "  ... and " + std::to_string(branches->GetEntries() - 20) + " more branches");
+        }
+        
+        std::vector<float> mvars_f(ndim, 0), tvars_f(ndim, 0);
+        
+        log(LOG_INFO, "Setting branch addresses for measured variables:");
+        for (int i = 0; i < ndim; ++i) {
+            log(LOG_INFO, "  - " + measuredVars[i]);
+            TBranch* branch = tree->GetBranch(measuredVars[i].c_str());
+            if (!branch) {
+                log(LOG_ERROR, "Branch not found: " + measuredVars[i]);
+                return;
+            }
+            tree->SetBranchAddress(measuredVars[i].c_str(), &mvars_f[i]);
+        }
+        
+        if (isMC) {
+            log(LOG_INFO, "Setting branch addresses for truth variables:");
+            for (int i = 0; i < ndim; ++i) {
+                log(LOG_INFO, "  - " + truthVars[i]);
+                TBranch* branch = tree->GetBranch(truthVars[i].c_str());
+                if (!branch) {
+                    log(LOG_ERROR, "Branch not found: " + truthVars[i]);
+                    return;
+                }
+                tree->SetBranchAddress(truthVars[i].c_str(), &tvars_f[i]);
+            }
+        }
+        
+        float eventWeight = 1.0;
+        TBranch* weightBr = tree->GetBranch(weightBranch.c_str());
+        if (weightBr) {
+            tree->SetBranchAddress(weightBranch.c_str(), &eventWeight);
+            log(LOG_INFO, "Using weight branch: " + weightBranch);
+        } else {
+            log(LOG_WARNING, "Weight branch '" + weightBranch + "' not found. Using weight=1.0");
+        }
+
         Long64_t nEntries = tree->GetEntries();
-        log(LOG_INFO, "Processing " + std::to_string(nEntries) + " entries for 1D jet pT unfolding");
+        log(LOG_INFO, "Processing " + std::to_string(nEntries) + " entries");
         
-        for (Long64_t i = 0; i < nEntries; i++) {
+        int validEntries = 0;
+        double sumWeights = 0.0;
+        
+        for (Long64_t i = 0; i < nEntries; ++i) {
             tree->GetEntry(i);
             
-            if (jetPt > bins.jetPt.front() && jetPt < bins.jetPt.back()) {
-                h_measured->Fill(jetPt);
-                
-                if (isMC && refJetPt > bins.jetPt.front() && refJetPt < bins.jetPt.back()) {
-                    h_truth->Fill(refJetPt);
-                    response->Fill(refJetPt, jetPt);
+            // Log some values periodically to check data
+            if (i < 5 || i % 1000 == 0) {
+                std::string valueStr = "Entry " + std::to_string(i) + " values:";
+                for (int j = 0; j < ndim; ++j) {
+                    valueStr += " " + measuredVars[j] + "=" + std::to_string(mvars_f[j]);
+                }
+                valueStr += " weight=" + std::to_string(eventWeight);
+                log(LOG_INFO, valueStr);
+            }
+            
+            // Check for valid values (non-NaN, non-Inf)
+            bool validMeas = true, validTruth = true;
+            for (int j = 0; j < ndim; ++j) {
+                if (std::isnan(mvars_f[j]) || std::isinf(mvars_f[j])) {
+                    validMeas = false;
+                    break;
+                }
+            }
+            
+            if (isMC) {
+                for (int j = 0; j < ndim; ++j) {
+                    if (std::isnan(tvars_f[j]) || std::isinf(tvars_f[j])) {
+                        validTruth = false;
+                        break;
+                    }
+                }
+            }
+            
+            // Fill appropriate histograms based on dimension
+            if (validMeas) {
+                if (ndim == 1) {
+                    if (isData) {
+                        h_measured_data_1d->Fill(mvars_f[0], eventWeight);
+                    } else {
+                        h_measured_mc_1d->Fill(mvars_f[0], eventWeight);
+                    }
+                    validEntries++;
+                    sumWeights += eventWeight;
+                } else if (ndim == 2) {
+                    if (isData) {
+                        h_measured_data_2d->Fill(mvars_f[0], mvars_f[1], eventWeight);
+                    } else {
+                        h_measured_mc_2d->Fill(mvars_f[0], mvars_f[1], eventWeight);
+                    }
+                    validEntries++;
+                    sumWeights += eventWeight;
+                } else if (ndim == 3) {
+                    if (isData) {
+                        h_measured_data_3d->Fill(mvars_f[0], mvars_f[1], mvars_f[2], eventWeight);
+                    } else {
+                        h_measured_mc_3d->Fill(mvars_f[0], mvars_f[1], mvars_f[2], eventWeight);
+                    }
+                    validEntries++;
+                    sumWeights += eventWeight;
+                }
+            }
+            
+            // Fill truth and response histograms for MC
+            if (isMC && validMeas && validTruth) {
+                if (ndim == 1) {
+                    h_truth_mc_1d->Fill(tvars_f[0], eventWeight);
+                    h_response_2d->Fill(tvars_f[0], mvars_f[0], eventWeight);
+                } else if (ndim == 2) {
+                    h_truth_mc_2d->Fill(tvars_f[0], tvars_f[1], eventWeight);
+                    
+                    // Calculate global bins for flattened 2D response
+                    int truthBin = h_truth_mc_2d->FindBin(tvars_f[0], tvars_f[1]) - 1;
+                    int measBin = h_measured_mc_2d->FindBin(mvars_f[0], mvars_f[1]) - 1;
+                    h_response_2d->Fill(truthBin, measBin, eventWeight);
+                } else if (ndim == 3) {
+                    h_truth_mc_3d->Fill(tvars_f[0], tvars_f[1], tvars_f[2], eventWeight);
+                    
+                    // Calculate global bins for flattened 3D response
+                    int truthBin = h_truth_mc_3d->FindBin(tvars_f[0], tvars_f[1], tvars_f[2]) - 1;
+                    int measBin = h_measured_mc_3d->FindBin(mvars_f[0], mvars_f[1], mvars_f[2]) - 1;
+                    h_response_2d->Fill(truthBin, measBin, eventWeight);
                 }
             }
         }
         
-        log(LOG_INFO, "Filled 1D histograms: measured=" + std::to_string(h_measured->GetEntries()) + 
-                     ", truth=" + std::to_string(h_truth->GetEntries()));
+        log(LOG_INFO, "Valid entries: " + std::to_string(validEntries) + " out of " + 
+            std::to_string(nEntries) + " (sum of weights: " + std::to_string(sumWeights) + ")");
+        
+        // Log histogram stats depending on dimension
+        if (ndim == 1) {
+            if (isData) {
+                log(LOG_INFO, "Data histogram entries: " + std::to_string(h_measured_data_1d->GetEntries()) + 
+                    ", integral: " + std::to_string(h_measured_data_1d->Integral()));
+            } else {
+                log(LOG_INFO, "MC measured histogram entries: " + std::to_string(h_measured_mc_1d->GetEntries()) + 
+                    ", integral: " + std::to_string(h_measured_mc_1d->Integral()));
+            }
+            
+            if (isMC) {
+                log(LOG_INFO, "Truth histogram entries: " + std::to_string(h_truth_mc_1d->GetEntries()) + 
+                    ", integral: " + std::to_string(h_truth_mc_1d->Integral()));
+                log(LOG_INFO, "Response histogram entries: " + std::to_string(h_response_2d->GetEntries()) + 
+                    ", integral: " + std::to_string(h_response_2d->Integral()));
+            }
+        } else if (ndim == 2) {
+            if (isData) {
+                log(LOG_INFO, "Data histogram entries: " + std::to_string(h_measured_data_2d->GetEntries()) + 
+                    ", integral: " + std::to_string(h_measured_data_2d->Integral()));
+            } else {
+                log(LOG_INFO, "MC measured histogram entries: " + std::to_string(h_measured_mc_2d->GetEntries()) + 
+                    ", integral: " + std::to_string(h_measured_mc_2d->Integral()));
+            }
+            
+            if (isMC) {
+                log(LOG_INFO, "Truth histogram entries: " + std::to_string(h_truth_mc_2d->GetEntries()) + 
+                    ", integral: " + std::to_string(h_truth_mc_2d->Integral()));
+                log(LOG_INFO, "Response histogram entries: " + std::to_string(h_response_2d->GetEntries()) + 
+                    ", integral: " + std::to_string(h_response_2d->Integral()));
+            }
+        } else if (ndim == 3) {
+            if (isData) {
+                log(LOG_INFO, "Data histogram entries: " + std::to_string(h_measured_data_3d->GetEntries()) + 
+                    ", integral: " + std::to_string(h_measured_data_3d->Integral()));
+            } else {
+                log(LOG_INFO, "MC measured histogram entries: " + std::to_string(h_measured_mc_3d->GetEntries()) + 
+                    ", integral: " + std::to_string(h_measured_mc_3d->Integral()));
+            }
+            
+            if (isMC) {
+                log(LOG_INFO, "Truth histogram entries: " + std::to_string(h_truth_mc_3d->GetEntries()) + 
+                    ", integral: " + std::to_string(h_truth_mc_3d->Integral()));
+                log(LOG_INFO, "Response histogram entries: " + std::to_string(h_response_2d->GetEntries()) + 
+                    ", integral: " + std::to_string(h_response_2d->Integral()));
+            }
+        }
     }
-    
-    TH1D* performUnfolding(const std::string& method = "Invert", int nIter = 4) {
-        if (!response) {
-            log(LOG_ERROR, "No response matrix for 1D unfolding!");
-            return nullptr;
+    void performUnfolding(const std::string& method, int nIter) {
+        if (ndim == 0) {
+            log(LOG_ERROR, "Cannot unfold with dimension 0. No dimensions set.");
+            return;
         }
         
-        log(LOG_INFO, "Performing 1D RooUnfold with method=" + method + (method=="Bayes" ? (", nIter="+std::to_string(nIter)) : ""));
+        // Create RooUnfoldResponse object based on dimension
+        response = new RooUnfoldResponse();
         
-        if (unfold) delete unfold;
-        if (method == "Invert") {
-            unfold = new RooUnfoldInvert(response, h_measured);
-        } else if (method == "Bayes") {
-            unfold = new RooUnfoldBayes(response, h_measured, nIter);
+        if (ndim == 1) {
+            log(LOG_INFO, "Setting up 1D response matrix");
+            response->Setup(h_measured_mc_1d, h_truth_mc_1d, h_response_2d);
+            
+            // Choose unfolding method
+            if (method == "Bayes") {
+                unfold = new RooUnfoldBayes(response, h_measured_data_1d, nIter);
+                log(LOG_INFO, "Using Bayesian unfolding with " + std::to_string(nIter) + " iterations");
+            } else if (method == "SVD") {
+                unfold = new RooUnfoldSvd(response, h_measured_data_1d, nIter);
+                log(LOG_INFO, "Using SVD unfolding with kterm=" + std::to_string(nIter));
+            } else if (method == "BinByBin") {
+                unfold = new RooUnfoldBinByBin(response, h_measured_data_1d);
+                log(LOG_INFO, "Using bin-by-bin unfolding");
+            } else { // Invert or MatrixInversion
+                unfold = new RooUnfoldInvert(response, h_measured_data_1d);
+                log(LOG_INFO, "Using matrix inversion unfolding");
+            }
+        } else if (ndim == 2) {
+            log(LOG_INFO, "Setting up 2D response matrix");
+            // Convert to TH1D (flattened)
+            TH1D* h_meas_data_flat = new TH1D("h_meas_data_flat", "Flattened Measured Data", 
+                                           h_measured_data_2d->GetNcells(), 0, h_measured_data_2d->GetNcells());
+            TH1D* h_meas_mc_flat = new TH1D("h_meas_mc_flat", "Flattened Measured MC", 
+                                         h_measured_mc_2d->GetNcells(), 0, h_measured_mc_2d->GetNcells());
+            TH1D* h_truth_mc_flat = new TH1D("h_truth_mc_flat", "Flattened Truth MC", 
+                                          h_truth_mc_2d->GetNcells(), 0, h_truth_mc_2d->GetNcells());
+            
+            // Fill flattened histograms
+            for (int i = 1; i <= h_measured_data_2d->GetNbinsX(); ++i) {
+                for (int j = 1; j <= h_measured_data_2d->GetNbinsY(); ++j) {
+                    int bin = (i-1) * h_measured_data_2d->GetNbinsY() + j;
+                    h_meas_data_flat->SetBinContent(bin, h_measured_data_2d->GetBinContent(i, j));
+                    h_meas_mc_flat->SetBinContent(bin, h_measured_mc_2d->GetBinContent(i, j));
+                }
+            }
+            
+            for (int i = 1; i <= h_truth_mc_2d->GetNbinsX(); ++i) {
+                for (int j = 1; j <= h_truth_mc_2d->GetNbinsY(); ++j) {
+                    int bin = (i-1) * h_truth_mc_2d->GetNbinsY() + j;
+                    h_truth_mc_flat->SetBinContent(bin, h_truth_mc_2d->GetBinContent(i, j));
+                }
+            }
+            
+            response->Setup(h_meas_mc_flat, h_truth_mc_flat, h_response_2d);
+            
+            // Choose unfolding method
+            if (method == "Bayes") {
+                unfold = new RooUnfoldBayes(response, h_meas_data_flat, nIter);
+                log(LOG_INFO, "Using Bayesian unfolding with " + std::to_string(nIter) + " iterations");
+            } else if (method == "SVD") {
+                unfold = new RooUnfoldSvd(response, h_meas_data_flat, nIter);
+                log(LOG_INFO, "Using SVD unfolding with kterm=" + std::to_string(nIter));
+            } else if (method == "BinByBin") {
+                unfold = new RooUnfoldBinByBin(response, h_meas_data_flat);
+                log(LOG_INFO, "Using bin-by-bin unfolding");
+            } else { // Invert or MatrixInversion
+                unfold = new RooUnfoldInvert(response, h_meas_data_flat);
+                log(LOG_INFO, "Using matrix inversion unfolding");
+            }
+        } else if (ndim == 3) {
+            log(LOG_INFO, "Setting up 3D response matrix");
+            // Convert to TH1D (flattened)
+            TH1D* h_meas_data_flat = new TH1D("h_meas_data_flat", "Flattened Measured Data", 
+                                           h_measured_data_3d->GetNcells(), 0, h_measured_data_3d->GetNcells());
+            TH1D* h_meas_mc_flat = new TH1D("h_meas_mc_flat", "Flattened Measured MC", 
+                                         h_measured_mc_3d->GetNcells(), 0, h_measured_mc_3d->GetNcells());
+            TH1D* h_truth_mc_flat = new TH1D("h_truth_mc_flat", "Flattened Truth MC", 
+                                          h_truth_mc_3d->GetNcells(), 0, h_truth_mc_3d->GetNcells());
+            
+            // Fill flattened histograms (more complex for 3D)
+            for (int i = 1; i <= h_measured_data_3d->GetNbinsX(); ++i) {
+                for (int j = 1; j <= h_measured_data_3d->GetNbinsY(); ++j) {
+                    for (int k = 1; k <= h_measured_data_3d->GetNbinsZ(); ++k) {
+                        int bin = (i-1) * h_measured_data_3d->GetNbinsY() * h_measured_data_3d->GetNbinsZ() + 
+                                 (j-1) * h_measured_data_3d->GetNbinsZ() + k;
+                        h_meas_data_flat->SetBinContent(bin, h_measured_data_3d->GetBinContent(i, j, k));
+                        h_meas_mc_flat->SetBinContent(bin, h_measured_mc_3d->GetBinContent(i, j, k));
+                    }
+                }
+            }
+            
+            for (int i = 1; i <= h_truth_mc_3d->GetNbinsX(); ++i) {
+                for (int j = 1; j <= h_truth_mc_3d->GetNbinsY(); ++j) {
+                    for (int k = 1; k <= h_truth_mc_3d->GetNbinsZ(); ++k) {
+                        int bin = (i-1) * h_truth_mc_3d->GetNbinsY() * h_truth_mc_3d->GetNbinsZ() + 
+                                 (j-1) * h_truth_mc_3d->GetNbinsZ() + k;
+                        h_truth_mc_flat->SetBinContent(bin, h_truth_mc_3d->GetBinContent(i, j, k));
+                    }
+                }
+            }
+            
+            response->Setup(h_meas_mc_flat, h_truth_mc_flat, h_response_2d);
+            
+            // Choose unfolding method
+            if (method == "Bayes") {
+                unfold = new RooUnfoldBayes(response, h_meas_data_flat, nIter);
+                log(LOG_INFO, "Using Bayesian unfolding with " + std::to_string(nIter) + " iterations");
+            } else if (method == "SVD") {
+                unfold = new RooUnfoldSvd(response, h_meas_data_flat, nIter);
+                log(LOG_INFO, "Using SVD unfolding with kterm=" + std::to_string(nIter));
+            } else if (method == "BinByBin") {
+                unfold = new RooUnfoldBinByBin(response, h_meas_data_flat);
+                log(LOG_INFO, "Using bin-by-bin unfolding");
+            } else { // Invert or MatrixInversion
+                unfold = new RooUnfoldInvert(response, h_meas_data_flat);
+                log(LOG_INFO, "Using matrix inversion unfolding");
+            }
+        }
+        
+        // Set options and perform unfolding
+        unfold->SetVerbose(1);
+        TH1* h_unfolded = (TH1*)unfold->Hreco();  // Hreco() is the correct method name in RooUnfold
+        if (!h_unfolded) {
+            log(LOG_ERROR, "Unfolding failed, no histogram returned");
         } else {
-            log(LOG_ERROR, "Unknown unfolding method: " + method);
-            return nullptr;
+            log(LOG_INFO, "Unfolding successful, got histogram with " + 
+                std::to_string(h_unfolded->GetEntries()) + " entries and integral " + 
+                std::to_string(h_unfolded->Integral()));
         }
-        
-        TH1D* h_unfolded = (TH1D*)unfold->Hreco();
-        if (h_unfolded) {
-            h_unfolded->SetName("h_jetPt_unfolded");
-            h_unfolded->SetTitle("Unfolded Jet p_{T};Jet p_{T} [GeV];Events");
-            log(LOG_INFO, "1D unfolding successful! Unfolded integral: " + std::to_string(h_unfolded->Integral()));
-        }
-        
-        return h_unfolded;
     }
     
-    TH1D* getMeasured() { return h_measured; }
-    TH1D* getTruth() { return h_truth; }
-    RooUnfoldResponse* getResponse() { return response; }
+    // Generic getters based on dimension
+    TObject* getMeasuredData() { 
+        if (ndim == 1) return h_measured_data_1d;
+        if (ndim == 2) return h_measured_data_2d;
+        if (ndim == 3) return h_measured_data_3d;
+        return nullptr;
+    }
     
-    ~JetPtUnfolder() {
-        delete unfold;
-        delete response;
+    TObject* getMeasuredMC() { 
+        if (ndim == 1) return h_measured_mc_1d;
+        if (ndim == 2) return h_measured_mc_2d;
+        if (ndim == 3) return h_measured_mc_3d;
+        return nullptr;
     }
+    
+    TObject* getTruthMC() { 
+        if (ndim == 1) return h_truth_mc_1d;
+        if (ndim == 2) return h_truth_mc_2d;
+        if (ndim == 3) return h_truth_mc_3d;
+        return nullptr;
+    }
+    
+    TObject* getResponse() { return h_response_2d; }
+    // Flatten N-dimensional response to TH2D for plotting (since we already use TH2D, this is simplified)
+    TH2D* flattenResponse() {
+        // We're already using TH2D for the response matrix, simply clone it
+        if (h_response_2d) {
+            return (TH2D*)h_response_2d->Clone("h_response_flat");
+        }
+        
+        // Fallback if response matrix is null
+        int nTruth = 1, nMeas = 1;
+        for (int i = 0; i < ndim; ++i) nTruth *= truthBins[i].size()-1;
+        for (int i = 0; i < ndim; ++i) nMeas *= measuredBins[i].size()-1;
+        
+        return new TH2D("h_response_flat", 
+                       "Response Matrix (flattened);Global Truth Bin;Global Measured Bin", 
+                       nTruth, 0, nTruth, nMeas, 0, nMeas);
+    }
+    ~GenericUnfolderND() { delete unfold; delete response; }
 };
 
-// 2D Unfolding: Jet pT vs Girth
-class JetPtGirthUnfolder {
-private:
-    UnfoldingBins bins;
-    TH2D* h_measured;
-    TH2D* h_truth;
-    TH1D* h_measured_1d;
-    TH1D* h_truth_1d;
-    RooUnfoldResponse* response;
-    RooUnfold* unfold;
-public:
-    JetPtGirthUnfolder(const UnfoldingBins& b) : bins(b), unfold(nullptr) {
-        h_measured = new TH2D("h_jetPt_girth_measured", "Measured;Jet p_{T} [GeV];Jet Girth", 
-            bins.nJetPt(), &bins.jetPt[0], bins.nJetGirth(), &bins.jetGirth[0]);
-        h_truth = new TH2D("h_jetPt_girth_truth", "Truth;Jet p_{T} [GeV];Jet Girth", 
-            bins.nJetPt(), &bins.jetPt[0], bins.nJetGirth(), &bins.jetGirth[0]);
-        int nBins2D = bins.nJetPt() * bins.nJetGirth();
-        h_measured_1d = new TH1D("h_jetPt_girth_measured_1d", "Measured 2D (flattened)", nBins2D, 0, nBins2D);
-        h_truth_1d = new TH1D("h_jetPt_girth_truth_1d", "Truth 2D (flattened)", nBins2D, 0, nBins2D);
-        response = new RooUnfoldResponse(h_measured_1d, h_truth_1d);
-        log(LOG_INFO, "Created 2D unfolding histograms for jet pT vs girth");
-    }
-    void fillFromTree(TTree* tree, bool isMC = false) {
-        Float_t jetPt, jetGirth, refJetPt = -999, refJetGirth = -999;
-        tree->SetBranchAddress("jetPt_AK2Z2", &jetPt);
-        tree->SetBranchAddress("jetGirth_AK2Z2", &jetGirth);
-        if (isMC) {
-            tree->SetBranchAddress("refJetPt_AK2Z2", &refJetPt);
-            tree->SetBranchAddress("refJetGirth_AK2Z2", &refJetGirth);
-        }
-        Long64_t nEntries = tree->GetEntries();
-        log(LOG_INFO, "Processing " + std::to_string(nEntries) + " entries for 2D jet pT vs girth unfolding");
-        int nFilled = 0;
-        for (Long64_t i = 0; i < nEntries; i++) {
-            tree->GetEntry(i);
-            if (jetPt > bins.jetPt.front() && jetPt < bins.jetPt.back() &&
-                jetGirth > bins.jetGirth.front() && jetGirth < bins.jetGirth.back()) {
-                h_measured->Fill(jetPt, jetGirth);
-                int measBinX = h_measured->GetXaxis()->FindBin(jetPt) - 1;
-                int measBinY = h_measured->GetYaxis()->FindBin(jetGirth) - 1;
-                int globalMeasBin = getGlobalBin2D(measBinX, measBinY, bins.nJetPt());
-                h_measured_1d->Fill(globalMeasBin);
-                if (isMC && refJetPt > bins.jetPt.front() && refJetPt < bins.jetPt.back() &&
-                    refJetGirth > bins.jetGirth.front() && refJetGirth < bins.jetGirth.back()) {
-                    h_truth->Fill(refJetPt, refJetGirth);
-                    int truthBinX = h_truth->GetXaxis()->FindBin(refJetPt) - 1;
-                    int truthBinY = h_truth->GetYaxis()->FindBin(refJetGirth) - 1;
-                    int globalTruthBin = getGlobalBin2D(truthBinX, truthBinY, bins.nJetPt());
-                    h_truth_1d->Fill(globalTruthBin);
-                    response->Fill(globalTruthBin, globalMeasBin);
-                    if (nFilled < 10) {
-                        log(LOG_DEBUG, "Filling response: truth (" + std::to_string(truthBinX) + "," + std::to_string(truthBinY) + ") => " + std::to_string(globalTruthBin) + ", measured (" + std::to_string(measBinX) + "," + std::to_string(measBinY) + ") => " + std::to_string(globalMeasBin));
-                        nFilled++;
-                    }
-                }
-            }
-        }
-        log(LOG_INFO, "Filled 2D histograms: measured=" + std::to_string(h_measured->GetEntries()) + ", truth=" + std::to_string(h_truth->GetEntries()));
-        log(LOG_INFO, "Filled 2D response: measured_1d=" + std::to_string(h_measured_1d->GetEntries()) + ", truth_1d=" + std::to_string(h_truth_1d->GetEntries()));
-        // Count nonzero bins in response matrix
-        int nonzero = 0;
-        TH2D* hresp = (TH2D*)response->Hresponse();
-        for (int ix = 1; ix <= hresp->GetNbinsX(); ++ix) {
-            for (int iy = 1; iy <= hresp->GetNbinsY(); ++iy) {
-                if (hresp->GetBinContent(ix, iy) != 0) ++nonzero;
-            }
-        }
-        log(LOG_INFO, "Response matrix nonzero bins: " + std::to_string(nonzero));
-    }
-    TH2D* performUnfolding(const std::string& method = "Invert", int nIter = 4) {
-        if (!response) {
-            log(LOG_ERROR, "No response matrix for 2D unfolding!");
-            return nullptr;
-        }
-        log(LOG_INFO, "Performing 2D RooUnfold with method=Invert");
-        if (unfold) delete unfold;
-        unfold = new RooUnfoldInvert(response, h_measured);
-        TH2D* h_unfolded = (TH2D*)unfold->Hreco();
-        if (h_unfolded) {
-            h_unfolded->SetName("h_jetPt_girth_unfolded");
-            h_unfolded->SetTitle("Unfolded;Jet p_{T} [GeV];Jet Girth");
-            h_unfolded->GetXaxis()->Set(bins.nJetPt(), &bins.jetPt[0]);
-            h_unfolded->GetYaxis()->Set(bins.nJetGirth(), &bins.jetGirth[0]);
-            log(LOG_INFO, "2D unfolding successful! Unfolded integral: " + std::to_string(h_unfolded->Integral()));
-        }
-        return h_unfolded;
-    }
-    TH2D* getMeasured() { return h_measured; }
-    TH2D* getTruth() { return h_truth; }
-    RooUnfoldResponse* getResponse() { return response; }
-    ~JetPtGirthUnfolder() { delete unfold; delete response; }
-};
-
-// 3D Unfolding: PhotonEt vs JetPt vs Girth
-class PhotonJetPtGirthUnfolder {
-private:
-    UnfoldingBins bins;
-    TH3D* h_measured;
-    TH3D* h_truth;
-    TH1D* h_measured_1d;
-    TH1D* h_truth_1d;
-    RooUnfoldResponse* response;
-    RooUnfold* unfold;
-public:
-    PhotonJetPtGirthUnfolder(const UnfoldingBins& b) : bins(b), unfold(nullptr) {
-        h_measured = new TH3D("h_photon_jetPt_girth_measured", "Measured;Photon E_{T} [GeV];Jet p_{T} [GeV];Jet Girth", 
-            bins.nPhotonEt(), &bins.photonEt[0], bins.nJetPt(), &bins.jetPt[0], bins.nJetGirth(), &bins.jetGirth[0]);
-        h_truth = new TH3D("h_photon_jetPt_girth_truth", "Truth;Photon E_{T} [GeV];Jet p_{T} [GeV];Jet Girth", 
-            bins.nPhotonEt(), &bins.photonEt[0], bins.nJetPt(), &bins.jetPt[0], bins.nJetGirth(), &bins.jetGirth[0]);
-        int nBins3D = bins.nPhotonEt() * bins.nJetPt() * bins.nJetGirth();
-        h_measured_1d = new TH1D("h_photon_jetPt_girth_measured_1d", "Measured 3D (flattened)", nBins3D, 0, nBins3D);
-        h_truth_1d = new TH1D("h_photon_jetPt_girth_truth_1d", "Truth 3D (flattened)", nBins3D, 0, nBins3D);
-        response = new RooUnfoldResponse(h_measured_1d, h_truth_1d);
-        log(LOG_INFO, "Created 3D unfolding histograms for photonEt vs jetPt vs girth");
-    }
-    void fillFromTree(TTree* tree, bool isMC = false) {
-        Float_t photonEt, jetPt, jetGirth;
-        Float_t MCphotonEt = -999, refJetPt = -999, refJetGirth = -999;
-        tree->SetBranchAddress("photonEt", &photonEt);
-        tree->SetBranchAddress("jetPt_AK2Z2", &jetPt);
-        tree->SetBranchAddress("jetGirth_AK2Z2", &jetGirth);
-        if (isMC) {
-            tree->SetBranchAddress("MCphotonEt", &MCphotonEt);
-            tree->SetBranchAddress("refJetPt_AK2Z2", &refJetPt);
-            tree->SetBranchAddress("refJetGirth_AK2Z2", &refJetGirth);
-        }
-        Long64_t nEntries = tree->GetEntries();
-        log(LOG_INFO, "Processing " + std::to_string(nEntries) + " entries for 3D photonEt vs jetPt vs girth unfolding");
-        int nFilled = 0;
-        for (Long64_t i = 0; i < nEntries; i++) {
-            tree->GetEntry(i);
-            if (photonEt > bins.photonEt.front() && photonEt < bins.photonEt.back() &&
-                jetPt > bins.jetPt.front() && jetPt < bins.jetPt.back() &&
-                jetGirth > bins.jetGirth.front() && jetGirth < bins.jetGirth.back()) {
-                h_measured->Fill(photonEt, jetPt, jetGirth);
-                int measBinX = h_measured->GetXaxis()->FindBin(photonEt) - 1;
-                int measBinY = h_measured->GetYaxis()->FindBin(jetPt) - 1;
-                int measBinZ = h_measured->GetZaxis()->FindBin(jetGirth) - 1;
-                int globalMeasBin = getGlobalBin3D(measBinX, measBinY, measBinZ, bins.nPhotonEt(), bins.nJetPt());
-                h_measured_1d->Fill(globalMeasBin);
-                if (isMC && MCphotonEt > bins.photonEt.front() && MCphotonEt < bins.photonEt.back() &&
-                    refJetPt > bins.jetPt.front() && refJetPt < bins.jetPt.back() &&
-                    refJetGirth > bins.jetGirth.front() && refJetGirth < bins.jetGirth.back()) {
-                    h_truth->Fill(MCphotonEt, refJetPt, refJetGirth);
-                    int truthBinX = h_truth->GetXaxis()->FindBin(MCphotonEt) - 1;
-                    int truthBinY = h_truth->GetYaxis()->FindBin(refJetPt) - 1;
-                    int truthBinZ = h_truth->GetZaxis()->FindBin(refJetGirth) - 1;
-                    int globalTruthBin = getGlobalBin3D(truthBinX, truthBinY, truthBinZ, bins.nPhotonEt(), bins.nJetPt());
-                    h_truth_1d->Fill(globalTruthBin);
-                    response->Fill(globalTruthBin, globalMeasBin);
-                    if (nFilled < 10) {
-                        log(LOG_DEBUG, "Filling response: truth (" + std::to_string(truthBinX) + "," + std::to_string(truthBinY) + "," + std::to_string(truthBinZ) + ") => " + std::to_string(globalTruthBin) + ", measured (" + std::to_string(measBinX) + "," + std::to_string(measBinY) + "," + std::to_string(measBinZ) + ") => " + std::to_string(globalMeasBin));
-                        nFilled++;
-                    }
-                }
-            }
-        }
-        log(LOG_INFO, "Filled 3D histograms: measured=" + std::to_string(h_measured->GetEntries()) + ", truth=" + std::to_string(h_truth->GetEntries()));
-        log(LOG_INFO, "Filled 3D response: measured_1d=" + std::to_string(h_measured_1d->GetEntries()) + ", truth_1d=" + std::to_string(h_truth_1d->GetEntries()));
-        // Count nonzero bins in response matrix
-        int nonzero3 = 0;
-        TH2D* hresp3 = (TH2D*)response->Hresponse();
-        for (int ix = 1; ix <= hresp3->GetNbinsX(); ++ix) {
-            for (int iy = 1; iy <= hresp3->GetNbinsY(); ++iy) {
-                if (hresp3->GetBinContent(ix, iy) != 0) ++nonzero3;
-            }
-        }
-        log(LOG_INFO, "Response matrix nonzero bins: " + std::to_string(nonzero3));
-    }
-    TH3D* performUnfolding(const std::string& method = "Invert", int nIter = 4) {
-        if (!response) {
-            log(LOG_ERROR, "No response matrix for 3D unfolding!");
-            return nullptr;
-        }
-        log(LOG_INFO, "Performing 3D RooUnfold with method=Invert");
-        if (unfold) delete unfold;
-        unfold = new RooUnfoldInvert(response, h_measured);
-        TH3D* h_unfolded = (TH3D*)unfold->Hreco();
-        if (h_unfolded) {
-            h_unfolded->SetName("h_photon_jetPt_girth_unfolded");
-            h_unfolded->SetTitle("Unfolded;Photon E_{T} [GeV];Jet p_{T} [GeV];Jet Girth");
-            h_unfolded->GetXaxis()->Set(bins.nPhotonEt(), &bins.photonEt[0]);
-            h_unfolded->GetYaxis()->Set(bins.nJetPt(), &bins.jetPt[0]);
-            h_unfolded->GetZaxis()->Set(bins.nJetGirth(), &bins.jetGirth[0]);
-            log(LOG_INFO, "3D unfolding successful! Unfolded integral: " + std::to_string(h_unfolded->Integral()));
-        }
-        return h_unfolded;
-    }
-    TH3D* getMeasured() { return h_measured; }
-    TH3D* getTruth() { return h_truth; }
-    RooUnfoldResponse* getResponse() { return response; }
-    ~PhotonJetPtGirthUnfolder() { delete unfold; delete response; }
-};
 
 // ---
 // FLATTENING AND AXIS STRUCTURE FOR MULTI-DIMENSIONAL RESPONSE MATRICES
@@ -372,659 +589,335 @@ public:
 //   - Additional axes: photonEt (repeats for each jetPt/girth), jetPt (repeats for each girth, cycles for photonEt), girth (cycles fastest)
 // ---
 
-// Main unfolding function
-void RooUnfoldJetSubstructure(const char* configFile = "../configs/UnfoldJetSub_xj_test.config") {
-    // gSystem->Load("./RooUnfold/libRooUnfold.so");
-    // gSystem->AddIncludePath("-I./RooUnfold/src");
+// Helper: Parse all Unfold* sets from TEnv config
+std::vector<std::string> getUnfoldSetNames(TEnv* config) {
+    std::vector<std::string> sets;
+    std::set<std::string> found;
     
+    log(LOG_INFO, "Searching for unfolding sets in config...");
+    
+    // Get the config file path
+    std::string configFile = config->GetValue("InputConfigFile", "../configs/UnfoldJetSub_xj_test.config");
+    
+    // Read the file line by line directly
+    log(LOG_INFO, "Reading config file: " + configFile);
+    std::ifstream infile(configFile.c_str());
+    if (!infile.is_open()) {
+        log(LOG_ERROR, "Failed to open config file: " + configFile);
+        return sets;
+    }
+    
+    std::string line;
+    while (std::getline(infile, line)) {
+        // Skip comments, empty lines
+        if (line.empty() || line[0] == '#') {
+            continue;
+        }
+        
+        // Look for lines with "UnfoldingDimension" - these define unfolding sets
+        size_t dimPos = line.find(".UnfoldingDimension");
+        if (dimPos != std::string::npos && line.substr(0, 6) == "Unfold") {
+            std::string prefix = line.substr(0, dimPos);
+            if (found.insert(prefix).second) {
+                sets.push_back(prefix);
+                log(LOG_INFO, "Found unfolding set: " + prefix);
+            }
+        }
+    }
+    
+    log(LOG_INFO, "Found " + std::to_string(sets.size()) + " unfolding sets to process.");
+    for (const auto& set : sets) {
+        log(LOG_INFO, "  - " + set);
+    }
+    
+    return sets;
+}
+
+// Helper: Parse int vector from string
+std::vector<int> parseIntVec(const std::string& s) {
+    std::vector<int> v;
+    std::stringstream ss(s);
+    int x;
+    while (ss >> x) v.push_back(x);
+    return v;
+}
+
+// Forward declaration and simple implementation of plotResponseMatrix
+void plotResponseMatrix(const std::string& set, GenericUnfolderND& unfolder, const std::vector<std::vector<double>>& measuredBins, const std::vector<std::string>& measuredVars) {
+    log(LOG_INFO, "Creating response matrix plot for set: " + set);
+    TCanvas* c_resp = new TCanvas((set+"_response_matrix").c_str(), (set+" Response Matrix").c_str(), 900, 800);
+    c_resp->cd();
+    
+    // Get the response matrix
+    TH2D* h_response = (TH2D*)unfolder.getResponse();
+    if (h_response) {
+        h_response->Draw("COLZ");
+        h_response->SetStats(0);
+        h_response->SetTitle(("Response Matrix for " + set).c_str());
+        c_resp->SetLogz();
+    } else {
+        log(LOG_WARNING, "No response matrix available for plotting");
+        // Create a simple placeholder
+        TH2D* h_simple = new TH2D((set+"_response_simple").c_str(), "Response Matrix (Placeholder)", 10, 0, 10, 10, 0, 10);
+        h_simple->Draw("COLZ");
+    }
+    
+    c_resp->Write();
+}
+
+// Edit 4: Refactor main function to use only generic logic and config-driven workflow
+void RooUnfoldJetSubstructure(const char* configFile = "../configs/UnfoldJetSub_xj_test.config") {
     TStopwatch timer;
     timer.Start();
-    
     log(LOG_INFO, "=== RooUnfold Jet Substructure Unfolding ===");
     log(LOG_INFO, "Loading configuration from: " + std::string(configFile));
     
-    // Load configuration
+    // Explicitly set verbosity high for debugging
+    gVerbosity = LOG_DEBUG;
+    
     TEnv* config = new TEnv(configFile);
-    gVerbosity = config->GetValue("Verbosity", 2);
+    // Store the config file path in the TEnv for later use
+    config->SetValue("InputConfigFile", configFile);
     
-    // Get input files
-    const char* dataInputFile = config->GetValue("DataInputFile", "");
-    const char* mcInputFile = config->GetValue("MCInputFile", "");
-    const char* outputDir = config->GetValue("OutputDir", "./");
-    const char* outputPrefix = config->GetValue("OutputPrefix", "roounfold");
+    gVerbosity = config->GetValue("default.Verbosity", 2);
     
-    // Create output directory
+    // Ensure file exists
+    if (gSystem->AccessPathName(configFile)) {
+        log(LOG_ERROR, "Config file not found: " + std::string(configFile));
+        return;
+    }
+    
+    std::vector<std::string> unfoldSets = getUnfoldSetNames(config);
+    if (unfoldSets.empty()) {
+        log(LOG_WARNING, "No unfolding sets found in config file. Check your configuration.");
+    }
+    
+    const char* outputDir = config->GetValue("default.OutputDir", "./");
+    const char* outputPrefix = config->GetValue("default.OutputPrefix", "roounfold");
     gSystem->mkdir(outputDir, kTRUE);
-    log(LOG_INFO, "Output directory: " + std::string(outputDir));
-    
-    // Setup binning
-    UnfoldingBins bins;
-    bins.print();
-    
-    // Open files
-    TFile* dataFile = TFile::Open(dataInputFile);
-    TFile* mcFile = TFile::Open(mcInputFile);
-    
-    if (!dataFile || dataFile->IsZombie()) {
-        log(LOG_ERROR, "Could not open data file: " + std::string(dataInputFile));
-        return;
-    }
-    
-    if (!mcFile || mcFile->IsZombie()) {
-        log(LOG_ERROR, "Could not open MC file: " + std::string(mcInputFile));
-        return;
-    }
-    
-    // Get trees
-    TTree* dataTree = (TTree*)dataFile->Get("gammaJetTree");
-    TTree* mcTree = (TTree*)mcFile->Get("gammaJetTree");
-    
-    if (!dataTree || !mcTree) {
-        log(LOG_ERROR, "Could not find gammaJetTree in input files");
-        return;
-    }
-    
-    log(LOG_INFO, "Data entries: " + std::to_string(dataTree->GetEntries()));
-    log(LOG_INFO, "MC entries: " + std::to_string(mcTree->GetEntries()));
-    
-    // === 1D Unfolding: Jet pT ===
-    log(LOG_INFO, "\n=== 1D Unfolding: Jet pT ===");
-    JetPtUnfolder unfolder1D(bins);
-    unfolder1D.fillFromTree(dataTree, false);  // Data
-    unfolder1D.fillFromTree(mcTree, true);     // MC for response
-    TH1D* unfolded1D = unfolder1D.performUnfolding("Invert");  // Matrix inversion for first pass
-    
-    // === 2D Unfolding: Jet pT vs Girth ===
-    log(LOG_INFO, "\n=== 2D Unfolding: Jet pT vs Girth ===");
-    JetPtGirthUnfolder unfolder2D(bins);
-    unfolder2D.fillFromTree(dataTree, false);
-    unfolder2D.fillFromTree(mcTree, true);
-    TH2D* unfolded2D = unfolder2D.performUnfolding("Invert");
-    // === 3D Unfolding: PhotonEt vs JetPt vs Girth ===
-    log(LOG_INFO, "\n=== 3D Unfolding: PhotonEt vs JetPt vs Girth ===");
-    PhotonJetPtGirthUnfolder unfolder3D(bins);
-    unfolder3D.fillFromTree(dataTree, false);
-    unfolder3D.fillFromTree(mcTree, true);
-    TH3D* unfolded3D = unfolder3D.performUnfolding("Invert");
-    // === Save Results ===
     std::string outputPath = std::string(outputDir) + "/" + std::string(outputPrefix) + "_roounfold.root";
     TFile* outFile = TFile::Open(outputPath.c_str(), "RECREATE");
-    if (outFile && !outFile->IsZombie()) {
-        // 1D results
-        TDirectory* dir1D = outFile->mkdir("Unfolding1D");
-        dir1D->cd();
-        unfolder1D.getMeasured()->Write();
-        unfolder1D.getTruth()->Write();
-        if (unfolded1D) unfolded1D->Write();
-        if (unfolder1D.getResponse()) unfolder1D.getResponse()->Write();
-        if (unfolder1D.getResponse()) {
-            TH2D* h_resp = (TH2D*)unfolder1D.getResponse()->Hresponse();
-            if (h_resp) {
-                TH2D* h_phys = (TH2D*)h_resp->Clone("h_jetPt_response");
-                h_phys->SetTitle("Response Matrix;Truth Jet p_{T} [GeV];Measured Jet p_{T} [GeV]");
-                h_phys->GetXaxis()->Set(bins.nJetPt(), &bins.jetPt[0]);
-                h_phys->GetYaxis()->Set(bins.nJetPt(), &bins.jetPt[0]);
-                // Remove default axis titles for consistency
-                h_phys->GetXaxis()->SetTitle("");
-                h_phys->GetYaxis()->SetTitle("");
-                h_phys->Write();
-                // Draw and overlay physical axis for 1D
-                TCanvas* c1 = new TCanvas("c_jetPt_response", "1D Response Matrix with Physical Axes", 800, 700);
-                c1->SetBottomMargin(0.20); // Margin for additional axis
-                c1->SetLeftMargin(0.20);
-                h_phys->Draw("COLZ");
-                double x1 = h_phys->GetXaxis()->GetXmin();
-                double x2 = h_phys->GetXaxis()->GetXmax();
-                double y1 = h_phys->GetYaxis()->GetXmin();
-                double y2 = h_phys->GetYaxis()->GetXmax();
-                
-                // X: Draw jetPt axis below default X
-                std::vector<double> jetPtEdges = bins.jetPt;
-                int nPt = bins.nJetPt();
-                double axisY = y1 - 0.15*(y2-y1);
-                TGaxis* ptXAxis = new TGaxis(x1, axisY, x2, axisY, jetPtEdges.front(), jetPtEdges.back(), nPt, "S-");
-                ptXAxis->SetLabelColor(kBlack);
-                ptXAxis->SetLineColor(kBlack);
-                ptXAxis->SetLabelSize(0.020);
-                ptXAxis->SetTitleSize(0.025);
-                ptXAxis->SetTickSize(0.015);
-                ptXAxis->SetTitle("Truth Jet p_{T} [GeV]");
-                for (int i = 0; i <= nPt; ++i) {
-                  if (i < (int)jetPtEdges.size()) {
-                    ptXAxis->ChangeLabel(i+1, -1, -1, -1, -1, -1, std::to_string((int)jetPtEdges[i]).c_str());
-                  }
-                }
-                ptXAxis->Draw();
-                
-                // Y: Draw jetPt axis left of default Y
-                double axisX = x1 - 0.15*(x2-x1);
-                TGaxis* ptYAxis = new TGaxis(axisX, y1, axisX, y2, jetPtEdges.front(), jetPtEdges.back(), nPt, "S-");
-                ptYAxis->SetLabelColor(kBlack);
-                ptYAxis->SetLineColor(kBlack);
-                ptYAxis->SetLabelSize(0.020);
-                ptYAxis->SetTitleSize(0.025);
-                ptYAxis->SetTickSize(0.015);
-                ptYAxis->SetTitle("Measured Jet p_{T} [GeV]");
-                for (int i = 0; i <= nPt; ++i) {
-                  if (i < (int)jetPtEdges.size()) {
-                    ptYAxis->ChangeLabel(i+1, -1, -1, -1, -1, -1, std::to_string((int)jetPtEdges[i]).c_str());
-                  }
-                }
-                ptYAxis->Draw();
-                
-                c1->Write();
-                c1->SaveAs((std::string("c_jetPt_response.png")).c_str());
-            }
-        }
-        // 2D results
-        TDirectory* dir2D = outFile->mkdir("Unfolding2D");
-        dir2D->cd();
-        unfolder2D.getMeasured()->Write();
-        unfolder2D.getTruth()->Write();
-        if (unfolded2D) unfolded2D->Write();
-        if (unfolder2D.getResponse()) unfolder2D.getResponse()->Write();
-        if (unfolder2D.getResponse()) {
-            TH2D* h_resp2 = (TH2D*)unfolder2D.getResponse()->Hresponse();
-            if (h_resp2) {
-                TH2D* h_phys2 = (TH2D*)h_resp2->Clone("h_jetPt_girth_response");
-                h_phys2->SetTitle("Response Matrix;Truth [Jet p_{T}, Girth];Measured [Jet p_{T}, Girth]");
-                h_phys2->GetXaxis()->Set(bins.nJetPt()*bins.nJetGirth(), 0, bins.nJetPt()*bins.nJetGirth());
-                h_phys2->GetYaxis()->Set(bins.nJetPt()*bins.nJetGirth(), 0, bins.nJetPt()*bins.nJetGirth());
-                // Remove default axis titles
-                h_phys2->GetXaxis()->SetTitle("");
-                h_phys2->GetYaxis()->SetTitle("");
-                h_phys2->Write();
-                // Draw and overlay segmented cycling physical axes for 2D
-                TCanvas* c2 = new TCanvas("c_jetPt_girth_response", "2D Response Matrix with Segmented Physical Axes", 900, 800);
-                c2->SetBottomMargin(0.25); // Large margin for multiple axes
-                c2->SetLeftMargin(0.25);
-                h_phys2->Draw("COLZ");
-                double x1 = h_phys2->GetXaxis()->GetXmin();
-                double x2 = h_phys2->GetXaxis()->GetXmax();
-                double y1 = h_phys2->GetYaxis()->GetXmin();
-                double y2 = h_phys2->GetYaxis()->GetXmax();
-                // --- Segmented cycling axes for 2D flattening ---
-                std::vector<double> jetPtEdges = bins.jetPt;
-                std::vector<double> jetGirthEdges = bins.jetGirth;
-                int nPt = bins.nJetPt();
-                int nGirth = bins.nJetGirth();
-                int nBins2D = nPt * nGirth;
-                
-                // X: for each girth bin, draw a jetPt axis segment
-                double axisY = y1 - 0.18*(y2-y1);  // Slightly increased X axis offset
-                for (int iGirth = 0; iGirth < nGirth; ++iGirth) {
-                  int startBin = iGirth * nPt;
-                  int endBin = (iGirth+1) * nPt;
-                  double segX1 = x1 + (x2-x1) * (double)startBin / nBins2D;
-                  double segX2 = x1 + (x2-x1) * (double)endBin / nBins2D;
-                  // Each segment covers the full jetPt range but positioned for this girth bin  
-                  TGaxis* ptSeg = new TGaxis(segX1, axisY, segX2, axisY, jetPtEdges.front(), jetPtEdges.back(), nPt, "S-");
-                  ptSeg->SetLabelColor(kBlack);
-                  ptSeg->SetLineColor(kBlack);
-                  ptSeg->SetLabelSize(0.015);
-                  ptSeg->SetTitleSize(0.018);
-                  ptSeg->SetTickSize(0.01);
-                  if (iGirth == nGirth-1) ptSeg->SetTitle("Jet p_{T} [GeV]");  // Title on last segment
-                  else ptSeg->SetTitle("");
-                  
-                  // Control which labels to show: first bin edge blank if not first segment
-                  if (iGirth == 0) {
-                    // First segment: show all labels
-                    std::cout << "DEBUG 2D X jetPt segment " << iGirth << " labels: ";
-                    for (int i = 0; i <= nPt; ++i) {
-                      if (i < (int)jetPtEdges.size()) {
-                        std::string label = std::to_string((int)jetPtEdges[i]);
-                        ptSeg->ChangeLabel(i+1, -1, -1, -1, -1, -1, label.c_str());
-                        std::cout << "'" << label << "'";
-                        if (i < nPt) std::cout << ", ";
-                      }
-                    }
-                    std::cout << " (all values shown)" << std::endl;
-                  } else {
-                    // Subsequent segments: space for first label, show others
-                    std::cout << "DEBUG 2D X jetPt segment " << iGirth << " labels: ";
-                    for (int i = 0; i <= nPt; ++i) {
-                      if (i < (int)jetPtEdges.size()) {
-                        std::string label;
-                        if (i == 0) {
-                          label = " ";  // Space to avoid overlap
-                          ptSeg->ChangeLabel(i+1, -1, -1, -1, -1, -1, label.c_str());
-                        } else {
-                          label = std::to_string((int)jetPtEdges[i]);
-                          ptSeg->ChangeLabel(i+1, -1, -1, -1, -1, -1, label.c_str());
-                        }
-                        std::cout << "'" << label << "'";
-                        if (i < nPt) std::cout << ", ";
-                      }
-                    }
-                    std::cout << " (first=space, others=values)" << std::endl;
-                  }
-                  ptSeg->Draw();
-                  // Draw separator line between segments (except last)
-                  if (iGirth < nGirth-1) {
-                    double sepX = segX2;
-                    TLine* vline = new TLine(sepX, axisY-0.015*(y2-y1), sepX, axisY+0.015*(y2-y1));
-                    vline->SetLineColor(kGray+2);
-                    vline->SetLineStyle(2);
-                    vline->Draw();
-                  }
-                }
-                
-                // X: Draw jetGirth axis (single segment covering all)
-                double axisY2 = y1 - 0.25*(y2-y1);
-                TGaxis* girthXSeg = new TGaxis(x1, axisY2, x2, axisY2, jetGirthEdges.front(), jetGirthEdges.back(), nGirth, "S-");
-                girthXSeg->SetLabelColor(kBlack);
-                girthXSeg->SetLineColor(kBlack);
-                girthXSeg->SetLabelSize(0.015);
-                girthXSeg->SetTitleSize(0.018);
-                girthXSeg->SetTickSize(0.01);
-                girthXSeg->SetTitle("Jet Girth");
-                for (int i = 0; i <= nGirth; ++i) {
-                  if (i < (int)jetGirthEdges.size()) {
-                    char label[10];
-                    snprintf(label, sizeof(label), "%.2g", jetGirthEdges[i]);
-                    girthXSeg->ChangeLabel(i+1, -1, -1, -1, -1, -1, label);
-                  }
-                }
-                girthXSeg->Draw();
-                
-                // Y: for each girth bin, draw a jetPt axis segment (same as X)
-                double axisX = x1 - 0.12*(x2-x1);  // Reduced Y axis offset
-                for (int iGirth = 0; iGirth < nGirth; ++iGirth) {
-                  int startBin = iGirth * nPt;
-                  int endBin = (iGirth+1) * nPt;
-                  double segY1 = y1 + (y2-y1) * (double)startBin / nBins2D;
-                  double segY2 = y1 + (y2-y1) * (double)endBin / nBins2D;
-                  TGaxis* ptYSeg = new TGaxis(axisX, segY1, axisX, segY2, jetPtEdges.front(), jetPtEdges.back(), nPt, "S-");
-                  ptYSeg->SetLabelColor(kBlack);
-                  ptYSeg->SetLineColor(kBlack);
-                  ptYSeg->SetLabelSize(0.015);
-                  ptYSeg->SetTitleSize(0.018);
-                  ptYSeg->SetTickSize(0.01);
-                  if (iGirth == nGirth-1) ptYSeg->SetTitle("Jet p_{T} [GeV]");  // Title on last segment
-                  else ptYSeg->SetTitle("");
-                  
-                  // Control which labels to show: first bin edge blank if not first segment
-                  if (iGirth == 0) {
-                    // First segment: show all labels
-                    std::cout << "DEBUG 2D Y jetPt segment " << iGirth << " labels: ";
-                    for (int i = 0; i <= nPt; ++i) {
-                      if (i < (int)jetPtEdges.size()) {
-                        std::string label = std::to_string((int)jetPtEdges[i]);
-                        ptYSeg->ChangeLabel(i+1, -1, -1, -1, -1, -1, label.c_str());
-                        std::cout << "'" << label << "'";
-                        if (i < nPt) std::cout << ", ";
-                      }
-                    }
-                    std::cout << " (all values shown)" << std::endl;
-                  } else {
-                    // Subsequent segments: space for first label, show others
-                    std::cout << "DEBUG 2D Y jetPt segment " << iGirth << " labels: ";
-                    for (int i = 0; i <= nPt; ++i) {
-                      if (i < (int)jetPtEdges.size()) {
-                        std::string label;
-                        if (i == 0) {
-                          label = " ";  // Space to avoid overlap
-                          ptYSeg->ChangeLabel(i+1, -1, -1, -1, -1, -1, label.c_str());
-                        } else {
-                          label = std::to_string((int)jetPtEdges[i]);
-                          ptYSeg->ChangeLabel(i+1, -1, -1, -1, -1, -1, label.c_str());
-                        }
-                        std::cout << "'" << label << "'";
-                        if (i < nPt) std::cout << ", ";
-                      }
-                    }
-                    std::cout << " (first=space, others=values)" << std::endl;
-                  }
-                  ptYSeg->Draw();
-                  // Draw separator line between segments (except last)
-                  if (iGirth < nGirth-1) {
-                    double sepY = segY2;
-                    TLine* hline = new TLine(axisX-0.015*(x2-x1), sepY, axisX+0.015*(x2-x1), sepY);
-                    hline->SetLineColor(kGray+2);
-                    hline->SetLineStyle(2);
-                    hline->Draw();
-                  }
-                }
-                
-                // Y: Draw jetGirth axis (single segment covering all)
-                double axisX2 = x1 - 0.20*(x2-x1);  // Reduced Y axis second level offset
-                TGaxis* girthYSeg = new TGaxis(axisX2, y1, axisX2, y2, jetGirthEdges.front(), jetGirthEdges.back(), nGirth, "S-");
-                girthYSeg->SetLabelColor(kBlack);
-                girthYSeg->SetLineColor(kBlack);
-                girthYSeg->SetLabelSize(0.015);
-                girthYSeg->SetTitleSize(0.018);
-                girthYSeg->SetTickSize(0.01);
-                girthYSeg->SetTitle("Jet Girth");
-                for (int i = 0; i <= nGirth; ++i) {
-                  if (i < (int)jetGirthEdges.size()) {
-                    char label[10];
-                    snprintf(label, sizeof(label), "%.2g", jetGirthEdges[i]);
-                    girthYSeg->ChangeLabel(i+1, -1, -1, -1, -1, -1, label);
-                  }
-                }
-                girthYSeg->Draw();
-                // --- End segmented cycling axes for 2D ---
-                c2->Write();
-                // c2->SaveAs((std::string("c_jetPt_girth_response.png")).c_str());
-            }
-        }
-        // 3D results
-        TDirectory* dir3D = outFile->mkdir("Unfolding3D");
-        dir3D->cd();
-        unfolder3D.getMeasured()->Write();
-        unfolder3D.getTruth()->Write();
-        if (unfolded3D) unfolded3D->Write();
-        if (unfolder3D.getResponse()) unfolder3D.getResponse()->Write();
-        if (unfolder3D.getResponse()) {
-            TH2D* h_resp3 = (TH2D*)unfolder3D.getResponse()->Hresponse();
-            if (h_resp3) {
-                TH2D* h_phys3 = (TH2D*)h_resp3->Clone("h_photon_jetPt_girth_response");
-                h_phys3->SetTitle("Response Matrix;Truth [PhotonEt, JetPt, Girth];Measured [PhotonEt, JetPt, Girth]");
-                int nBins3D = bins.nPhotonEt()*bins.nJetPt()*bins.nJetGirth();
-                h_phys3->GetXaxis()->Set(nBins3D, 0, nBins3D);
-                h_phys3->GetYaxis()->Set(nBins3D, 0, nBins3D);
-                // Remove default axis titles
-                h_phys3->GetXaxis()->SetTitle("");
-                h_phys3->GetYaxis()->SetTitle("");
-                h_phys3->Write();
-                // Draw and overlay segmented cycling physical axes for 3D
-                TCanvas* c3 = new TCanvas("c_photon_jetPt_girth_response", "3D Response Matrix with Segmented Physical Axes", 1000, 900);
-                c3->SetBottomMargin(0.45); // Extra large margin for 3D axes
-                c3->SetLeftMargin(0.45);
-                h_phys3->Draw("COLZ");
-                double x1 = h_phys3->GetXaxis()->GetXmin();
-                double x2 = h_phys3->GetXaxis()->GetXmax();
-                double y1 = h_phys3->GetYaxis()->GetXmin();
-                double y2 = h_phys3->GetYaxis()->GetXmax();
-                // --- Segmented cycling axes for 3D flattening ---
-                std::vector<double> photonEtEdges = bins.photonEt;
-                std::vector<double> jetPtEdges = bins.jetPt;
-                std::vector<double> jetGirthEdges = bins.jetGirth;
-                int nPhotonEt = bins.nPhotonEt();
-                int nPt = bins.nJetPt();
-                int nGirth = bins.nJetGirth();
-                
-                // X: for each photonEt, then each girth, draw jetPt segments (jetPt cycles fastest)
-                double axisY1 = y1 - 0.14*(y2-y1); // jetPt axis - slightly increased offset
-                double axisY2 = y1 - 0.24*(y2-y1); // girth axis - slightly increased offset
-                double axisY3 = y1 - 0.34*(y2-y1); // photonEt axis - slightly increased offset
-                
-                // Draw jetPt segments for each (photonEt, girth) combination
-                for (int iPhotonEt = 0; iPhotonEt < nPhotonEt; ++iPhotonEt) {
-                  for (int iGirth = 0; iGirth < nGirth; ++iGirth) {
-                    int startBin = iPhotonEt * (nPt * nGirth) + iGirth * nPt;
-                    int endBin = startBin + nPt;
-                    double segX1 = x1 + (x2-x1) * (double)startBin / nBins3D;
-                    double segX2 = x1 + (x2-x1) * (double)endBin / nBins3D;
-                    TGaxis* ptSeg = new TGaxis(segX1, axisY1, segX2, axisY1, jetPtEdges.front(), jetPtEdges.back(), nPt, "S-");
-                    ptSeg->SetLabelColor(kBlack);
-                    ptSeg->SetLineColor(kBlack);
-                    ptSeg->SetLabelSize(0.012);
-                    ptSeg->SetTitleSize(0.015);
-                    ptSeg->SetTickSize(0.008);
-                    // Title on last segment for right alignment
-                    if (iPhotonEt == nPhotonEt-1 && iGirth == nGirth-1) ptSeg->SetTitle("Jet p_{T} [GeV]");
-                    else ptSeg->SetTitle("");
-                    
-                    // Control which labels to show: first bin edge blank if not first segment
-                    if (iPhotonEt == 0 && iGirth == 0) {
-                      // First segment: show all labels
-                      std::cout << "DEBUG 3D X jetPt segment (" << iPhotonEt << "," << iGirth << ") labels: ";
-                      for (int i = 0; i <= nPt; ++i) {
-                        if (i < (int)jetPtEdges.size()) {
-                          std::string label = std::to_string((int)jetPtEdges[i]);
-                          ptSeg->ChangeLabel(i+1, -1, -1, -1, -1, -1, label.c_str());
-                          std::cout << "'" << label << "'";
-                          if (i < nPt) std::cout << ", ";
-                        }
-                      }
-                      std::cout << " (all values shown)" << std::endl;
-                    } else {
-                      // Subsequent segments: space for first label, show others
-                      std::cout << "DEBUG 3D X jetPt segment (" << iPhotonEt << "," << iGirth << ") labels: ";
-                      for (int i = 0; i <= nPt; ++i) {
-                        if (i < (int)jetPtEdges.size()) {
-                          std::string label;
-                          if (i == 0) {
-                            label = " ";  // Space to avoid overlap
-                            ptSeg->ChangeLabel(i+1, -1, -1, -1, -1, -1, label.c_str());
-                          } else {
-                            label = std::to_string((int)jetPtEdges[i]);
-                            ptSeg->ChangeLabel(i+1, -1, -1, -1, -1, -1, label.c_str());
-                          }
-                          std::cout << "'" << label << "'";
-                          if (i < nPt) std::cout << ", ";
-                        }
-                      }
-                      std::cout << " (first=space, others=values)" << std::endl;
-                    }
-                    ptSeg->Draw();
-                    // Minor separator between girth cycles
-                    if (iGirth < nGirth-1) {
-                      TLine* minorSep = new TLine(segX2, axisY1-0.008*(y2-y1), segX2, axisY1+0.008*(y2-y1));
-                      minorSep->SetLineColor(kGray+1);
-                      minorSep->SetLineStyle(3);
-                      minorSep->Draw();
-                    }
-                  }
-                  // Major separator between photonEt cycles
-                  if (iPhotonEt < nPhotonEt-1) {
-                    double majorSepX = x1 + (x2-x1) * (double)((iPhotonEt+1) * nPt * nGirth) / nBins3D;
-                    TLine* majorSep = new TLine(majorSepX, axisY1-0.015*(y2-y1), majorSepX, axisY1+0.015*(y2-y1));
-                    majorSep->SetLineColor(kBlack);
-                    majorSep->SetLineStyle(2);
-                    majorSep->SetLineWidth(2);
-                    majorSep->Draw();
-                  }
-                }
-                
-                // X: Draw girth segments for each photonEt cycle
-                for (int iPhotonEt = 0; iPhotonEt < nPhotonEt; ++iPhotonEt) {
-                  int startBin = iPhotonEt * (nPt * nGirth);
-                  int endBin = (iPhotonEt+1) * (nPt * nGirth);
-                  double segX1 = x1 + (x2-x1) * (double)startBin / nBins3D;
-                  double segX2 = x1 + (x2-x1) * (double)endBin / nBins3D;
-                  TGaxis* girthXSeg = new TGaxis(segX1, axisY2, segX2, axisY2, jetGirthEdges.front(), jetGirthEdges.back(), nGirth, "S-");
-                  girthXSeg->SetLabelColor(kBlack);
-                  girthXSeg->SetLineColor(kBlack);
-                  girthXSeg->SetLabelSize(0.012);
-                  girthXSeg->SetTitleSize(0.015);
-                  girthXSeg->SetTickSize(0.008);
-                  if (iPhotonEt == nPhotonEt-1) girthXSeg->SetTitle("Jet Girth");  // Title on last segment
-                  else girthXSeg->SetTitle("");
-                  for (int i = 0; i <= nGirth; ++i) {
-                    if (i < (int)jetGirthEdges.size()) {
-                      // Use blank label for first bin if not the first segment to avoid overlap
-                      if (i == 0 && iPhotonEt > 0) {
-                        char label[10];
-                        snprintf(label, sizeof(label), "%.2g", jetGirthEdges[i]);
-                        girthXSeg->ChangeLabel(i+1, -1, -1, -1, -1, -1, "");
-                      } else {
-                        char label[10];
-                        snprintf(label, sizeof(label), "%.2g", jetGirthEdges[i]);
-                        girthXSeg->ChangeLabel(i+1, -1, -1, -1, -1, -1, label);
-                      }
-                    }
-                  }
-                  girthXSeg->Draw();
-                  // Major separator between photonEt cycles
-                  if (iPhotonEt < nPhotonEt-1) {
-                    double majorSepX = segX2;
-                    TLine* majorSep = new TLine(majorSepX, axisY2-0.015*(y2-y1), majorSepX, axisY2+0.015*(y2-y1));
-                    majorSep->SetLineColor(kBlack);
-                    majorSep->SetLineStyle(2);
-                    majorSep->SetLineWidth(2);
-                    majorSep->Draw();
-                  }
-                }
-                
-                // X: Draw photonEt axis (one segment covering all)
-                TGaxis* photonXSeg = new TGaxis(x1, axisY3, x2, axisY3, photonEtEdges.front(), photonEtEdges.back(), nPhotonEt, "S-");
-                photonXSeg->SetLabelColor(kBlack);
-                photonXSeg->SetLineColor(kBlack);
-                photonXSeg->SetLabelSize(0.012);
-                photonXSeg->SetTitleSize(0.015);
-                photonXSeg->SetTickSize(0.008);
-                photonXSeg->SetTitle("Photon E_{T} [GeV]");
-                for (int i = 0; i <= nPhotonEt; ++i) {
-                  if (i < (int)photonEtEdges.size()) {
-                    photonXSeg->ChangeLabel(i+1, -1, -1, -1, -1, -1, std::to_string((int)photonEtEdges[i]).c_str());
-                  }
-                }
-                photonXSeg->Draw();
-                
-                // Y: for each photonEt, then each jetPt, draw girth segments
-                double axisX1 = x1 - 0.10*(x2-x1); // girth axis - reduced offset
-                double axisX2 = x1 - 0.22*(x2-x1); // jetPt axis - reduced offset  
-                double axisX3 = x1 - 0.32*(x2-x1); // photonEt axis - reduced offset
-                
-                // Draw girth segments for each (photonEt, jetPt) combination
-                for (int iPhotonEt = 0; iPhotonEt < nPhotonEt; ++iPhotonEt) {
-                  for (int iPt = 0; iPt < nPt; ++iPt) {
-                    for (int iGirth = 0; iGirth < nGirth; ++iGirth) {
-                      int globalBin = iPhotonEt * (nPt * nGirth) + iGirth * nPt + iPt;
-                      double segY1 = y1 + (y2-y1) * (double)globalBin / nBins3D;
-                      double segY2 = y1 + (y2-y1) * (double)(globalBin+1) / nBins3D;
-                      TGaxis* girthSeg = new TGaxis(axisX1, segY1, axisX1, segY2, jetGirthEdges[iGirth], jetGirthEdges[iGirth+1], 2, "S-");
-                      girthSeg->SetLabelColor(kBlack);
-                      girthSeg->SetLineColor(kBlack);
-                      girthSeg->SetLabelSize(0.012);
-                      girthSeg->SetTitleSize(0.015);
-                      girthSeg->SetTickSize(0.008);
-                      // Title on last segment for right alignment
-                      if (iPhotonEt == nPhotonEt-1 && iPt == nPt-1 && iGirth == nGirth-1) girthSeg->SetTitle("Jet Girth");
-                      else girthSeg->SetTitle("");
-                      char label1[10], label2[10];
-                      snprintf(label1, sizeof(label1), "%.2g", jetGirthEdges[iGirth]);
-                      snprintf(label2, sizeof(label2), "%.2g", jetGirthEdges[iGirth+1]);
-                      // Use blank label for first bin if not the first bin to avoid overlap with previous cycle
-                      if (iGirth == 0 && (iPhotonEt > 0 || iPt > 0)) {
-                        girthSeg->ChangeLabel(1, -1, -1, -1, -1, -1, "");
-                      } else {
-                        girthSeg->ChangeLabel(1, -1, -1, -1, -1, -1, label1);
-                      }
-                      girthSeg->ChangeLabel(2, -1, -1, -1, -1, -1, label2);
-                      girthSeg->Draw();
-                    }
-                    // Minor separator between jetPt cycles within photonEt
-                    if (iPt < nPt-1) {
-                      double minorSepY = y1 + (y2-y1) * (double)(iPhotonEt * (nPt * nGirth) + (iPt+1) * nGirth) / nBins3D;
-                      TLine* minorSep = new TLine(axisX1-0.008*(x2-x1), minorSepY, axisX1+0.008*(x2-x1), minorSepY);
-                      minorSep->SetLineColor(kGray+1);
-                      minorSep->SetLineStyle(3);
-                      minorSep->Draw();
-                    }
-                  }
-                  // Major separator between photonEt cycles
-                  if (iPhotonEt < nPhotonEt-1) {
-                    double majorSepY = y1 + (y2-y1) * (double)((iPhotonEt+1) * nPt * nGirth) / nBins3D;
-                    TLine* majorSep = new TLine(axisX1-0.015*(x2-x1), majorSepY, axisX1+0.015*(x2-x1), majorSepY);
-                    majorSep->SetLineColor(kBlack);
-                    majorSep->SetLineStyle(2);
-                    majorSep->SetLineWidth(2);
-                    majorSep->Draw();
-                  }
-                }
-                
-                // Y: Draw jetPt segments for each photonEt cycle
-                for (int iPhotonEt = 0; iPhotonEt < nPhotonEt; ++iPhotonEt) {
-                  int startBin = iPhotonEt * (nPt * nGirth);
-                  int endBin = (iPhotonEt+1) * (nPt * nGirth);
-                  double segY1 = y1 + (y2-y1) * (double)startBin / nBins3D;
-                  double segY2 = y1 + (y2-y1) * (double)endBin / nBins3D;
-                  TGaxis* ptYSeg = new TGaxis(axisX2, segY1, axisX2, segY2, jetPtEdges.front(), jetPtEdges.back(), nPt, "S-");
-                  ptYSeg->SetLabelColor(kBlack);
-                  ptYSeg->SetLineColor(kBlack);
-                  ptYSeg->SetLabelSize(0.012);
-                  ptYSeg->SetTitleSize(0.015);
-                  ptYSeg->SetTickSize(0.008);
-                  if (iPhotonEt == nPhotonEt-1) ptYSeg->SetTitle("Jet p_{T} [GeV]");  // Title on last segment
-                  else ptYSeg->SetTitle("");
-                  
-                  // Control which labels to show: first bin edge blank if not first segment
-                  if (iPhotonEt == 0) {
-                    // First segment: show all labels
-                    std::cout << "DEBUG 3D Y jetPt segment " << iPhotonEt << " labels: ";
-                    for (int i = 0; i <= nPt; ++i) {
-                      if (i < (int)jetPtEdges.size()) {
-                        std::string label = std::to_string((int)jetPtEdges[i]);
-                        ptYSeg->ChangeLabel(i+1, -1, -1, -1, -1, -1, label.c_str());
-                        std::cout << "'" << label << "'";
-                        if (i < nPt) std::cout << ", ";
-                      }
-                    }
-                    std::cout << " (all values shown)" << std::endl;
-                  } else {
-                    // Subsequent segments: space for first label, show others
-                    std::cout << "DEBUG 3D Y jetPt segment " << iPhotonEt << " labels: ";
-                    for (int i = 0; i <= nPt; ++i) {
-                      if (i < (int)jetPtEdges.size()) {
-                        std::string label;
-                        if (i == 0) {
-                          label = " ";  // Space to avoid overlap
-                          ptYSeg->ChangeLabel(i+1, -1, -1, -1, -1, -1, label.c_str());
-                        } else {
-                          label = std::to_string((int)jetPtEdges[i]);
-                          ptYSeg->ChangeLabel(i+1, -1, -1, -1, -1, -1, label.c_str());
-                        }
-                        std::cout << "'" << label << "'";
-                        if (i < nPt) std::cout << ", ";
-                      }
-                    }
-                    std::cout << " (first=space, others=values)" << std::endl;
-                  }
-                  ptYSeg->Draw();
-                  // Major separator between photonEt cycles
-                  if (iPhotonEt < nPhotonEt-1) {
-                    double majorSepY = segY2;
-                    TLine* majorSep = new TLine(axisX2-0.015*(x2-x1), majorSepY, axisX2+0.015*(x2-x1), majorSepY);
-                    majorSep->SetLineColor(kBlack);
-                    majorSep->SetLineStyle(2);
-                    majorSep->SetLineWidth(2);
-                    majorSep->Draw();
-                  }
-                }
-                
-                // Y: Draw photonEt axis (one segment covering all)
-                TGaxis* photonYSeg = new TGaxis(axisX3, y1, axisX3, y2, photonEtEdges.front(), photonEtEdges.back(), nPhotonEt, "S-");
-                photonYSeg->SetLabelColor(kBlack);
-                photonYSeg->SetLineColor(kBlack);
-                photonYSeg->SetLabelSize(0.012);
-                photonYSeg->SetTitleSize(0.015);
-                photonYSeg->SetTickSize(0.008);
-                photonYSeg->SetTitle("Photon E_{T} [GeV]");
-                for (int i = 0; i <= nPhotonEt; ++i) {
-                  if (i < (int)photonEtEdges.size()) {
-                    photonYSeg->ChangeLabel(i+1, -1, -1, -1, -1, -1, std::to_string((int)photonEtEdges[i]).c_str());
-                  }
-                }
-                photonYSeg->Draw();
-                photonYSeg->SetTitleSize(0.015);
-                photonYSeg->SetTickSize(0.008);
-                photonYSeg->SetTitle("");
-                for (int i = 0; i <= nPhotonEt; ++i) {
-                  if (i < (int)photonEtEdges.size()) {
-                    photonYSeg->ChangeLabel(i+1, -1, -1, -1, -1, -1, std::to_string((int)photonEtEdges[i]).c_str());
-                  }
-                }
-                photonYSeg->Draw();
-                // --- End segmented cycling axes for 3D ---
-                c3->Write();
-                // c3->SaveAs((std::string("c_photon_jetPt_girth_response.png")).c_str());
-            }
-        }
-        outFile->Close();
-        log(LOG_INFO, "Results saved to: " + outputPath);
-    } else {
+    if (!outFile || outFile->IsZombie()) {
         log(LOG_ERROR, "Could not create output file: " + outputPath);
+        delete config;
+        return;
     }
-    
-    // Cleanup
-    dataFile->Close();
-    mcFile->Close();
+    // Ensure all main directories exist
+    outFile->mkdir("Unfolding1D");
+    outFile->mkdir("Unfolding2D");
+    outFile->mkdir("Unfolding3D");
+    for (const auto& set : unfoldSets) {
+        log(LOG_INFO, "Processing unfolding set: " + set);
+        std::string prefix = set + ".";
+        
+        // Debug the retrieved config values
+        TString test = config->GetValue((prefix+"UnfoldingDimension").c_str(), "NOT_FOUND");
+        log(LOG_INFO, "Config value for " + prefix + "UnfoldingDimension: " + test.Data());
+        
+        int ndim = config->GetValue((prefix+"UnfoldingDimension").c_str(), 1);
+        log(LOG_INFO, "  Dimension: " + std::to_string(ndim));
+        
+        std::string varsStr = config->GetValue((prefix+"UnfoldVariables").c_str(), "");
+        log(LOG_INFO, "  UnfoldVariables string: " + varsStr);
+        std::vector<std::string> vars = splitCSV(varsStr);
+        
+        std::string tvarsStr = config->GetValue((prefix+"TruthVariables").c_str(), "");
+        log(LOG_INFO, "  TruthVariables string: " + tvarsStr);
+        std::vector<std::string> tvars = splitCSV(tvarsStr);
+        
+        // Debug the vars list
+        std::string varsList = "  Measured variables:";
+        for (const auto& var : vars) varsList += " " + var;
+        log(LOG_INFO, varsList);
+        
+        std::string tvarsList = "  Truth variables:";
+        for (const auto& var : tvars) tvarsList += " " + var;
+        log(LOG_INFO, tvarsList);
+        
+        if (vars.size() != tvars.size() || vars.size() != ndim) {
+            log(LOG_ERROR, "Inconsistent dimensions. Measured vars: " + std::to_string(vars.size()) + 
+                ", truth vars: " + std::to_string(tvars.size()) + ", declared dimension: " + 
+                std::to_string(ndim));
+            continue;
+        }
+        
+        std::vector<std::vector<double>> bins, truthBins;
+        for (size_t i = 0; i < vars.size(); ++i) {
+            std::string binKey = prefix + vars[i] + "Bins";
+            std::string defaultBinKey = "default." + vars[i] + "Bins";
+            std::string binStr = config->GetValue(binKey.c_str(), config->GetValue(defaultBinKey.c_str(), ""));
+            log(LOG_INFO, "  " + binKey + ": " + binStr);
+            
+            std::vector<double> varBins = parseBins(binStr);
+            if (varBins.empty()) {
+                log(LOG_ERROR, "Empty bins for " + vars[i]);
+                continue;
+            }
+            bins.push_back(varBins);
+            
+            std::string truthBinKey = prefix + tvars[i] + "Bins";
+            std::string defaultTruthBinKey = "default." + tvars[i] + "Bins";
+            std::string truthBinStr = config->GetValue(truthBinKey.c_str(), config->GetValue(defaultTruthBinKey.c_str(), ""));
+            log(LOG_INFO, "  " + truthBinKey + ": " + truthBinStr);
+            
+            std::vector<double> varTruthBins = parseBins(truthBinStr);
+            if (varTruthBins.empty()) {
+                log(LOG_ERROR, "Empty bins for " + tvars[i]);
+                continue;
+            }
+            truthBins.push_back(varTruthBins);
+        }
+        
+        std::string weightBranch = config->GetValue((prefix+"eventWeightBranch").c_str(), 
+                                    config->GetValue("default.eventWeightBranch", "eventWeight"));
+        log(LOG_INFO, "  Weight branch: " + weightBranch);
+        
+        std::string dataFile = config->GetValue((prefix+"DataInputFile").c_str(), 
+                                config->GetValue("default.DataInputFile", ""));
+        std::string mcFile = config->GetValue((prefix+"MCInputFile").c_str(), 
+                             config->GetValue("default.MCInputFile", ""));
+        
+        log(LOG_INFO, "  Data file: " + dataFile);
+        log(LOG_INFO, "  MC file: " + mcFile);
+        
+        TFile* dataF = TFile::Open(dataFile.c_str());
+        TFile* mcF = TFile::Open(mcFile.c_str());
+        
+        if (!dataF || dataF->IsZombie()) {
+            log(LOG_ERROR, "Could not open data file: " + dataFile);
+            continue;
+        }
+        
+        if (!mcF || mcF->IsZombie()) {
+            log(LOG_ERROR, "Could not open MC file: " + mcFile);
+            continue;
+        }
+        
+        TTree* dataTree = (TTree*)dataF->Get("gammaJetTree");
+        TTree* mcTree = (TTree*)mcF->Get("gammaJetTree");
+        
+        if (!dataTree) {
+            log(LOG_ERROR, "Could not find gammaJetTree in data file");
+            continue;
+        }
+        
+        if (!mcTree) {
+            log(LOG_ERROR, "Could not find gammaJetTree in MC file");
+            continue;
+        }
+        
+        log(LOG_INFO, "Creating unfolder with " + std::to_string(ndim) + " dimensions");
+        GenericUnfolderND unfolder(vars, bins, tvars, truthBins);
+        
+        log(LOG_INFO, "Filling from data tree");
+        unfolder.fillFromTree(dataTree, false, true, weightBranch);
+        
+        log(LOG_INFO, "Filling from MC tree");
+        unfolder.fillFromTree(mcTree, true, false, weightBranch);
+        
+        std::string method = config->GetValue((prefix+"UnfoldingMethod").c_str(), 
+                             config->GetValue("default.UnfoldingMethod", "Invert"));
+        int nIter = config->GetValue((prefix+"UnfoldingIterations").c_str(), 
+                    config->GetValue("default.UnfoldingIterations", 4));
+        
+        log(LOG_INFO, "Performing unfolding with method: " + method + ", iterations: " + std::to_string(nIter));
+        unfolder.performUnfolding(method, nIter);
+        
+        outFile->cd();
+        // Create a directory for each dimension (Unfolding1D, Unfolding2D, Unfolding3D) if not already present
+        std::string dimDir = "Unfolding" + std::to_string(ndim) + "D";
+        TDirectory* mainDir = (TDirectory*)outFile->Get(dimDir.c_str());
+        if (!mainDir) mainDir = outFile->mkdir(dimDir.c_str());
+        mainDir->cd();
+        
+        // Check if directory already exists and delete it if it does
+        TDirectory* existingDir = (TDirectory*)mainDir->Get(set.c_str());
+        if (existingDir) {
+            log(LOG_WARNING, "Directory " + set + " already exists, replacing it");
+            mainDir->Delete((set + ";*").c_str());
+        }
+        
+        TDirectory* dir = mainDir->mkdir(set.c_str());
+        dir->cd();
+        
+        // Get histograms from unfolder based on dimension
+        TObject* h_measured_data = unfolder.getMeasuredData();
+        TObject* h_measured_mc = unfolder.getMeasuredMC();
+        TObject* h_truth_mc = unfolder.getTruthMC();
+        TH2D* h_response = (TH2D*)unfolder.getResponse();
+        
+        log(LOG_INFO, "Writing histograms to output file");
+        
+        if (ndim == 1) {
+            TH1D* h_data_1d = (TH1D*)h_measured_data;
+            TH1D* h_mc_1d = (TH1D*)h_measured_mc;
+            TH1D* h_truth_1d = (TH1D*)h_truth_mc;
+            
+            log(LOG_INFO, "  Data entries: " + std::to_string(h_data_1d ? h_data_1d->GetEntries() : 0));
+            log(LOG_INFO, "  MC measured entries: " + std::to_string(h_mc_1d ? h_mc_1d->GetEntries() : 0));
+            log(LOG_INFO, "  MC truth entries: " + std::to_string(h_truth_1d ? h_truth_1d->GetEntries() : 0));
+            log(LOG_INFO, "  Response entries: " + std::to_string(h_response ? h_response->GetEntries() : 0));
+            
+            log(LOG_INFO, "  Data integral: " + std::to_string(h_data_1d ? h_data_1d->Integral() : 0));
+            log(LOG_INFO, "  MC measured integral: " + std::to_string(h_mc_1d ? h_mc_1d->Integral() : 0));
+            log(LOG_INFO, "  MC truth integral: " + std::to_string(h_truth_1d ? h_truth_1d->Integral() : 0));
+            log(LOG_INFO, "  Response integral: " + std::to_string(h_response ? h_response->Integral() : 0));
+            
+            if (h_data_1d) h_data_1d->Write("h_measured_data");
+            if (h_mc_1d) h_mc_1d->Write("h_measured_mc");
+            if (h_truth_1d) h_truth_1d->Write("h_truth_mc");
+            if (h_response) h_response->Write("h_response");
+            
+        } else if (ndim == 2) {
+            TH2D* h_data_2d = (TH2D*)h_measured_data;
+            TH2D* h_mc_2d = (TH2D*)h_measured_mc;
+            TH2D* h_truth_2d = (TH2D*)h_truth_mc;
+            
+            log(LOG_INFO, "  Data entries: " + std::to_string(h_data_2d ? h_data_2d->GetEntries() : 0));
+            log(LOG_INFO, "  MC measured entries: " + std::to_string(h_mc_2d ? h_mc_2d->GetEntries() : 0));
+            log(LOG_INFO, "  MC truth entries: " + std::to_string(h_truth_2d ? h_truth_2d->GetEntries() : 0));
+            log(LOG_INFO, "  Response entries: " + std::to_string(h_response ? h_response->GetEntries() : 0));
+            
+            log(LOG_INFO, "  Data integral: " + std::to_string(h_data_2d ? h_data_2d->Integral() : 0));
+            log(LOG_INFO, "  MC measured integral: " + std::to_string(h_mc_2d ? h_mc_2d->Integral() : 0));
+            log(LOG_INFO, "  MC truth integral: " + std::to_string(h_truth_2d ? h_truth_2d->Integral() : 0));
+            log(LOG_INFO, "  Response integral: " + std::to_string(h_response ? h_response->Integral() : 0));
+            
+            if (h_data_2d) h_data_2d->Write("h_measured_data");
+            if (h_mc_2d) h_mc_2d->Write("h_measured_mc");
+            if (h_truth_2d) h_truth_2d->Write("h_truth_mc");
+            if (h_response) h_response->Write("h_response");
+            
+        } else if (ndim == 3) {
+            TH3D* h_data_3d = (TH3D*)h_measured_data;
+            TH3D* h_mc_3d = (TH3D*)h_measured_mc;
+            TH3D* h_truth_3d = (TH3D*)h_truth_mc;
+            
+            log(LOG_INFO, "  Data entries: " + std::to_string(h_data_3d ? h_data_3d->GetEntries() : 0));
+            log(LOG_INFO, "  MC measured entries: " + std::to_string(h_mc_3d ? h_mc_3d->GetEntries() : 0));
+            log(LOG_INFO, "  MC truth entries: " + std::to_string(h_truth_3d ? h_truth_3d->GetEntries() : 0));
+            log(LOG_INFO, "  Response entries: " + std::to_string(h_response ? h_response->GetEntries() : 0));
+            
+            log(LOG_INFO, "  Data integral: " + std::to_string(h_data_3d ? h_data_3d->Integral() : 0));
+            log(LOG_INFO, "  MC measured integral: " + std::to_string(h_mc_3d ? h_mc_3d->Integral() : 0));
+            log(LOG_INFO, "  MC truth integral: " + std::to_string(h_truth_3d ? h_truth_3d->Integral() : 0));
+            log(LOG_INFO, "  Response integral: " + std::to_string(h_response ? h_response->Integral() : 0));
+            
+            if (h_data_3d) h_data_3d->Write("h_measured_data");
+            if (h_mc_3d) h_mc_3d->Write("h_measured_mc");
+            if (h_truth_3d) h_truth_3d->Write("h_truth_mc");
+            if (h_response) h_response->Write("h_response");
+        }
+        
+        plotResponseMatrix(set, unfolder, bins, vars);
+        log(LOG_INFO, "Unfolding set '" + set + "' completed and saved.");
+        
+        dataF->Close();
+        mcF->Close();
+    }
+    outFile->Close();
+    log(LOG_INFO, "Results saved to: " + outputPath);
     delete config;
-    
     timer.Stop();
     log(LOG_INFO, "\n=== RooUnfold completed in " + std::to_string(timer.RealTime()) + " seconds ===");
 }

@@ -6,6 +6,8 @@
 echo "=== RooUnfold Jet Substructure Unfolding ==="
 echo "Running RooUnfold macro..."
 
+export LD_LIBRARY_PATH=$PWD/RooUnfold:$LD_LIBRARY_PATH
+
 # Run ROOT with the macro
 root -l << 'EOF'
 gSystem->Load("./RooUnfold/libRooUnfold.so");
