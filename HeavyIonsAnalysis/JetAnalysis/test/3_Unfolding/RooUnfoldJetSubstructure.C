@@ -70,525 +70,6 @@ struct UnfoldingBins {
     }
 };
 
-// Helper function to get global bin index for 2D case
-int getGlobalBin2D(int iBinX, int iBinY, int nBinsX) {
-    return iBinY * nBinsX + iBinX;
-}
-
-// Helper function to get global bin index for 3D case
-int getGlobalBin3D(int iBinX, int iBinY, int iBinZ, int nBinsX, int nBinsY) {
-    return iBinZ * (nBinsX * nBinsY) + iBinY * nBinsX + iBinX;
-}
-
-// Generic N-dimensional Unfolder (replaces all hardcoded classes)
-// Edit 2: Finalize GenericUnfolderND class for full config-driven operation
-class GenericUnfolderND {
-private:
-    std::vector<std::string> measuredVars;
-    std::vector<std::string> truthVars;
-    std::vector<std::vector<double>> measuredBins;
-    std::vector<std::vector<double>> truthBins;
-    int ndim;
-    RooUnfoldResponse* response;
-    RooUnfold* unfold;
-    
-    // Regular histograms instead of THnD
-    TH1D* h_measured_data_1d;
-    TH1D* h_measured_mc_1d;
-    TH1D* h_truth_mc_1d;
-    TH2D* h_response_2d;
-    
-    TH2D* h_measured_data_2d;
-    TH2D* h_measured_mc_2d;
-    TH2D* h_truth_mc_2d;
-    
-    TH3D* h_measured_data_3d;
-    TH3D* h_measured_mc_3d;
-    TH3D* h_truth_mc_3d;
-public:
-    GenericUnfolderND(const std::vector<std::string>& mvars, const std::vector<std::vector<double>>& mbins,
-                     const std::vector<std::string>& tvars, const std::vector<std::vector<double>>& tbins)
-        : measuredVars(mvars), measuredBins(mbins), truthVars(tvars), truthBins(tbins), ndim(mvars.size()),
-          response(nullptr), unfold(nullptr), 
-          h_measured_data_1d(nullptr), h_measured_mc_1d(nullptr), h_truth_mc_1d(nullptr), h_response_2d(nullptr),
-          h_measured_data_2d(nullptr), h_measured_mc_2d(nullptr), h_truth_mc_2d(nullptr),
-          h_measured_data_3d(nullptr), h_measured_mc_3d(nullptr), h_truth_mc_3d(nullptr) {
-        
-        log(LOG_INFO, "Creating " + std::to_string(ndim) + "-dimensional histograms");
-        
-        // Log the bin edges for debugging
-        for (int i = 0; i < ndim; ++i) {
-            std::string binInfo = "  Measured bins for " + measuredVars[i] + ": ";
-            for (size_t j = 0; j < measuredBins[i].size(); ++j) 
-                binInfo += std::to_string(measuredBins[i][j]) + " ";
-            log(LOG_INFO, binInfo);
-            
-            std::string truthBinInfo = "  Truth bins for " + truthVars[i] + ": ";
-            for (size_t j = 0; j < truthBins[i].size(); ++j) 
-                truthBinInfo += std::to_string(truthBins[i][j]) + " ";
-            log(LOG_INFO, truthBinInfo);
-        }
-        
-        // Create histograms based on dimension
-        if (ndim == 1) {
-            // 1D histograms
-            // Create histogram titles with .c_str() to convert std::string to const char*
-            std::string dataTitle = "Measured Data 1D;" + measuredVars[0] + ";Events";
-            std::string mcTitle = "Measured MC 1D;" + measuredVars[0] + ";Events";
-            std::string truthTitle = "Truth MC 1D;" + truthVars[0] + ";Events";
-            
-            h_measured_data_1d = new TH1D("h_measured_data_1d", dataTitle.c_str(), 
-                                       measuredBins[0].size()-1, &(measuredBins[0][0]));
-            h_measured_mc_1d = new TH1D("h_measured_mc_1d", mcTitle.c_str(), 
-                                      measuredBins[0].size()-1, &(measuredBins[0][0]));
-            h_truth_mc_1d = new TH1D("h_truth_mc_1d", truthTitle.c_str(), 
-                                   truthBins[0].size()-1, &(truthBins[0][0]));
-            
-            // 2D response matrix (reco vs truth)
-            std::string responseTitle = "Response Matrix;" + truthVars[0] + ";" + measuredVars[0];
-            h_response_2d = new TH2D("h_response_2d", responseTitle.c_str(), 
-                                    truthBins[0].size()-1, &(truthBins[0][0]),
-                                    measuredBins[0].size()-1, &(measuredBins[0][0]));
-            
-            log(LOG_INFO, "Created 1D histograms with " + std::to_string(h_measured_data_1d->GetNbinsX()) + " bins");
-        } 
-        else if (ndim == 2) {
-            // 2D histograms - convert std::string to const char*
-            std::string data2dTitle = "Measured Data 2D;" + measuredVars[0] + ";" + measuredVars[1];
-            std::string mc2dTitle = "Measured MC 2D;" + measuredVars[0] + ";" + measuredVars[1];
-            std::string truth2dTitle = "Truth MC 2D;" + truthVars[0] + ";" + truthVars[1];
-            
-            h_measured_data_2d = new TH2D("h_measured_data_2d", data2dTitle.c_str(), 
-                                       measuredBins[0].size()-1, &(measuredBins[0][0]),
-                                       measuredBins[1].size()-1, &(measuredBins[1][0]));
-            h_measured_mc_2d = new TH2D("h_measured_mc_2d", mc2dTitle.c_str(), 
-                                      measuredBins[0].size()-1, &(measuredBins[0][0]),
-                                      measuredBins[1].size()-1, &(measuredBins[1][0]));
-            h_truth_mc_2d = new TH2D("h_truth_mc_2d", truth2dTitle.c_str(), 
-                                   truthBins[0].size()-1, &(truthBins[0][0]),
-                                   truthBins[1].size()-1, &(truthBins[1][0]));
-            
-            // 2D response matrix (flattened)
-            int nBinsReco = (measuredBins[0].size()-1) * (measuredBins[1].size()-1);
-            int nBinsTruth = (truthBins[0].size()-1) * (truthBins[1].size()-1);
-            std::string response2dTitle = "Response Matrix;Truth Bin;Measured Bin";
-            h_response_2d = new TH2D("h_response_2d", response2dTitle.c_str(), 
-                                    nBinsTruth, 0, nBinsTruth, 
-                                    nBinsReco, 0, nBinsReco);
-            
-            log(LOG_INFO, "Created 2D histograms with " + 
-                std::to_string(h_measured_data_2d->GetNbinsX()) + "x" + 
-                std::to_string(h_measured_data_2d->GetNbinsY()) + " bins");
-        }
-        else if (ndim == 3) {
-            // 3D histograms - convert std::string to const char*
-            std::string data3dTitle = "Measured Data 3D;" + measuredVars[0] + ";" + measuredVars[1] + ";" + measuredVars[2];
-            std::string mc3dTitle = "Measured MC 3D;" + measuredVars[0] + ";" + measuredVars[1] + ";" + measuredVars[2];
-            std::string truth3dTitle = "Truth MC 3D;" + truthVars[0] + ";" + truthVars[1] + ";" + truthVars[2];
-            
-            h_measured_data_3d = new TH3D("h_measured_data_3d", data3dTitle.c_str(), 
-                                       measuredBins[0].size()-1, &(measuredBins[0][0]),
-                                       measuredBins[1].size()-1, &(measuredBins[1][0]),
-                                       measuredBins[2].size()-1, &(measuredBins[2][0]));
-            h_measured_mc_3d = new TH3D("h_measured_mc_3d", mc3dTitle.c_str(), 
-                                      measuredBins[0].size()-1, &(measuredBins[0][0]),
-                                      measuredBins[1].size()-1, &(measuredBins[1][0]),
-                                      measuredBins[2].size()-1, &(measuredBins[2][0]));
-            h_truth_mc_3d = new TH3D("h_truth_mc_3d", truth3dTitle.c_str(), 
-                                   truthBins[0].size()-1, &(truthBins[0][0]),
-                                   truthBins[1].size()-1, &(truthBins[1][0]),
-                                   truthBins[2].size()-1, &(truthBins[2][0]));
-            // 2D response matrix (flattened)
-            int nBinsReco = (measuredBins[0].size()-1) * (measuredBins[1].size()-1) * (measuredBins[2].size()-1);
-            int nBinsTruth = (truthBins[0].size()-1) * (truthBins[1].size()-1) * (truthBins[2].size()-1);
-            std::string response3dTitle = "Response Matrix;Truth Bin;Measured Bin";
-            h_response_2d = new TH2D("h_response_2d", response3dTitle.c_str(), 
-                                    nBinsTruth, 0, nBinsTruth, 
-                                    nBinsReco, 0, nBinsReco);
-            
-            log(LOG_INFO, "Created 3D histograms with " + 
-                std::to_string(h_measured_data_3d->GetNbinsX()) + "x" + 
-                std::to_string(h_measured_data_3d->GetNbinsY()) + "x" + 
-                std::to_string(h_measured_data_3d->GetNbinsZ()) + " bins");
-        } else {
-            log(LOG_ERROR, "Unsupported dimension: " + std::to_string(ndim));
-        }
-    }
-    void fillFromTree(TTree* tree, bool isMC, bool isData, const std::string& weightBranch) {
-        if (!tree) {
-            log(LOG_ERROR, "Null tree pointer provided to fillFromTree");
-            return;
-        }
-        
-        // Print the actual branches in the tree
-        log(LOG_INFO, "Tree branches available:");
-        TObjArray* branches = tree->GetListOfBranches();
-        for (int i = 0; i < std::min(20, branches->GetEntries()); ++i) {
-            log(LOG_INFO, "  - " + std::string(branches->At(i)->GetName()));
-        }
-        if (branches->GetEntries() > 20) {
-            log(LOG_INFO, "  ... and " + std::to_string(branches->GetEntries() - 20) + " more branches");
-        }
-        
-        std::vector<float> mvars_f(ndim, 0), tvars_f(ndim, 0);
-        
-        log(LOG_INFO, "Setting branch addresses for measured variables:");
-        for (int i = 0; i < ndim; ++i) {
-            log(LOG_INFO, "  - " + measuredVars[i]);
-            TBranch* branch = tree->GetBranch(measuredVars[i].c_str());
-            if (!branch) {
-                log(LOG_ERROR, "Branch not found: " + measuredVars[i]);
-                return;
-            }
-            tree->SetBranchAddress(measuredVars[i].c_str(), &mvars_f[i]);
-        }
-        
-        if (isMC) {
-            log(LOG_INFO, "Setting branch addresses for truth variables:");
-            for (int i = 0; i < ndim; ++i) {
-                log(LOG_INFO, "  - " + truthVars[i]);
-                TBranch* branch = tree->GetBranch(truthVars[i].c_str());
-                if (!branch) {
-                    log(LOG_ERROR, "Branch not found: " + truthVars[i]);
-                    return;
-                }
-                tree->SetBranchAddress(truthVars[i].c_str(), &tvars_f[i]);
-            }
-        }
-        
-        float eventWeight = 1.0;
-        TBranch* weightBr = tree->GetBranch(weightBranch.c_str());
-        if (weightBr) {
-            tree->SetBranchAddress(weightBranch.c_str(), &eventWeight);
-            log(LOG_INFO, "Using weight branch: " + weightBranch);
-        } else {
-            log(LOG_WARNING, "Weight branch '" + weightBranch + "' not found. Using weight=1.0");
-        }
-
-        Long64_t nEntries = tree->GetEntries();
-        log(LOG_INFO, "Processing " + std::to_string(nEntries) + " entries");
-        
-        int validEntries = 0;
-        double sumWeights = 0.0;
-        
-        for (Long64_t i = 0; i < nEntries; ++i) {
-            tree->GetEntry(i);
-            
-            // Log some values periodically to check data
-            if (i < 5 || i % 1000 == 0) {
-                std::string valueStr = "Entry " + std::to_string(i) + " values:";
-                for (int j = 0; j < ndim; ++j) {
-                    valueStr += " " + measuredVars[j] + "=" + std::to_string(mvars_f[j]);
-                }
-                valueStr += " weight=" + std::to_string(eventWeight);
-                log(LOG_INFO, valueStr);
-            }
-            
-            // Check for valid values (non-NaN, non-Inf)
-            bool validMeas = true, validTruth = true;
-            for (int j = 0; j < ndim; ++j) {
-                if (std::isnan(mvars_f[j]) || std::isinf(mvars_f[j])) {
-                    validMeas = false;
-                    break;
-                }
-            }
-            
-            if (isMC) {
-                for (int j = 0; j < ndim; ++j) {
-                    if (std::isnan(tvars_f[j]) || std::isinf(tvars_f[j])) {
-                        validTruth = false;
-                        break;
-                    }
-                }
-            }
-            
-            // Fill appropriate histograms based on dimension
-            if (validMeas) {
-                if (ndim == 1) {
-                    if (isData) {
-                        h_measured_data_1d->Fill(mvars_f[0], eventWeight);
-                    } else {
-                        h_measured_mc_1d->Fill(mvars_f[0], eventWeight);
-                    }
-                    validEntries++;
-                    sumWeights += eventWeight;
-                } else if (ndim == 2) {
-                    if (isData) {
-                        h_measured_data_2d->Fill(mvars_f[0], mvars_f[1], eventWeight);
-                    } else {
-                        h_measured_mc_2d->Fill(mvars_f[0], mvars_f[1], eventWeight);
-                    }
-                    validEntries++;
-                    sumWeights += eventWeight;
-                } else if (ndim == 3) {
-                    if (isData) {
-                        h_measured_data_3d->Fill(mvars_f[0], mvars_f[1], mvars_f[2], eventWeight);
-                    } else {
-                        h_measured_mc_3d->Fill(mvars_f[0], mvars_f[1], mvars_f[2], eventWeight);
-                    }
-                    validEntries++;
-                    sumWeights += eventWeight;
-                }
-            }
-            
-            // Fill truth and response histograms for MC
-            if (isMC && validMeas && validTruth) {
-                if (ndim == 1) {
-                    h_truth_mc_1d->Fill(tvars_f[0], eventWeight);
-                    h_response_2d->Fill(tvars_f[0], mvars_f[0], eventWeight);
-                } else if (ndim == 2) {
-                    h_truth_mc_2d->Fill(tvars_f[0], tvars_f[1], eventWeight);
-                    
-                    // Calculate global bins for flattened 2D response
-                    int truthBin = h_truth_mc_2d->FindBin(tvars_f[0], tvars_f[1]) - 1;
-                    int measBin = h_measured_mc_2d->FindBin(mvars_f[0], mvars_f[1]) - 1;
-                    h_response_2d->Fill(truthBin, measBin, eventWeight);
-                } else if (ndim == 3) {
-                    h_truth_mc_3d->Fill(tvars_f[0], tvars_f[1], tvars_f[2], eventWeight);
-                    
-                    // Calculate global bins for flattened 3D response
-                    int truthBin = h_truth_mc_3d->FindBin(tvars_f[0], tvars_f[1], tvars_f[2]) - 1;
-                    int measBin = h_measured_mc_3d->FindBin(mvars_f[0], mvars_f[1], mvars_f[2]) - 1;
-                    h_response_2d->Fill(truthBin, measBin, eventWeight);
-                }
-            }
-        }
-        
-        log(LOG_INFO, "Valid entries: " + std::to_string(validEntries) + " out of " + 
-            std::to_string(nEntries) + " (sum of weights: " + std::to_string(sumWeights) + ")");
-        
-        // Log histogram stats depending on dimension
-        if (ndim == 1) {
-            if (isData) {
-                log(LOG_INFO, "Data histogram entries: " + std::to_string(h_measured_data_1d->GetEntries()) + 
-                    ", integral: " + std::to_string(h_measured_data_1d->Integral()));
-            } else {
-                log(LOG_INFO, "MC measured histogram entries: " + std::to_string(h_measured_mc_1d->GetEntries()) + 
-                    ", integral: " + std::to_string(h_measured_mc_1d->Integral()));
-            }
-            
-            if (isMC) {
-                log(LOG_INFO, "Truth histogram entries: " + std::to_string(h_truth_mc_1d->GetEntries()) + 
-                    ", integral: " + std::to_string(h_truth_mc_1d->Integral()));
-                log(LOG_INFO, "Response histogram entries: " + std::to_string(h_response_2d->GetEntries()) + 
-                    ", integral: " + std::to_string(h_response_2d->Integral()));
-            }
-        } else if (ndim == 2) {
-            if (isData) {
-                log(LOG_INFO, "Data histogram entries: " + std::to_string(h_measured_data_2d->GetEntries()) + 
-                    ", integral: " + std::to_string(h_measured_data_2d->Integral()));
-            } else {
-                log(LOG_INFO, "MC measured histogram entries: " + std::to_string(h_measured_mc_2d->GetEntries()) + 
-                    ", integral: " + std::to_string(h_measured_mc_2d->Integral()));
-            }
-            
-            if (isMC) {
-                log(LOG_INFO, "Truth histogram entries: " + std::to_string(h_truth_mc_2d->GetEntries()) + 
-                    ", integral: " + std::to_string(h_truth_mc_2d->Integral()));
-                log(LOG_INFO, "Response histogram entries: " + std::to_string(h_response_2d->GetEntries()) + 
-                    ", integral: " + std::to_string(h_response_2d->Integral()));
-            }
-        } else if (ndim == 3) {
-            if (isData) {
-                log(LOG_INFO, "Data histogram entries: " + std::to_string(h_measured_data_3d->GetEntries()) + 
-                    ", integral: " + std::to_string(h_measured_data_3d->Integral()));
-            } else {
-                log(LOG_INFO, "MC measured histogram entries: " + std::to_string(h_measured_mc_3d->GetEntries()) + 
-                    ", integral: " + std::to_string(h_measured_mc_3d->Integral()));
-            }
-            
-            if (isMC) {
-                log(LOG_INFO, "Truth histogram entries: " + std::to_string(h_truth_mc_3d->GetEntries()) + 
-                    ", integral: " + std::to_string(h_truth_mc_3d->Integral()));
-                log(LOG_INFO, "Response histogram entries: " + std::to_string(h_response_2d->GetEntries()) + 
-                    ", integral: " + std::to_string(h_response_2d->Integral()));
-            }
-        }
-    }
-    void performUnfolding(const std::string& method, int nIter) {
-        if (ndim == 0) {
-            log(LOG_ERROR, "Cannot unfold with dimension 0. No dimensions set.");
-            return;
-        }
-        
-        // Create RooUnfoldResponse object based on dimension
-        response = new RooUnfoldResponse();
-        
-        if (ndim == 1) {
-            log(LOG_INFO, "Setting up 1D response matrix");
-            response->Setup(h_measured_mc_1d, h_truth_mc_1d, h_response_2d);
-            
-            // Choose unfolding method
-            if (method == "Bayes") {
-                unfold = new RooUnfoldBayes(response, h_measured_data_1d, nIter);
-                log(LOG_INFO, "Using Bayesian unfolding with " + std::to_string(nIter) + " iterations");
-            } else if (method == "SVD") {
-                unfold = new RooUnfoldSvd(response, h_measured_data_1d, nIter);
-                log(LOG_INFO, "Using SVD unfolding with kterm=" + std::to_string(nIter));
-            } else if (method == "BinByBin") {
-                unfold = new RooUnfoldBinByBin(response, h_measured_data_1d);
-                log(LOG_INFO, "Using bin-by-bin unfolding");
-            } else { // Invert or MatrixInversion
-                unfold = new RooUnfoldInvert(response, h_measured_data_1d);
-                log(LOG_INFO, "Using matrix inversion unfolding");
-            }
-        } else if (ndim == 2) {
-            log(LOG_INFO, "Setting up 2D response matrix");
-            // Convert to TH1D (flattened)
-            TH1D* h_meas_data_flat = new TH1D("h_meas_data_flat", "Flattened Measured Data", 
-                                           h_measured_data_2d->GetNcells(), 0, h_measured_data_2d->GetNcells());
-            TH1D* h_meas_mc_flat = new TH1D("h_meas_mc_flat", "Flattened Measured MC", 
-                                         h_measured_mc_2d->GetNcells(), 0, h_measured_mc_2d->GetNcells());
-            TH1D* h_truth_mc_flat = new TH1D("h_truth_mc_flat", "Flattened Truth MC", 
-                                          h_truth_mc_2d->GetNcells(), 0, h_truth_mc_2d->GetNcells());
-            
-            // Fill flattened histograms
-            for (int i = 1; i <= h_measured_data_2d->GetNbinsX(); ++i) {
-                for (int j = 1; j <= h_measured_data_2d->GetNbinsY(); ++j) {
-                    int bin = (i-1) * h_measured_data_2d->GetNbinsY() + j;
-                    h_meas_data_flat->SetBinContent(bin, h_measured_data_2d->GetBinContent(i, j));
-                    h_meas_mc_flat->SetBinContent(bin, h_measured_mc_2d->GetBinContent(i, j));
-                }
-            }
-            
-            for (int i = 1; i <= h_truth_mc_2d->GetNbinsX(); ++i) {
-                for (int j = 1; j <= h_truth_mc_2d->GetNbinsY(); ++j) {
-                    int bin = (i-1) * h_truth_mc_2d->GetNbinsY() + j;
-                    h_truth_mc_flat->SetBinContent(bin, h_truth_mc_2d->GetBinContent(i, j));
-                }
-            }
-            
-            response->Setup(h_meas_mc_flat, h_truth_mc_flat, h_response_2d);
-            
-            // Choose unfolding method
-            if (method == "Bayes") {
-                unfold = new RooUnfoldBayes(response, h_meas_data_flat, nIter);
-                log(LOG_INFO, "Using Bayesian unfolding with " + std::to_string(nIter) + " iterations");
-            } else if (method == "SVD") {
-                unfold = new RooUnfoldSvd(response, h_meas_data_flat, nIter);
-                log(LOG_INFO, "Using SVD unfolding with kterm=" + std::to_string(nIter));
-            } else if (method == "BinByBin") {
-                unfold = new RooUnfoldBinByBin(response, h_meas_data_flat);
-                log(LOG_INFO, "Using bin-by-bin unfolding");
-            } else { // Invert or MatrixInversion
-                unfold = new RooUnfoldInvert(response, h_meas_data_flat);
-                log(LOG_INFO, "Using matrix inversion unfolding");
-            }
-        } else if (ndim == 3) {
-            log(LOG_INFO, "Setting up 3D response matrix");
-            // Convert to TH1D (flattened)
-            TH1D* h_meas_data_flat = new TH1D("h_meas_data_flat", "Flattened Measured Data", 
-                                           h_measured_data_3d->GetNcells(), 0, h_measured_data_3d->GetNcells());
-            TH1D* h_meas_mc_flat = new TH1D("h_meas_mc_flat", "Flattened Measured MC", 
-                                         h_measured_mc_3d->GetNcells(), 0, h_measured_mc_3d->GetNcells());
-            TH1D* h_truth_mc_flat = new TH1D("h_truth_mc_flat", "Flattened Truth MC", 
-                                          h_truth_mc_3d->GetNcells(), 0, h_truth_mc_3d->GetNcells());
-            
-            // Fill flattened histograms (more complex for 3D)
-            for (int i = 1; i <= h_measured_data_3d->GetNbinsX(); ++i) {
-                for (int j = 1; j <= h_measured_data_3d->GetNbinsY(); ++j) {
-                    for (int k = 1; k <= h_measured_data_3d->GetNbinsZ(); ++k) {
-                        int bin = (i-1) * h_measured_data_3d->GetNbinsY() * h_measured_data_3d->GetNbinsZ() + 
-                                 (j-1) * h_measured_data_3d->GetNbinsZ() + k;
-                        h_meas_data_flat->SetBinContent(bin, h_measured_data_3d->GetBinContent(i, j, k));
-                        h_meas_mc_flat->SetBinContent(bin, h_measured_mc_3d->GetBinContent(i, j, k));
-                    }
-                }
-            }
-            
-            for (int i = 1; i <= h_truth_mc_3d->GetNbinsX(); ++i) {
-                for (int j = 1; j <= h_truth_mc_3d->GetNbinsY(); ++j) {
-                    for (int k = 1; k <= h_truth_mc_3d->GetNbinsZ(); ++k) {
-                        int bin = (i-1) * h_truth_mc_3d->GetNbinsY() * h_truth_mc_3d->GetNbinsZ() + 
-                                 (j-1) * h_truth_mc_3d->GetNbinsZ() + k;
-                        h_truth_mc_flat->SetBinContent(bin, h_truth_mc_3d->GetBinContent(i, j, k));
-                    }
-                }
-            }
-            
-            response->Setup(h_meas_mc_flat, h_truth_mc_flat, h_response_2d);
-            
-            // Choose unfolding method
-            if (method == "Bayes") {
-                unfold = new RooUnfoldBayes(response, h_meas_data_flat, nIter);
-                log(LOG_INFO, "Using Bayesian unfolding with " + std::to_string(nIter) + " iterations");
-            } else if (method == "SVD") {
-                unfold = new RooUnfoldSvd(response, h_meas_data_flat, nIter);
-                log(LOG_INFO, "Using SVD unfolding with kterm=" + std::to_string(nIter));
-            } else if (method == "BinByBin") {
-                unfold = new RooUnfoldBinByBin(response, h_meas_data_flat);
-                log(LOG_INFO, "Using bin-by-bin unfolding");
-            } else { // Invert or MatrixInversion
-                unfold = new RooUnfoldInvert(response, h_meas_data_flat);
-                log(LOG_INFO, "Using matrix inversion unfolding");
-            }
-        }
-        
-        // Set options and perform unfolding
-        unfold->SetVerbose(1);
-        TH1* h_unfolded = (TH1*)unfold->Hreco();  // Hreco() is the correct method name in RooUnfold
-        if (!h_unfolded) {
-            log(LOG_ERROR, "Unfolding failed, no histogram returned");
-        } else {
-            log(LOG_INFO, "Unfolding successful, got histogram with " + 
-                std::to_string(h_unfolded->GetEntries()) + " entries and integral " + 
-                std::to_string(h_unfolded->Integral()));
-        }
-    }
-    
-    // Generic getters based on dimension
-    TObject* getMeasuredData() { 
-        if (ndim == 1) return h_measured_data_1d;
-        if (ndim == 2) return h_measured_data_2d;
-        if (ndim == 3) return h_measured_data_3d;
-        return nullptr;
-    }
-    
-    TObject* getMeasuredMC() { 
-        if (ndim == 1) return h_measured_mc_1d;
-        if (ndim == 2) return h_measured_mc_2d;
-        if (ndim == 3) return h_measured_mc_3d;
-        return nullptr;
-    }
-    
-    TObject* getTruthMC() { 
-        if (ndim == 1) return h_truth_mc_1d;
-        if (ndim == 2) return h_truth_mc_2d;
-        if (ndim == 3) return h_truth_mc_3d;
-        return nullptr;
-    }
-    
-    TObject* getResponse() { return h_response_2d; }
-    // Flatten N-dimensional response to TH2D for plotting (since we already use TH2D, this is simplified)
-    TH2D* flattenResponse() {
-        // We're already using TH2D for the response matrix, simply clone it
-        if (h_response_2d) {
-            return (TH2D*)h_response_2d->Clone("h_response_flat");
-        }
-        
-        // Fallback if response matrix is null
-        int nTruth = 1, nMeas = 1;
-        for (int i = 0; i < ndim; ++i) nTruth *= truthBins[i].size()-1;
-        for (int i = 0; i < ndim; ++i) nMeas *= measuredBins[i].size()-1;
-        
-        return new TH2D("h_response_flat", 
-                       "Response Matrix (flattened);Global Truth Bin;Global Measured Bin", 
-                       nTruth, 0, nTruth, nMeas, 0, nMeas);
-    }
-    ~GenericUnfolderND() { delete unfold; delete response; }
-};
-
-
-// ---
-// FLATTENING AND AXIS STRUCTURE FOR MULTI-DIMENSIONAL RESPONSE MATRICES
-// For 2D: globalBin = iy * nJetPt + ix
-//   - X axis: global bin number (0 ... nJetPt*nJetGirth-1)
-//   - Additional axes: first for jetPt (repeats for each girth), second for jetGirth (cycles for each jetPt)
-// For 3D: globalBin = iz * (nJetPt*nJetGirth) + iy * nJetPt + ix
-//   - X axis: global bin number (0 ... nPhotonEt*nJetPt*nJetGirth-1)
-//   - Additional axes: photonEt (repeats for each jetPt/girth), jetPt (repeats for each girth, cycles for photonEt), girth (cycles fastest)
-// ---
-
 // Helper: Parse all Unfold* sets from TEnv config
 std::vector<std::string> getUnfoldSetNames(TEnv* config) {
     std::vector<std::string> sets;
@@ -633,14 +114,527 @@ std::vector<std::string> getUnfoldSetNames(TEnv* config) {
     return sets;
 }
 
-// Helper: Parse int vector from string
-std::vector<int> parseIntVec(const std::string& s) {
-    std::vector<int> v;
-    std::stringstream ss(s);
-    int x;
-    while (ss >> x) v.push_back(x);
-    return v;
-}
+// Generic N-dimensional Unfolder (replaces all hardcoded classes)
+// Edit 2: Finalize GenericUnfolderND class for full config-driven operation
+class GenericUnfolderND {
+    private:
+        std::vector<std::string> measuredVars;
+        std::vector<std::string> truthVars;
+        std::vector<std::vector<double>> measuredBins;
+        std::vector<std::vector<double>> truthBins;
+        int ndim;
+        RooUnfoldResponse* response;
+        RooUnfold* unfold;
+        
+        // Regular histograms instead of THnD
+        TH1D* h_measured_data_1d;
+        TH1D* h_measured_mc_1d;
+        TH1D* h_truth_mc_1d;
+        TH2D* h_response_2d;
+        
+        TH2D* h_measured_data_2d;
+        TH2D* h_measured_mc_2d;
+        TH2D* h_truth_mc_2d;
+        
+        TH3D* h_measured_data_3d;
+        TH3D* h_measured_mc_3d;
+        TH3D* h_truth_mc_3d;
+    public:
+        GenericUnfolderND(const std::vector<std::string>& mvars, const std::vector<std::vector<double>>& mbins,
+                         const std::vector<std::string>& tvars, const std::vector<std::vector<double>>& tbins)
+            : measuredVars(mvars), measuredBins(mbins), truthVars(tvars), truthBins(tbins), ndim(mvars.size()),
+              response(nullptr), unfold(nullptr), 
+              h_measured_data_1d(nullptr), h_measured_mc_1d(nullptr), h_truth_mc_1d(nullptr), h_response_2d(nullptr),
+              h_measured_data_2d(nullptr), h_measured_mc_2d(nullptr), h_truth_mc_2d(nullptr),
+              h_measured_data_3d(nullptr), h_measured_mc_3d(nullptr), h_truth_mc_3d(nullptr) {
+            
+            log(LOG_INFO, "Creating " + std::to_string(ndim) + "-dimensional histograms");
+            
+            // Log the bin edges for debugging
+            for (int i = 0; i < ndim; ++i) {
+                std::string binInfo = "  Measured bins for " + measuredVars[i] + ": ";
+                for (size_t j = 0; j < measuredBins[i].size(); ++j) 
+                    binInfo += std::to_string(measuredBins[i][j]) + " ";
+                log(LOG_INFO, binInfo);
+                
+                std::string truthBinInfo = "  Truth bins for " + truthVars[i] + ": ";
+                for (size_t j = 0; j < truthBins[i].size(); ++j) 
+                    truthBinInfo += std::to_string(truthBins[i][j]) + " ";
+                log(LOG_INFO, truthBinInfo);
+            }
+            
+            // Create histograms based on dimension
+            if (ndim == 1) {
+                // 1D histograms
+                // Create histogram titles with .c_str() to convert std::string to const char*
+                std::string dataTitle = "Measured Data 1D;" + measuredVars[0] + ";Events";
+                std::string mcTitle = "Measured MC 1D;" + measuredVars[0] + ";Events";
+                std::string truthTitle = "Truth MC 1D;" + truthVars[0] + ";Events";
+                
+                h_measured_data_1d = new TH1D("h_measured_data_1d", dataTitle.c_str(), 
+                                           measuredBins[0].size()-1, &(measuredBins[0][0]));
+                h_measured_mc_1d = new TH1D("h_measured_mc_1d", mcTitle.c_str(), 
+                                          measuredBins[0].size()-1, &(measuredBins[0][0]));
+                h_truth_mc_1d = new TH1D("h_truth_mc_1d", truthTitle.c_str(), 
+                                       truthBins[0].size()-1, &(truthBins[0][0]));
+                
+                // 2D response matrix (reco vs truth)
+                std::string responseTitle = "Response Matrix;" + truthVars[0] + ";" + measuredVars[0];
+                h_response_2d = new TH2D("h_response_2d", responseTitle.c_str(), 
+                                        truthBins[0].size()-1, &(truthBins[0][0]),
+                                        measuredBins[0].size()-1, &(measuredBins[0][0]));
+                
+                log(LOG_INFO, "Created 1D histograms with " + std::to_string(h_measured_data_1d->GetNbinsX()) + " bins");
+            } 
+            else if (ndim == 2) {
+                // 2D histograms - convert std::string to const char*
+                std::string data2dTitle = "Measured Data 2D;" + measuredVars[0] + ";" + measuredVars[1];
+                std::string mc2dTitle = "Measured MC 2D;" + measuredVars[0] + ";" + measuredVars[1];
+                std::string truth2dTitle = "Truth MC 2D;" + truthVars[0] + ";" + truthVars[1];
+                
+                h_measured_data_2d = new TH2D("h_measured_data_2d", data2dTitle.c_str(), 
+                                           measuredBins[0].size()-1, &(measuredBins[0][0]),
+                                           measuredBins[1].size()-1, &(measuredBins[1][0]));
+                h_measured_mc_2d = new TH2D("h_measured_mc_2d", mc2dTitle.c_str(), 
+                                          measuredBins[0].size()-1, &(measuredBins[0][0]),
+                                          measuredBins[1].size()-1, &(measuredBins[1][0]));
+                h_truth_mc_2d = new TH2D("h_truth_mc_2d", truth2dTitle.c_str(), 
+                                       truthBins[0].size()-1, &(truthBins[0][0]),
+                                       truthBins[1].size()-1, &(truthBins[1][0]));
+                
+                // 2D response matrix (flattened)
+                int nBinsReco = (measuredBins[0].size()-1) * (measuredBins[1].size()-1);
+                int nBinsTruth = (truthBins[0].size()-1) * (truthBins[1].size()-1);
+                std::string response2dTitle = "Response Matrix;Truth Bin;Measured Bin";
+                h_response_2d = new TH2D("h_response_2d", response2dTitle.c_str(), 
+                                        nBinsTruth, 0, nBinsTruth, 
+                                        nBinsReco, 0, nBinsReco);
+                
+                log(LOG_INFO, "Created 2D histograms with " + 
+                    std::to_string(h_measured_data_2d->GetNbinsX()) + "x" + 
+                    std::to_string(h_measured_data_2d->GetNbinsY()) + " bins");
+            }
+            else if (ndim == 3) {
+                // 3D histograms - convert std::string to const char*
+                std::string data3dTitle = "Measured Data 3D;" + measuredVars[0] + ";" + measuredVars[1] + ";" + measuredVars[2];
+                std::string mc3dTitle = "Measured MC 3D;" + measuredVars[0] + ";" + measuredVars[1] + ";" + measuredVars[2];
+                std::string truth3dTitle = "Truth MC 3D;" + truthVars[0] + ";" + truthVars[1] + ";" + truthVars[2];
+                h_measured_data_3d = new TH3D("h_measured_data_3d", data3dTitle.c_str(), 
+                                           measuredBins[0].size()-1, &(measuredBins[0][0]),
+                                           measuredBins[1].size()-1, &(measuredBins[1][0]),
+                                           measuredBins[2].size()-1, &(measuredBins[2][0]));
+                h_measured_mc_3d = new TH3D("h_measured_mc_3d", mc3dTitle.c_str(), 
+                                          measuredBins[0].size()-1, &(measuredBins[0][0]),
+                                          measuredBins[1].size()-1, &(measuredBins[1][0]),
+                                          measuredBins[2].size()-1, &(measuredBins[2][0]));
+                h_truth_mc_3d = new TH3D("h_truth_mc_3d", truth3dTitle.c_str(), 
+                                       truthBins[0].size()-1, &(truthBins[0][0]),
+                                       truthBins[1].size()-1, &(truthBins[1][0]),
+                                       truthBins[2].size()-1, &(truthBins[2][0]));
+                // 2D response matrix (flattened)
+                int nBinsReco = (measuredBins[0].size()-1) * (measuredBins[1].size()-1) * (measuredBins[2].size()-1);
+                int nBinsTruth = (truthBins[0].size()-1) * (truthBins[1].size()-1) * (truthBins[2].size()-1);
+                std::string response3dTitle = "Response Matrix;Truth Bin;Measured Bin";
+                h_response_2d = new TH2D("h_response_2d", response3dTitle.c_str(), 
+                                        nBinsTruth, 0, nBinsTruth, 
+                                        nBinsReco, 0, nBinsReco);
+                // Remove custom bin labeling to keep default bin numbers (1, 2, 3, ...)
+                log(LOG_INFO, "Created 3D histograms with " + 
+                    std::to_string(h_measured_data_3d->GetNbinsX()) + "x" + 
+                    std::to_string(h_measured_data_3d->GetNbinsY()) + "x" + 
+                    std::to_string(h_measured_data_3d->GetNbinsZ()) + " bins");
+            } else {
+                log(LOG_ERROR, "Unsupported dimension: " + std::to_string(ndim));
+            }
+        }
+        void fillFromTree(TTree* tree, bool isMC, bool isData, const std::string& weightBranch) {
+            if (!tree) {
+                log(LOG_ERROR, "Null tree pointer provided to fillFromTree");
+                return;
+            }
+            
+            // Print the actual branches in the tree
+            log(LOG_INFO, "Tree branches available:");
+            TObjArray* branches = tree->GetListOfBranches();
+            for (int i = 0; i < std::min(20, branches->GetEntries()); ++i) {
+                log(LOG_INFO, "  - " + std::string(branches->At(i)->GetName()));
+            }
+            if (branches->GetEntries() > 20) {
+                log(LOG_INFO, "  ... and " + std::to_string(branches->GetEntries() - 20) + " more branches");
+            }
+            
+            std::vector<float> mvars_f(ndim, 0), tvars_f(ndim, 0);
+            
+            log(LOG_INFO, "Setting branch addresses for measured variables:");
+            for (int i = 0; i < ndim; ++i) {
+                log(LOG_INFO, "  - " + measuredVars[i]);
+                TBranch* branch = tree->GetBranch(measuredVars[i].c_str());
+                if (!branch) {
+                    log(LOG_ERROR, "Branch not found: " + measuredVars[i]);
+                    return;
+                }
+                tree->SetBranchAddress(measuredVars[i].c_str(), &mvars_f[i]);
+            }
+            
+            if (isMC) {
+                log(LOG_INFO, "Setting branch addresses for truth variables:");
+                for (int i = 0; i < ndim; ++i) {
+                    log(LOG_INFO, "  - " + truthVars[i]);
+                    TBranch* branch = tree->GetBranch(truthVars[i].c_str());
+                    if (!branch) {
+                        log(LOG_ERROR, "Branch not found: " + truthVars[i]);
+                        return;
+                    }
+                    tree->SetBranchAddress(truthVars[i].c_str(), &tvars_f[i]);
+                }
+            }
+            
+            float eventWeight = 1.0;
+            TBranch* weightBr = tree->GetBranch(weightBranch.c_str());
+            if (weightBr) {
+                tree->SetBranchAddress(weightBranch.c_str(), &eventWeight);
+                log(LOG_INFO, "Using weight branch: " + weightBranch);
+            } else {
+                log(LOG_WARNING, "Weight branch '" + weightBranch + "' not found. Using weight=1.0");
+            }
+    
+            Long64_t nEntries = tree->GetEntries();
+            log(LOG_INFO, "Processing " + std::to_string(nEntries) + " entries");
+            
+            int validEntries = 0;
+            double sumWeights = 0.0;
+            
+            for (Long64_t i = 0; i < nEntries; ++i) {
+                tree->GetEntry(i);
+                
+                // Log some values periodically to check data
+                if (i < 5 || i % 1000 == 0) {
+                    std::string valueStr = "Entry " + std::to_string(i) + " values:";
+                    for (int j = 0; j < ndim; ++j) {
+                        valueStr += " " + measuredVars[j] + "=" + std::to_string(mvars_f[j]);
+                    }
+                    valueStr += " weight=" + std::to_string(eventWeight);
+                    log(LOG_INFO, valueStr);
+                }
+                
+                // Check for valid values (non-NaN, non-Inf)
+                bool validMeas = true, validTruth = true;
+                for (int j = 0; j < ndim; ++j) {
+                    if (std::isnan(mvars_f[j]) || std::isinf(mvars_f[j])) {
+                        validMeas = false;
+                        break;
+                    }
+                }
+                
+                if (isMC) {
+                    for (int j = 0; j < ndim; ++j) {
+                        if (std::isnan(tvars_f[j]) || std::isinf(tvars_f[j])) {
+                            validTruth = false;
+                            break;
+                        }
+                    }
+                }
+                
+                // Fill appropriate histograms based on dimension
+                if (validMeas) {
+                    if (ndim == 1) {
+                        if (isData) {
+                            h_measured_data_1d->Fill(mvars_f[0], eventWeight);
+                        } else {
+                            h_measured_mc_1d->Fill(mvars_f[0], eventWeight);
+                        }
+                        validEntries++;
+                        sumWeights += eventWeight;
+                    } else if (ndim == 2) {
+                        if (isData) {
+                            h_measured_data_2d->Fill(mvars_f[0], mvars_f[1], eventWeight);
+                        } else {
+                            h_measured_mc_2d->Fill(mvars_f[0], mvars_f[1], eventWeight);
+                        }
+                        validEntries++;
+                        sumWeights += eventWeight;
+                    } else if (ndim == 3) {
+                        if (isData) {
+                            h_measured_data_3d->Fill(mvars_f[0], mvars_f[1], mvars_f[2], eventWeight);
+                        } else {
+                            h_measured_mc_3d->Fill(mvars_f[0], mvars_f[1], mvars_f[2], eventWeight);
+                        }
+                        validEntries++;
+                        sumWeights += eventWeight;
+                    }
+                }
+                
+                // Fill truth and response histograms for MC
+                if (isMC && validMeas && validTruth) {
+                    if (ndim == 1) {
+                        h_truth_mc_1d->Fill(tvars_f[0], eventWeight);
+                        h_response_2d->Fill(tvars_f[0], mvars_f[0], eventWeight);
+                    } else if (ndim == 2) {
+                        h_truth_mc_2d->Fill(tvars_f[0], tvars_f[1], eventWeight);
+                        
+                        // Calculate individual bin indices for each dimension (0-based)
+                        int truthBinX = h_truth_mc_2d->GetXaxis()->FindBin(tvars_f[0]) - 1;
+                        int truthBinY = h_truth_mc_2d->GetYaxis()->FindBin(tvars_f[1]) - 1;
+                        int measBinX = h_measured_mc_2d->GetXaxis()->FindBin(mvars_f[0]) - 1;
+                        int measBinY = h_measured_mc_2d->GetYaxis()->FindBin(mvars_f[1]) - 1;
+                        
+                        // Flatten to 1D indices using consistent physics convention
+                        std::vector<int> truthIdx = {truthBinX, truthBinY};
+                        std::vector<int> measIdx = {measBinX, measBinY};
+                        std::vector<int> nTruth = {h_truth_mc_2d->GetNbinsX(), h_truth_mc_2d->GetNbinsY()};
+                        std::vector<int> nMeas = {h_measured_mc_2d->GetNbinsX(), h_measured_mc_2d->GetNbinsY()};
+                        
+                        int truthFlat = flattenIndices(truthIdx, nTruth);
+                        int measFlat = flattenIndices(measIdx, nMeas);
+                        h_response_2d->Fill(truthFlat, measFlat, eventWeight);
+                    } else if (ndim == 3) {
+                        h_truth_mc_3d->Fill(tvars_f[0], tvars_f[1], tvars_f[2], eventWeight);
+                        
+                        // Calculate individual bin indices for each dimension (0-based)
+                        int truthBinX = h_truth_mc_3d->GetXaxis()->FindBin(tvars_f[0]) - 1;
+                        int truthBinY = h_truth_mc_3d->GetYaxis()->FindBin(tvars_f[1]) - 1;
+                        int truthBinZ = h_truth_mc_3d->GetZaxis()->FindBin(tvars_f[2]) - 1;
+                        int measBinX = h_measured_mc_3d->GetXaxis()->FindBin(mvars_f[0]) - 1;
+                        int measBinY = h_measured_mc_3d->GetYaxis()->FindBin(mvars_f[1]) - 1;
+                        int measBinZ = h_measured_mc_3d->GetZaxis()->FindBin(mvars_f[2]) - 1;
+                        
+                        // Flatten to 1D indices using consistent physics convention
+                        std::vector<int> truthIdx = {truthBinX, truthBinY, truthBinZ};
+                        std::vector<int> measIdx = {measBinX, measBinY, measBinZ};
+                        std::vector<int> nTruth = {h_truth_mc_3d->GetNbinsX(), h_truth_mc_3d->GetNbinsY(), h_truth_mc_3d->GetNbinsZ()};
+                        std::vector<int> nMeas = {h_measured_mc_3d->GetNbinsX(), h_measured_mc_3d->GetNbinsY(), h_measured_mc_3d->GetNbinsZ()};
+                        
+                        int truthFlat = flattenIndices(truthIdx, nTruth);
+                        int measFlat = flattenIndices(measIdx, nMeas);
+                        h_response_2d->Fill(truthFlat, measFlat, eventWeight);
+                    }
+                }
+            }
+            
+            log(LOG_INFO, "Valid entries: " + std::to_string(validEntries) + " out of " + 
+                std::to_string(nEntries) + " (sum of weights: " + std::to_string(sumWeights) + ")");
+            
+            // Log histogram stats depending on dimension
+            if (ndim == 1) {
+                if (isData) {
+                    log(LOG_INFO, "Data histogram entries: " + std::to_string(h_measured_data_1d->GetEntries()) + 
+                        ", integral: " + std::to_string(h_measured_data_1d->Integral()));
+                } else {
+                    log(LOG_INFO, "MC measured histogram entries: " + std::to_string(h_measured_mc_1d->GetEntries()) + 
+                        ", integral: " + std::to_string(h_measured_mc_1d->Integral()));
+                }
+                
+                if (isMC) {
+                    log(LOG_INFO, "Truth histogram entries: " + std::to_string(h_truth_mc_1d->GetEntries()) + 
+                        ", integral: " + std::to_string(h_truth_mc_1d->Integral()));
+                    log(LOG_INFO, "Response histogram entries: " + std::to_string(h_response_2d->GetEntries()) + 
+                        ", integral: " + std::to_string(h_response_2d->Integral()));
+                }
+            } else if (ndim == 2) {
+                if (isData) {
+                    log(LOG_INFO, "Data histogram entries: " + std::to_string(h_measured_data_2d->GetEntries()) + 
+                        ", integral: " + std::to_string(h_measured_data_2d->Integral()));
+                } else {
+                    log(LOG_INFO, "MC measured histogram entries: " + std::to_string(h_measured_mc_2d->GetEntries()) + 
+                        ", integral: " + std::to_string(h_measured_mc_2d->Integral()));
+                }
+                
+                if (isMC) {
+                    log(LOG_INFO, "Truth histogram entries: " + std::to_string(h_truth_mc_2d->GetEntries()) + 
+                        ", integral: " + std::to_string(h_truth_mc_2d->Integral()));
+                    log(LOG_INFO, "Response histogram entries: " + std::to_string(h_response_2d->GetEntries()) + 
+                        ", integral: " + std::to_string(h_response_2d->Integral()));
+                }
+            } else if (ndim == 3) {
+                if (isData) {
+                    log(LOG_INFO, "Data histogram entries: " + std::to_string(h_measured_data_3d->GetEntries()) + 
+                        ", integral: " + std::to_string(h_measured_data_3d->Integral()));
+                } else {
+                    log(LOG_INFO, "MC measured histogram entries: " + std::to_string(h_measured_mc_3d->GetEntries()) + 
+                        ", integral: " + std::to_string(h_measured_mc_3d->Integral()));
+                }
+                
+                if (isMC) {
+                    log(LOG_INFO, "Truth histogram entries: " + std::to_string(h_truth_mc_3d->GetEntries()) + 
+                        ", integral: " + std::to_string(h_truth_mc_3d->Integral()));
+                    log(LOG_INFO, "Response histogram entries: " + std::to_string(h_response_2d->GetEntries()) + 
+                        ", integral: " + std::to_string(h_response_2d->Integral()));
+                }
+            }
+        }
+        void performUnfolding(const std::string& method, int nIter) {
+            if (ndim == 0) {
+                log(LOG_ERROR, "Cannot unfold with dimension 0. No dimensions set.");
+                return;
+            }
+            
+            // Create RooUnfoldResponse object based on dimension
+            response = new RooUnfoldResponse();
+            
+            if (ndim == 1) {
+                log(LOG_INFO, "Setting up 1D response matrix");
+                response->Setup(h_measured_mc_1d, h_truth_mc_1d, h_response_2d);
+                
+                // Choose unfolding method
+                if (method == "Bayes") {
+                    unfold = new RooUnfoldBayes(response, h_measured_data_1d, nIter);
+                    log(LOG_INFO, "Using Bayesian unfolding with " + std::to_string(nIter) + " iterations");
+                } else if (method == "SVD") {
+                    unfold = new RooUnfoldSvd(response, h_measured_data_1d, nIter);
+                    log(LOG_INFO, "Using SVD unfolding with kterm=" + std::to_string(nIter));
+                } else if (method == "BinByBin") {
+                    unfold = new RooUnfoldBinByBin(response, h_measured_data_1d);
+                    log(LOG_INFO, "Using bin-by-bin unfolding");
+                } else { // Invert or MatrixInversion
+                    unfold = new RooUnfoldInvert(response, h_measured_data_1d);
+                    log(LOG_INFO, "Using matrix inversion unfolding");
+                }
+            } else if (ndim == 2) {
+                log(LOG_INFO, "Setting up 2D response matrix");
+                // Convert to TH1D (flattened)
+                TH1D* h_meas_data_flat = new TH1D("h_meas_data_flat", "Flattened Measured Data", 
+                                               h_measured_data_2d->GetNcells(), 0, h_measured_data_2d->GetNcells());
+                TH1D* h_meas_mc_flat = new TH1D("h_meas_mc_flat", "Flattened Measured MC", 
+                                             h_measured_mc_2d->GetNcells(), 0, h_measured_mc_2d->GetNcells());
+                TH1D* h_truth_mc_flat = new TH1D("h_truth_mc_flat", "Flattened Truth MC", 
+                                              h_truth_mc_2d->GetNcells(), 0, h_truth_mc_2d->GetNcells());
+                
+                // Fill flattened histograms
+                for (int i = 1; i <= h_measured_data_2d->GetNbinsX(); ++i) {
+                    for (int j = 1; j <= h_measured_data_2d->GetNbinsY(); ++j) {
+                        int bin = (i-1) * h_measured_data_2d->GetNbinsY() + j;
+                        h_meas_data_flat->SetBinContent(bin, h_measured_data_2d->GetBinContent(i, j));
+                        h_meas_mc_flat->SetBinContent(bin, h_measured_mc_2d->GetBinContent(i, j));
+                    }
+                }
+                
+                for (int i = 1; i <= h_truth_mc_2d->GetNbinsX(); ++i) {
+                    for (int j = 1; j <= h_truth_mc_2d->GetNbinsY(); ++j) {
+                        int bin = (i-1) * h_truth_mc_2d->GetNbinsY() + j;
+                        h_truth_mc_flat->SetBinContent(bin, h_truth_mc_2d->GetBinContent(i, j));
+                    }
+                }
+                
+                response->Setup(h_meas_mc_flat, h_truth_mc_flat, h_response_2d);
+                
+                // Choose unfolding method
+                if (method == "Bayes") {
+                    unfold = new RooUnfoldBayes(response, h_meas_data_flat, nIter);
+                    log(LOG_INFO, "Using Bayesian unfolding with " + std::to_string(nIter) + " iterations");
+                } else if (method == "SVD") {
+                    unfold = new RooUnfoldSvd(response, h_meas_data_flat, nIter);
+                    log(LOG_INFO, "Using SVD unfolding with kterm=" + std::to_string(nIter));
+                } else if (method == "BinByBin") {
+                    unfold = new RooUnfoldBinByBin(response, h_meas_data_flat);
+                    log(LOG_INFO, "Using bin-by-bin unfolding");
+                } else { // Invert or MatrixInversion
+                    unfold = new RooUnfoldInvert(response, h_meas_data_flat);
+                    log(LOG_INFO, "Using matrix inversion unfolding");
+                }
+            } else if (ndim == 3) {
+                log(LOG_INFO, "Setting up 3D response matrix");
+                // Convert to TH1D (flattened)
+                TH1D* h_meas_data_flat = new TH1D("h_meas_data_flat", "Flattened Measured Data", 
+                                               h_measured_data_3d->GetNcells(), 0, h_measured_data_3d->GetNcells());
+                TH1D* h_meas_mc_flat = new TH1D("h_meas_mc_flat", "Flattened Measured MC", 
+                                             h_measured_mc_3d->GetNcells(), 0, h_measured_mc_3d->GetNcells());
+                TH1D* h_truth_mc_flat = new TH1D("h_truth_mc_flat", "Flattened Truth MC", 
+                                              h_truth_mc_3d->GetNcells(), 0, h_truth_mc_3d->GetNcells());
+                
+                // Fill flattened histograms (more complex for 3D)
+                for (int i = 1; i <= h_measured_data_3d->GetNbinsX(); ++i) {
+                    for (int j = 1; j <= h_measured_data_3d->GetNbinsY(); ++j) {
+                        for (int k = 1; k <= h_measured_data_3d->GetNbinsZ(); ++k) {
+                            int bin = (i-1) * h_measured_data_3d->GetNbinsY() * h_measured_data_3d->GetNbinsZ() + 
+                                     (j-1) * h_measured_data_3d->GetNbinsZ() + k;
+                            h_meas_data_flat->SetBinContent(bin, h_measured_data_3d->GetBinContent(i, j, k));
+                            h_meas_mc_flat->SetBinContent(bin, h_measured_mc_3d->GetBinContent(i, j, k));
+                        }
+                    }
+                }
+                
+                for (int i = 1; i <= h_truth_mc_3d->GetNbinsX(); ++i) {
+                    for (int j = 1; j <= h_truth_mc_3d->GetNbinsY(); ++j) {
+                        for (int k = 1; k <= h_truth_mc_3d->GetNbinsZ(); ++k) {
+                            int bin = (i-1) * h_truth_mc_3d->GetNbinsY() * h_truth_mc_3d->GetNbinsZ() + 
+                                     (j-1) * h_truth_mc_3d->GetNbinsZ() + k;
+                            h_truth_mc_flat->SetBinContent(bin, h_truth_mc_3d->GetBinContent(i, j, k));
+                        }
+                    }
+                }
+                
+                response->Setup(h_meas_mc_flat, h_truth_mc_flat, h_response_2d);
+                
+                // Choose unfolding method
+                if (method == "Bayes") {
+                    unfold = new RooUnfoldBayes(response, h_meas_data_flat, nIter);
+                    log(LOG_INFO, "Using Bayesian unfolding with " + std::to_string(nIter) + " iterations");
+                } else if (method == "SVD") {
+                    unfold = new RooUnfoldSvd(response, h_meas_data_flat, nIter);
+                    log(LOG_INFO, "Using SVD unfolding with kterm=" + std::to_string(nIter));
+                } else if (method == "BinByBin") {
+                    unfold = new RooUnfoldBinByBin(response, h_meas_data_flat);
+                    log(LOG_INFO, "Using bin-by-bin unfolding");
+                } else { // Invert or MatrixInversion
+                    unfold = new RooUnfoldInvert(response, h_meas_data_flat);
+                    log(LOG_INFO, "Using matrix inversion unfolding");
+                }
+            }
+            
+            // Set options and perform unfolding
+            unfold->SetVerbose(1);
+            TH1* h_unfolded = (TH1*)unfold->Hreco();  // Hreco() is the correct method name in RooUnfold
+            if (!h_unfolded) {
+                log(LOG_ERROR, "Unfolding failed, no histogram returned");
+            } else {
+                log(LOG_INFO, "Unfolding successful, got histogram with " + 
+                    std::to_string(h_unfolded->GetEntries()) + " entries and integral " + 
+                    std::to_string(h_unfolded->Integral()));
+            }
+        }
+        
+        // Generic getters based on dimension
+        TObject* getMeasuredData() { 
+            if (ndim == 1) return h_measured_data_1d;
+            if (ndim == 2) return h_measured_data_2d;
+            if (ndim == 3) return h_measured_data_3d;
+            return nullptr;
+        }
+        
+        TObject* getMeasuredMC() { 
+            if (ndim == 1) return h_measured_mc_1d;
+            if (ndim == 2) return h_measured_mc_2d;
+            if (ndim == 3) return h_measured_mc_3d;
+            return nullptr;
+        }
+        
+        TObject* getTruthMC() { 
+            if (ndim == 1) return h_truth_mc_1d;
+            if (ndim == 2) return h_truth_mc_2d;
+            if (ndim == 3) return h_truth_mc_3d;
+            return nullptr;
+        }
+        
+        TObject* getResponse() { return h_response_2d; }
+        // Flatten N-dimensional response to TH2D for plotting (since we already use TH2D, this is simplified)
+        TH2D* flattenResponse() {
+            // We're already using TH2D for the response matrix, simply clone it
+            if (h_response_2d) {
+                return (TH2D*)h_response_2d->Clone("h_response_flat");
+            }
+            
+            // Fallback if response matrix is null
+            int nTruth = 1, nMeas = 1;
+            for (int i = 0; i < ndim; ++i) nTruth *= truthBins[i].size()-1;
+            for (int i = 0; i < ndim; ++i) nMeas *= measuredBins[i].size()-1;
+            
+            return new TH2D("h_response_flat", 
+                           "Response Matrix (flattened);Global Truth Bin;Global Measured Bin", 
+                           nTruth, 0, nTruth, nMeas, 0, nMeas);
+        }
+        ~GenericUnfolderND() { delete unfold; delete response; }
+    };
+    
 
 // Forward declaration and simple implementation of plotResponseMatrix
 void plotResponseMatrix(const std::string& set, GenericUnfolderND& unfolder, const std::vector<std::vector<double>>& measuredBins, const std::vector<std::string>& measuredVars) {
@@ -651,7 +645,7 @@ void plotResponseMatrix(const std::string& set, GenericUnfolderND& unfolder, con
     // Get the response matrix
     TH2D* h_response = (TH2D*)unfolder.getResponse();
     if (h_response) {
-        h_response->Draw("COLZ");
+        h_response->Draw("TEXTCOLZ");
         h_response->SetStats(0);
         h_response->SetTitle(("Response Matrix for " + set).c_str());
         c_resp->SetLogz();
@@ -659,11 +653,262 @@ void plotResponseMatrix(const std::string& set, GenericUnfolderND& unfolder, con
         log(LOG_WARNING, "No response matrix available for plotting");
         // Create a simple placeholder
         TH2D* h_simple = new TH2D((set+"_response_simple").c_str(), "Response Matrix (Placeholder)", 10, 0, 10, 10, 0, 10);
-        h_simple->Draw("COLZ");
+        h_simple->Draw("TEXTCOLZ");
     }
-    
+    c_resp->SaveAs((set+"_response_matrix.png").c_str());
     c_resp->Write();
 }
+
+// Generalized plotting function for rectangular response matrices with segmented physical axes (truth vs measured)
+void plotGeneralizedResponseMatrix(const std::string& set,
+                                   TH2D* h_response,
+                                   const std::vector<std::string>& measuredVarNames,
+                                   const std::vector<std::vector<double>>& measuredBinEdges,
+                                   const std::vector<std::string>& truthVarNames,
+                                   const std::vector<std::vector<double>>& truthBinEdges,
+                                   const std::string& title = "Response Matrix") {
+    if (!h_response || measuredVarNames.empty() || measuredBinEdges.empty() || truthVarNames.empty() || truthBinEdges.empty()) return;
+    
+    int ndim_meas = measuredVarNames.size();
+    int ndim_truth = truthVarNames.size();
+    int nGlobalBinsX = h_response->GetNbinsX(); // truth (X axis)
+    int nGlobalBinsY = h_response->GetNbinsY(); // measured (Y axis)
+    
+    // Calculate bin counts for each dimension
+    std::vector<int> nBinsMeasured, nBinsTruth;
+    for (const auto& edges : measuredBinEdges) nBinsMeasured.push_back(edges.size() - 1);
+    for (const auto& edges : truthBinEdges) nBinsTruth.push_back(edges.size() - 1);
+    
+    printf("\n======= Response Matrix Debug Info for Set: %s =======\n", set.c_str());
+    printf("Truth dimensions (%d): ", ndim_truth);
+    for (int i = 0; i < ndim_truth; ++i) printf("%s%s", truthVarNames[i].c_str(), i < ndim_truth-1 ? ", " : "");
+    printf("\nMeasured dimensions (%d): ", ndim_meas);
+    for (int i = 0; i < ndim_meas; ++i) printf("%s%s", measuredVarNames[i].c_str(), i < ndim_meas-1 ? ", " : "");
+    printf("\nGlobal bins: X=%d, Y=%d\n", nGlobalBinsX, nGlobalBinsY);
+    printf("Truth bin counts: ");
+    for (int i = 0; i < ndim_truth; ++i) printf("%d%s", nBinsTruth[i], i < ndim_truth-1 ? "," : "");
+    printf("\nMeasured bin counts: ");
+    for (int i = 0; i < ndim_meas; ++i) printf("%d%s", nBinsMeasured[i], i < ndim_meas-1 ? "," : "");
+    printf("\n==================================================\n\n");
+    
+    // Create canvas with appropriate margins
+    double bottomMargin, leftMargin;
+    int canvasWidth, canvasHeight;
+    
+    if (ndim_truth <= 1 && ndim_meas <= 1) {
+        // 1D case: use standard margins and canvas size
+        bottomMargin = 0.15;
+        leftMargin = 0.15;
+        canvasWidth = 800;
+        canvasHeight = 600;
+    } else {
+        // Multi-dimensional case: use larger margins for additional axes
+        bottomMargin = 0.08 + 0.06 * ndim_truth;
+        leftMargin = 0.08 + 0.06 * ndim_meas;
+        canvasWidth = (ndim_meas <= 1 && ndim_truth <= 1) ? 2000 : ndim_truth*2000;
+        canvasHeight = (ndim_meas <= 1 && ndim_truth <= 1) ? 1200 : ndim_truth*1200;
+    }
+    
+    TCanvas* c_resp = new TCanvas((set+"_response_detailed").c_str(), (set+" " + title).c_str(), canvasWidth, canvasHeight);
+    c_resp->SetBottomMargin(bottomMargin);
+    c_resp->SetLeftMargin(leftMargin);
+    c_resp->SetRightMargin(0.15); // Space for color palette
+    c_resp->SetTopMargin(0.1);
+    
+    // Draw main response matrix
+    gStyle->SetPaintTextFormat("3.1f");
+    h_response->SetMarkerSize(0.6);  // Controls text size in ROOT histograms
+    h_response->Draw("text_COLZ");
+    h_response->SetStats(0);
+    h_response->SetTitle((title + " for " + set).c_str());
+    
+    // Configure axis titles and labels based on dimensionality
+    if (ndim_truth > 1 || ndim_meas > 1) {
+        // Multi-dimensional: remove default axis titles and labels since we'll add custom ones
+        h_response->GetXaxis()->SetTitle("");
+        h_response->GetYaxis()->SetTitle("");
+        h_response->GetXaxis()->SetLabelSize(0);
+        h_response->GetYaxis()->SetLabelSize(0);
+    } else {
+        // 1D: keep default axis titles showing physical values
+        h_response->GetXaxis()->SetTitle("Truth Bin Index");
+        h_response->GetYaxis()->SetTitle("Measured Bin Index");
+    }
+    
+    // Get canvas coordinates for additional axes
+    double x1 = h_response->GetXaxis()->GetXmin();
+    double x2 = h_response->GetXaxis()->GetXmax(); 
+    double y1 = h_response->GetYaxis()->GetXmin();
+    double y2 = h_response->GetYaxis()->GetXmax();
+    
+    // Only draw additional axes for multi-dimensional cases (2D and 3D)
+    if (ndim_truth > 1 || ndim_meas > 1) {
+        // Draw additional truth axes (X-axis, below main plot)
+        double axisYOffset = 0.1; // Further increased vertical spacing between axes
+        for (int dim = 0; dim < ndim_truth; ++dim) {
+            DimensionCycleInfo cycleInfo = calculateCycleInfo(dim, nBinsTruth);
+            double axisY = y1 - axisYOffset * (y2-y1) * (dim+1);
+            
+            printf("[DEBUG] Truth Dim %d (%s): %d cycles, %d bins per cycle, stride=%d\n", 
+                   dim, truthVarNames[dim].c_str(), cycleInfo.nCycles, cycleInfo.binsPerCycle, cycleInfo.stride);
+        
+            // Draw each cycle of this dimension
+            for (int cycle = 0; cycle < cycleInfo.nCycles; ++cycle) {
+                // Calculate starting bin position for this cycle - correct stride-based positioning
+                int startGlobalBin = cycle * cycleInfo.stride * cycleInfo.binsPerCycle;
+                
+                // Calculate canvas X positions for the bin edges of this cycle
+                std::vector<double> binPositions;
+                for (int i = 0; i <= cycleInfo.binsPerCycle; ++i) {
+                    int globalBin = startGlobalBin + i * cycleInfo.stride;
+                    double canvasX = x1 + (x2-x1) * (double)globalBin / nGlobalBinsX;
+                    binPositions.push_back(canvasX);
+                }
+                
+                // Draw axis line from first to last position
+                TLine* axisLine = new TLine(binPositions.front(), axisY, binPositions.back(), axisY);
+                axisLine->SetLineColor(kBlack);
+                axisLine->SetLineWidth(1);
+                axisLine->Draw();
+                
+                // Draw tick marks and labels at each bin edge position
+                for (int i = 0; i <= cycleInfo.binsPerCycle; ++i) {
+                    double tickX = binPositions[i];
+                    
+                    // Draw tick mark
+                    TLine* tick = new TLine(tickX, axisY, tickX, axisY - 0.01*(y2-y1));
+                    tick->SetLineColor(kBlack);
+                    tick->SetLineWidth(1);
+                    tick->Draw();
+                    
+                    // Create and position label
+                    TLatex* label = new TLatex();
+                    label->SetTextAlign(21); // Center aligned
+                    label->SetTextSize(0.018);
+                    label->SetTextColor(kBlack);
+                    
+                    // Generate label text
+                    std::string labelText;
+                    if (cycle > 0 && i == 0) {
+                        labelText = " "; // Blank first label for subsequent cycles
+                    } else {
+                        labelText = formatAxisValue(truthBinEdges[dim][i]);
+                    }
+                    
+                    label->DrawLatex(tickX, axisY - 0.025*(y2-y1), labelText.c_str());
+                }
+                
+                // Add dimension title only for the last cycle (rightmost)
+                if (cycle == cycleInfo.nCycles - 1) {
+                    TLatex* title = new TLatex();
+                    title->SetTextAlign(31); // Right aligned
+                    title->SetTextSize(0.022);
+                    title->SetTextColor(kBlack);
+                    title->DrawLatex(binPositions.back() + 0.05*(x2-x1), axisY + 0.04*(y2-y1), truthVarNames[dim].c_str());
+                }
+                
+                // Draw separator line between cycles (except after last cycle) - red dashed, only above axis
+                if (cycle < cycleInfo.nCycles - 1) {
+                    double sepX = binPositions.back();
+                    TLine* vline = new TLine(sepX, axisY, sepX, axisY+0.04*(y2-y1));
+                    vline->SetLineColor(kRed);
+                    vline->SetLineStyle(2);
+                    vline->SetLineWidth(2);
+                    vline->Draw();
+                }
+            }
+        }    
+        // Draw additional measured axes (Y-axis, to left of main plot)
+        double axisXOffset = 0.1; // Further increased horizontal spacing between axes
+        for (int dim = 0; dim < ndim_meas; ++dim) {
+            DimensionCycleInfo cycleInfo = calculateCycleInfo(dim, nBinsMeasured);
+            double axisX = x1 - axisXOffset * (x2-x1) * (dim+1);
+            
+            printf("[DEBUG] Measured Dim %d (%s): %d cycles, %d bins per cycle, stride=%d\n", 
+                dim, measuredVarNames[dim].c_str(), cycleInfo.nCycles, cycleInfo.binsPerCycle, cycleInfo.stride);
+            
+            // Draw each cycle of this dimension
+            for (int cycle = 0; cycle < cycleInfo.nCycles; ++cycle) {
+                // Calculate starting bin position for this cycle - correct stride-based positioning
+                int startGlobalBin = cycle * cycleInfo.stride * cycleInfo.binsPerCycle;
+                
+                // Calculate canvas Y positions for the bin edges of this cycle
+                std::vector<double> binPositions;
+                for (int i = 0; i <= cycleInfo.binsPerCycle; ++i) {
+                    int globalBin = startGlobalBin + i * cycleInfo.stride;
+                    double canvasY = y1 + (y2-y1) * (double)globalBin / nGlobalBinsY;
+                    binPositions.push_back(canvasY);
+                }
+                
+                // Draw axis line from first to last position
+                TLine* axisLine = new TLine(axisX, binPositions.front(), axisX, binPositions.back());
+                axisLine->SetLineColor(kBlack);
+                axisLine->SetLineWidth(1);
+                axisLine->Draw();
+                
+                // Draw tick marks and labels at each bin edge position
+                for (int i = 0; i <= cycleInfo.binsPerCycle; ++i) {
+                    double tickY = binPositions[i];
+                    
+                    // Draw tick mark
+                    TLine* tick = new TLine(axisX, tickY, axisX - 0.01*(x2-x1), tickY);
+                    tick->SetLineColor(kBlack);
+                    tick->SetLineWidth(1);
+                    tick->Draw();
+                    
+                    // Create and position label
+                    TLatex* label = new TLatex();
+                    label->SetTextAlign(32); // Right aligned
+                    label->SetTextSize(0.018);
+                    label->SetTextColor(kBlack);
+                    
+                    // Generate label text
+                    std::string labelText;
+                    if (cycle > 0 && i == 0) {
+                        labelText = " "; // Blank first label for subsequent cycles
+                    } else {
+                        labelText = formatAxisValue(measuredBinEdges[dim][i]);
+                    }
+                    
+                    label->DrawLatex(axisX - 0.025*(x2-x1), tickY, labelText.c_str());
+                }
+                
+                // Add dimension title only for the last cycle (closest to main plot)
+                if (cycle == cycleInfo.nCycles - 1) {
+                    TLatex* title = new TLatex();
+                    title->SetTextAlign(32); // Right aligned  
+                    title->SetTextSize(0.022);
+                    title->SetTextColor(kBlack);
+                    title->SetTextAngle(90); // Vertical text
+                    title->DrawLatex(axisX + 0.04*(x2-x1), binPositions.back() + 0.05*(y2-y1), measuredVarNames[dim].c_str());
+                }
+                
+                // Draw separator line between cycles (except after last cycle) - red dashed, only to right of axis
+                if (cycle < cycleInfo.nCycles - 1) {
+                    double sepY = binPositions.back();
+                    TLine* hline = new TLine(axisX, sepY, axisX+0.04*(x2-x1), sepY);
+                    hline->SetLineColor(kRed);
+                    hline->SetLineStyle(2);
+                    hline->SetLineWidth(2);
+                    hline->Draw();
+                }
+            }
+        }
+    } // End of multi-dimensional additional axes block
+    
+    c_resp->SaveAs((set+"_response_matrix.png").c_str());
+    c_resp->Write();
+}
+
+// ---
+// FLATTENING AND AXIS STRUCTURE FOR MULTI-DIMENSIONAL RESPONSE MATRICES
+// For 2D: globalBin = iy * nJetPt + ix
+//   - X axis: global bin number (0 ... nJetPt*nJetGirth-1)
+//   - Additional axes: first for jetPt (repeats for each girth), second for jetGirth (cycles for each jetPt)
+// For 3D: globalBin = iz * (nJetPt*nJetGirth) + iy * nJetPt + ix
+//   - X axis: global bin number (0 ... nPhotonEt*nJetPt*nJetGirth-1)
+//   - Additional axes: photonEt (repeats for each jetPt/girth), jetPt (repeats for each girth, cycles for photonEt), girth (cycles fastest)
+// ---
 
 // Edit 4: Refactor main function to use only generic logic and config-driven workflow
 void RooUnfoldJetSubstructure(const char* configFile = "../configs/UnfoldJetSub_xj_test.config") {
@@ -910,6 +1155,9 @@ void RooUnfoldJetSubstructure(const char* configFile = "../configs/UnfoldJetSub_
         }
         
         plotResponseMatrix(set, unfolder, bins, vars);
+        if (h_response) {
+            plotGeneralizedResponseMatrix(set, h_response, vars, bins, tvars, truthBins, "Response Matrix");
+        }
         log(LOG_INFO, "Unfolding set '" + set + "' completed and saved.");
         
         dataF->Close();
