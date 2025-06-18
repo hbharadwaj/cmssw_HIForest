@@ -541,6 +541,7 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
     std::map<std::string, float> selectedJetDynDeltaRs;
     std::map<std::string, int> selectedJetIntJetMultis;
     // Ref jet (MC-matched) output variables
+    std::map<std::string, float> selectedRefJetXjs;
     std::map<std::string, float> selectedRefJetPts;
     std::map<std::string, float> selectedRefJetEtas;
     std::map<std::string, float> selectedRefJetPhis;
@@ -625,6 +626,7 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
         outTree->Branch(("jetIntJetMulti_" + collection).c_str(), &selectedJetIntJetMultis[collection]);
         
         // Ref jet branches (MC-matched jets)
+        outTree->Branch(("refxj_" + collection).c_str(), &selectedRefJetXjs[collection]);
         outTree->Branch(("refJetPt_" + collection).c_str(), &selectedRefJetPts[collection]);
         outTree->Branch(("refJetEta_" + collection).c_str(), &selectedRefJetEtas[collection]);
         outTree->Branch(("refJetPhi_" + collection).c_str(), &selectedRefJetPhis[collection]);
@@ -875,6 +877,7 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
                     fill1D("hMCPhotonPID", mcPID->at(genIndex), eventWeight); 
                     fill1D("hMCPhotonMomPID", mcMomPID->at(genIndex), eventWeight);
                     fill2D("h2PhotonRecoEtVsGenEt", phoEt->at(selectedPhotonIndex), mcPt->at(genIndex), eventWeight);
+                    // TODO: Add photon Et resolution plot
                 }
             }
         }
@@ -935,6 +938,7 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
             selectedJetIntJetMultis[collection] = -999;
             
             // Reset ref jet variables
+            selectedRefJetXjs[collection] = -999;
             selectedRefJetPts[collection] = -999;
             selectedRefJetEtas[collection] = -999;
             selectedRefJetPhis[collection] = -999;
@@ -986,6 +990,7 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
                 }
                 
                 selectedJetXjs[collection] = getXj(jetManager.getJetPt(collection, bestJetIndex), selectedPhotonEt);
+                selectedRefJetXjs[collection] = getXj(jetManager.getRefJetPt(collection, bestJetIndex),selectedMCPhotonEt)
 
                 // Check and apply XJ cut if configured
                 float xjMin = config->GetValue("XjMin", -1.0);
@@ -1077,6 +1082,7 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
                     
                     // Ref jet (MC-matched) histograms
                     if (isMC && selectedRefJetPts[collection] > -900) {
+                        fill1Djet("hRefXj", selectedRefJetXjs[collection], eventWeight);
                         fill1Djet("hRefPt", selectedRefJetPts[collection], eventWeight);
                         fill1Djet("hRefEta", selectedRefJetEtas[collection], eventWeight);
                         fill1Djet("hRefPhi", selectedRefJetPhis[collection], eventWeight);
