@@ -1,6 +1,10 @@
 #ifndef UNFOLD_HELPERS_H
 #define UNFOLD_HELPERS_H
 
+#include "UnfoldUtils.h"
+#include "UnfoldConfig.h"
+#include "HistogramManager.h"
+
 #include <string>
 #include <vector>
 #include <map>
@@ -9,24 +13,12 @@
 #include <algorithm>
 #include <fstream>
 #include <iomanip>
-#include <iomanip> // For std::setprecision
-
-// Logging levels
-enum LogLevel { LOG_ERROR = 0, LOG_WARNING = 1, LOG_INFO = 2, LOG_DEBUG = 3 };
-inline int gVerbosity = LOG_INFO;
-
-inline void log(LogLevel level, const std::string& message) {
-    if (level <= gVerbosity) {
-        const char* prefix = "";
-        switch (level) {
-            case LOG_ERROR:   prefix = "[ERROR]   "; break;
-            case LOG_WARNING: prefix = "[WARNING] "; break;
-            case LOG_INFO:    prefix = "[INFO]    "; break;
-            case LOG_DEBUG:   prefix = "[DEBUG]   "; break;
-        }
-        std::cout << prefix << message << std::endl;
-    }
-}
+#include <cctype>
+#include <cmath>
+#include <Eigen/Dense>
+#include <TObjString.h>
+#include <TMatrixD.h>
+#include <TH1D.h>
 
 // Structure to hold binning for arbitrary variables
 typedef std::vector<double> BinEdges;
@@ -34,9 +26,9 @@ typedef std::vector<double> BinEdges;
 struct UnfoldingBinning {
     std::map<std::string, BinEdges> binEdges; // variable name -> bin edges
     void print() const {
-        log(LOG_INFO, "Binning configuration:");
+        log(LOG_DEBUG, "Binning configuration:");
         for (const auto& kv : binEdges) {
-            log(LOG_INFO, "  " + kv.first + ": " + std::to_string(nBins(kv.first)) + " bins");
+            log(LOG_DEBUG, "  " + kv.first + ": " + std::to_string(nBins(kv.first)) + " bins");
         }
     }
     int nBins(const std::string& var) const {
@@ -73,26 +65,6 @@ inline std::map<std::string, std::string> parseConfig(const std::string& configF
     return config;
 }
 
-inline std::vector<std::string> splitCSV(const std::string& csv) {
-    std::vector<std::string> result;
-    std::stringstream ss(csv);
-    std::string item;
-    while (std::getline(ss, item, ',')) {
-        item.erase(std::remove_if(item.begin(), item.end(), ::isspace), item.end());
-        if (!item.empty()) result.push_back(item);
-    }
-    return result;
-}
-
-inline std::vector<double> parseBins(const std::string& binString) {
-    std::vector<double> bins;
-    std::vector<std::string> tokens = splitCSV(binString);
-    for (const auto& t : tokens) {
-        bins.push_back(std::stod(t));
-    }
-    return bins;
-}
-
 inline UnfoldingBinning parseBinningFromConfig(const std::map<std::string, std::string>& config, const std::vector<std::string>& variables) {
     UnfoldingBinning binning;
     for (const auto& var : variables) {
@@ -103,19 +75,6 @@ inline UnfoldingBinning parseBinningFromConfig(const std::map<std::string, std::
         }
     }
     return binning;
-}
-
-// Additional helper functions for N-dimensional unfolding
-
-// Helper: flatten N-dimensional indices to 1D
-inline int flattenIndices(const std::vector<int>& indices, const std::vector<int>& nBins) {
-    int flat = 0;
-    int stride = 1;
-    for (size_t d = 0; d < indices.size(); ++d) {
-        flat += indices[d] * stride;
-        stride *= nBins[d];
-    }
-    return flat;
 }
 
 // Helper: generate axis labels for flattened axes with cycles and " " for overlaps
@@ -253,6 +212,100 @@ inline std::string getBinLabel(const std::vector<double>& edges, int idx) {
     std::ostringstream oss;
     oss << edges[idx] << "-" << edges[idx+1];
     return oss.str();
+}
+
+// Utility: Unfoldability check (Nominal only)
+// Add TDirectory* outDir argument
+inline bool checkUnfoldability(const HistogramManager& histManager, const UnfoldConfig& config, std::string& details, TH1D*& effHist, TMatrixD*& covMatrix, TDirectory* outDir = nullptr) {
+    std::ostringstream out;
+    bool fatal = false;
+    // Matrix shape
+    auto* hresp = histManager.getResponse();
+    int nX = hresp->GetNbinsX();
+    int nY = hresp->GetNbinsY();
+    out << "Matrix shape: " << nX << " x " << nY << (nX == nY ? " (square)" : " (not square)") << "\n";
+    // Matrix rank and condition number
+    Eigen::MatrixXd mat(nX, nY);
+    for (int i = 0; i < nX; ++i)
+        for (int j = 0; j < nY; ++j)
+            mat(i, j) = hresp->GetBinContent(i+1, j+1);
+    Eigen::JacobiSVD<Eigen::MatrixXd> svd(mat);
+    double cond = svd.singularValues()(0) / svd.singularValues().tail(1)(0);
+    out << "Matrix rank: " << svd.rank() << "/" << std::min(nX, nY) << "\n";
+    out << "Condition number: " << cond << "\n";
+    // Sufficient statistics
+    auto* htruth = histManager.getTruthMC();
+    double nEntries = htruth->GetEntries();
+    out << "MC truth entries: " << nEntries << "\n";
+    if (nEntries < 100) {
+        out << "Warning: Insufficient MC statistics!\n";
+    }
+    // Bin population
+    std::vector<int> emptyTruth, emptyMeas;
+    for (int i = 1; i <= nX; ++i) {
+        bool empty = true;
+        for (int j = 1; j <= nY; ++j) if (hresp->GetBinContent(i, j) > 0) { empty = false; break; }
+        if (empty) emptyTruth.push_back(i);
+    }
+    for (int j = 1; j <= nY; ++j) {
+        bool empty = true;
+        for (int i = 1; i <= nX; ++i) if (hresp->GetBinContent(i, j) > 0) { empty = false; break; }
+        if (empty) emptyMeas.push_back(j);
+    }
+    int nEmptyTruth = emptyTruth.size();
+    int nEmptyMeas = emptyMeas.size();
+    double pctEmptyTruth = 100.0 * nEmptyTruth / nX;
+    double pctEmptyMeas = 100.0 * nEmptyMeas / nY;
+    // Purity histogram (fakes)
+    TH1D* purityHist = new TH1D("purity", "Purity (fraction of true signal in measured bins)", nY, 0.5, nY+0.5);
+    purityHist->SetMinimum(0.0);
+    purityHist->SetMaximum(1.0);
+    int nFakeBins = 0;
+    double totalFakes = 0.0, totalMeas = 0.0;
+    for (int j = 1; j <= nY; ++j) {
+        double sumTruth = 0.0;
+        for (int i = 1; i <= nX; ++i) sumTruth += hresp->GetBinContent(i, j);
+        double purity = 0.0;
+        if (sumTruth > 0) {
+            purity = hresp->GetBinContent(j, j) / sumTruth;
+        }
+        purityHist->SetBinContent(j, purity);
+        if (sumTruth == 0) nFakeBins++;
+        totalMeas += sumTruth;
+        // Fakes: measured bins with no matching truth
+        if (sumTruth > 0 && hresp->GetBinContent(0, j) > 0) totalFakes += hresp->GetBinContent(0, j);
+    }
+    if (outDir) outDir->cd();
+    purityHist->Write("purity_histogram");
+    out << "Purity histogram: " << nFakeBins << " measured bins with no true signal\n";
+    out << "Total fakes subtracted: " << totalFakes << " (" << (totalFakes/totalMeas*100.0) << "%)\n";
+    out << "Empty truth bins: " << nEmptyTruth << "/" << nX << " (" << pctEmptyTruth << "%)\n";
+    out << "Empty measured bins: " << nEmptyMeas << "/" << nY << " (" << pctEmptyMeas << "%)\n";
+    // Efficiency (range 0 to 1.1, correct for 1D/2D/3D)
+    effHist = (TH1D*)htruth->Clone("efficiency");
+    effHist->SetTitle("Efficiency per truth bin");
+    effHist->SetMinimum(0.0);
+    effHist->SetMaximum(1.1);
+    int nEffZero = 0, nEffFull = 0;
+    for (int i = 1; i <= htruth->GetNbinsX(); ++i) {
+        double denom = 0.0;
+        for (int j = 1; j <= nY; ++j) denom += hresp->GetBinContent(i, j);
+        double num = htruth->GetBinContent(i);
+        double eff = (denom > 0) ? num / denom : 0.0;
+        if (eff > 1.0) eff = 1.0;
+        effHist->SetBinContent(i, eff);
+        if (eff == 0.0) nEffZero++;
+        if (eff == 1.0) nEffFull++;
+    }
+    out << "Efficiency histogram: " << nEffZero << " bins with 0, " << nEffFull << " bins with 1\n";
+    // Covariance matrix (dummy example: identity)
+    covMatrix = new TMatrixD(nX, nY);
+    for (int i = 0; i < nX; ++i)
+        for (int j = 0; j < nY; ++j)
+            (*covMatrix)(i, j) = (i == j ? 1.0 : 0.0);
+    // Output details
+    details = out.str();
+    return true;
 }
 
 #endif // UNFOLD_HELPERS_H
