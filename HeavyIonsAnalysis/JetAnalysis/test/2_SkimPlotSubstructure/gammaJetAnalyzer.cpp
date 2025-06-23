@@ -5,11 +5,21 @@
  * This implements a hybrid approach combining traditional C-style event loop
  * with efficient branch handling for dynamic jet collections.
  *
+ * SYSTEM COMPATIBILITY:
+ * - Supports both PbPb (centrality-dependent) and pp (inclusive) collision systems
+ * - Automatically detects system type from configuration "System" parameter
+ * - Uses unified code paths with conditional logic for system-specific features
+ *
+ * CENTRALITY HANDLING:
+ * - PbPb systems: Uses configured centrality bins for histogram organization and cut flow
+ * - pp systems: Uses single "inclusive" bin, centrality variables treated as placeholders
+ *
  * Usage:
  *   ./gammaJetAnalyzer -c path/to/config.config [-t maxEvents] [-h]
  *
  * Example:
  *   ./gammaJetAnalyzer -c ../configs/JetSub_2023_PbPb_Data.config -t 1000
+ *   ./gammaJetAnalyzer -c ../configs/JetSub_2024_PP_Data.config -t 1000
  */
 
 // Include headers
@@ -45,9 +55,7 @@ std::map<std::string, TProfile*> profileMap;
 // Forward declarations
 void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager, TFile* outFile, const PlottingConfiguration& plotConfig, Long64_t maxEvents = -1);
 void createHistograms(TFile* outFile, const std::vector<std::string>& jetCollections, 
-                     const std::vector<float>& centralityBins, const PlottingConfiguration& plotConfig);
-
-
+                     const std::vector<float>& centralityBins, const PlottingConfiguration& plotConfig, bool useCentrality);
 
 /**
  * Main function - entry point for standalone executable
@@ -133,8 +141,10 @@ int main(int argc, char* argv[]) {
         TStopwatch timer;
         timer.Start();
         // Print information
-        // log(LOG_INFO, "==================================================");
+        log(LOG_INFO, "==================================================");
         log(LOG_INFO, "=== PhotonJet Analysis: Jet Substructure v2.0 ===");
+        log(LOG_INFO, "==================================================");
+        log(LOG_INFO, "SUPPORTS: PbPb and pp collision systems");
         log(LOG_INFO, "==================================================");
         log(LOG_INFO, "Config file: " + configFile);
         if (testMode) {
@@ -325,6 +335,28 @@ int main(int argc, char* argv[]) {
 
 /**
  * Process events in the chain
+ * 
+ * SYSTEM COMPATIBILITY:
+ * This function is designed to work with both PbPb and pp collision systems:
+ * - System type detection: Automatically detects from config "System" parameter
+ * - Centrality handling: Uses centrality bins for PbPb, inclusive binning for pp
+ * - Cut flow tracking: Centrality-dependent for PbPb, system-agnostic for pp
+ * - Histogram organization: Centrality-binned for PbPb, single inclusive bin for pp
+ * 
+ * LOGIC FLOW:
+ * 1. System type detection and setup
+ * 2. Event-level cuts and histogram filling  
+ * 3. Centrality determination (PbPb) or inclusive binning (pp)
+ * 4. Photon selection with MC matching (if applicable)
+ * 5. Jet selection per collection
+ * 6. Output tree filling
+ * 
+ * @param chain Input TChain with event data
+ * @param config Configuration object with analysis parameters
+ * @param jetManager Manager for multiple jet collections
+ * @param outFile Output ROOT file for histograms and trees
+ * @param plotConfig Plotting configuration for histogram creation
+ * @param maxEvents Maximum events to process (-1 for all)
 */
 void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager, TFile* outFile, const PlottingConfiguration& plotConfig, Long64_t maxEvents) {
     if (!chain || !outFile) return;
@@ -349,27 +381,80 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
     std::vector<float> centralityBins = getFloatVector(config, "CentralityBins");
     std::vector<std::string> jetCollections = jetManager.getCollections();
     
+    /**
+     * System type detection and centrality usage determination
+     * 
+     * This logic automatically determines whether centrality should be used
+     * based on both the system type and available centrality bins:
+     * 
+     * 1. PbPb detection: Any system string containing "PbPb"
+     * 2. pp detection: Any system string containing "PP" or "pp" 
+     * 3. Fallback: If string is empty or unknown, default to PbPb with warning
+     * 
+     * Centrality is only used if:
+     * - The system is detected as PbPb AND
+     * - Centrality bins are properly configured (non-empty)
+     * 
+     * This approach ensures compatibility with:
+     * - "2023_PbPb", "2024_PbPb", "2025_PbPb", etc.
+     * - "2024_PP", "2025_pp", etc.
+     */
+    std::string systemType = config->GetValue("System", "");
+    bool isPbPb = false;
+    bool useCentrality = false;
+    
+    // Detect system type - extensible for future systems
+    if (systemType.find("PbPb") != std::string::npos) {
+        isPbPb = true;
+        useCentrality = !centralityBins.empty();
+        log(LOG_INFO, "Detected PbPb collision system: " + systemType);
+    } else if (systemType.find("PP") != std::string::npos || systemType.find("pp") != std::string::npos) {
+        isPbPb = false;
+        useCentrality = false; // Never use centrality for pp systems
+        log(LOG_INFO, "Detected pp collision system: " + systemType);
+    } else {
+        // Default behavior for backwards compatibility or unrecognized systems
+        isPbPb = true;
+        useCentrality = !centralityBins.empty();
+        if (systemType.empty()) {
+            log(LOG_WARNING, "No System specified in config, defaulting to PbPb behavior");
+        } else {
+            log(LOG_WARNING, "Unknown system type '" + systemType + "', defaulting to PbPb behavior");
+        }
+    }
+    
     log(LOG_DEBUG, "Configuration loaded:");
+    log(LOG_DEBUG, "  System: " + systemType + " (" + (isPbPb ? "PbPb" : "pp") + ")");
+    log(LOG_DEBUG, "  Centrality usage: " + std::string(useCentrality ? "ENABLED" : "DISABLED"));
     log(LOG_DEBUG, "  DataType: " + dataType);
     log(LOG_DEBUG, "  isMC: " + std::to_string(isMC));
     log(LOG_DEBUG, "  vzCut: " + std::to_string(vzCut));
     log(LOG_DEBUG, "  photonEtMin: " + std::to_string(photonEtMin));
     log(LOG_DEBUG, "  jetPtMin: " + std::to_string(jetPtMin));
     
-    // Debug: Print centrality bins right after loading
-    log(LOG_DEBUG, "centralityBins loaded from config:");
-    log(LOG_DEBUG, "  centralityBins.size() = " + std::to_string(centralityBins.size()));
-    std::string binContents = "  centralityBins contents: ";
-    for (float bin : centralityBins) {
-        binContents += std::to_string(bin) + " ";
+    // Debug: Print centrality bins information
+    if (useCentrality) {
+        log(LOG_DEBUG, "centralityBins loaded from config:");
+        log(LOG_DEBUG, "  centralityBins.size() = " + std::to_string(centralityBins.size()));
+        std::string binContents = "  centralityBins contents: ";
+        for (float bin : centralityBins) {
+            binContents += std::to_string(bin) + " ";
+        }
+        log(LOG_DEBUG, binContents);
+    } else {
+        if(isPbPb){
+            log(LOG_DEBUG, "Centrality bins disabled for PbPb system");
+        }
+        else{
+            log(LOG_DEBUG, "Centrality bins disabled for pp system");
+        }
     }
-    log(LOG_DEBUG, binContents);
     
     // Setup output tree
     TTree* outTree = new TTree("gammaJetTree", "Gamma-Jet Analysis");
     
-    // Create histograms
-    createHistograms(outFile, jetCollections, centralityBins, plotConfig);
+    // Create histograms with centrality usage flag
+    createHistograms(outFile, jetCollections, centralityBins, plotConfig, useCentrality);
     
     // Variables for branch addresses
     int hiBin = -999;
@@ -626,21 +711,23 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
         outTree->Branch(("jetIntJetMulti_" + collection).c_str(), &selectedJetIntJetMultis[collection]);
         
         // Ref jet branches (MC-matched jets)
-        outTree->Branch(("refxj_" + collection).c_str(), &selectedRefJetXjs[collection]);
-        outTree->Branch(("refJetPt_" + collection).c_str(), &selectedRefJetPts[collection]);
-        outTree->Branch(("refJetEta_" + collection).c_str(), &selectedRefJetEtas[collection]);
-        outTree->Branch(("refJetPhi_" + collection).c_str(), &selectedRefJetPhis[collection]);
-        outTree->Branch(("refJetMass_" + collection).c_str(), &selectedRefJetMasses[collection]);
-        outTree->Branch(("refJetArea_" + collection).c_str(), &selectedRefJetAreas[collection]);
-        outTree->Branch(("refJetDynSplit_" + collection).c_str(), &selectedRefJetDynSplits[collection]);
-        outTree->Branch(("refJetDynKt_" + collection).c_str(), &selectedRefJetDynKts[collection]);
-        outTree->Branch(("refJetDynZ_" + collection).c_str(), &selectedRefJetDynZs[collection]);
-        outTree->Branch(("refJetGirth_" + collection).c_str(), &selectedRefJetGirths[collection]);
-        outTree->Branch(("refJetThrust_" + collection).c_str(), &selectedRefJetThrusts[collection]);
-        outTree->Branch(("refJetLHA_" + collection).c_str(), &selectedRefJetLHAs[collection]);
-        outTree->Branch(("refJetPtD_" + collection).c_str(), &selectedRefJetPtDs[collection]);
-        outTree->Branch(("refJetDynDeltaR_" + collection).c_str(), &selectedRefJetDynDeltaRs[collection]);
-        outTree->Branch(("refJetIntJetMulti_" + collection).c_str(), &selectedRefJetIntJetMultis[collection]);
+        if(isMC){
+            outTree->Branch(("refxj_" + collection).c_str(), &selectedRefJetXjs[collection]);
+            outTree->Branch(("refJetPt_" + collection).c_str(), &selectedRefJetPts[collection]);
+            outTree->Branch(("refJetEta_" + collection).c_str(), &selectedRefJetEtas[collection]);
+            outTree->Branch(("refJetPhi_" + collection).c_str(), &selectedRefJetPhis[collection]);
+            outTree->Branch(("refJetMass_" + collection).c_str(), &selectedRefJetMasses[collection]);
+            outTree->Branch(("refJetArea_" + collection).c_str(), &selectedRefJetAreas[collection]);
+            outTree->Branch(("refJetDynSplit_" + collection).c_str(), &selectedRefJetDynSplits[collection]);
+            outTree->Branch(("refJetDynKt_" + collection).c_str(), &selectedRefJetDynKts[collection]);
+            outTree->Branch(("refJetDynZ_" + collection).c_str(), &selectedRefJetDynZs[collection]);
+            outTree->Branch(("refJetGirth_" + collection).c_str(), &selectedRefJetGirths[collection]);
+            outTree->Branch(("refJetThrust_" + collection).c_str(), &selectedRefJetThrusts[collection]);
+            outTree->Branch(("refJetLHA_" + collection).c_str(), &selectedRefJetLHAs[collection]);
+            outTree->Branch(("refJetPtD_" + collection).c_str(), &selectedRefJetPtDs[collection]);
+            outTree->Branch(("refJetDynDeltaR_" + collection).c_str(), &selectedRefJetDynDeltaRs[collection]);
+            outTree->Branch(("refJetIntJetMulti_" + collection).c_str(), &selectedRefJetIntJetMultis[collection]);
+        }
     }
     
     // Process events
@@ -655,8 +742,8 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
     int nWithJet = 0;
     int nPassed = 0;
 
-    // Initialize multi-dimensional cut flow tracker
-    MultiDimCutFlowTracker cutFlowTracker(config, centralityBins, jetCollections);
+    // Initialize multi-dimensional cut flow tracker with centrality usage flag
+    MultiDimCutFlowTracker cutFlowTracker(config, centralityBins, jetCollections, useCentrality);
 
     for (Long64_t iEvent = 0; iEvent < nEvents; ++iEvent) {
         if (iEvent % 1000 == 0) {
@@ -667,7 +754,7 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
         chain->GetEntry(iEvent);
         nProcessed++;
         float eventWeight = 1.0;
-        if (isMC){
+        if (isMC && isPbPb){
             eventWeight = weight * findNcoll(hiBin);
         }
         else{
@@ -698,25 +785,25 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
         fillEvent1D("hCentrality", hiBin, eventWeight);
         fillEvent1D("hEventWeight", eventWeight, 1.0);
         
-        // Determine centrality bin for this event
-        std::string centBin = cutFlowTracker.getCentralityBin(hiBin, centralityBins);
-        if (centBin.empty()) {
+        // Determine centrality bin for this event using centralized helper
+        CentralityInfo centInfo = getCentralityInfo(hiBin, centralityBins, useCentrality);
+        if (!centInfo.isValid) {
             log(LOG_DEBUG, "Event centrality not in any configured bin: " + std::to_string(hiBin));
             continue;
         }
-        cutFlowTracker.startCentralityBin(centBin);     
-        int centBinIdx = -1;
-        for (size_t i = 0; i < centralityBins.size() - 1; ++i) {
-            if (hiBin >= centralityBins[i] && hiBin < centralityBins[i+1]) {
-                centBinIdx = i;
-                break;
-            }
+        
+        // For cut flow tracking - use centrality bin name or "inclusive" for pp
+        std::string centBin = centInfo.binName;
+        if (useCentrality) {
+            cutFlowTracker.startCentralityBin(centBin);
+            cutFlowTracker.applyCut("CentralityCut", true, centBin);
+        } else {
+            // For pp system, we don't use centrality-based cut flow tracking
+            // Just set centBin for consistency, but don't apply centrality cuts
+            log(LOG_TRACE, "PP system: skipping centrality-based cut flow tracking");
         }
-        if(centBinIdx<0) continue;
         
-        cutFlowTracker.applyCut("CentralityCut", true, centBin);   
-        
-        std::string centName = "cent" + std::to_string(static_cast<int>(centralityBins[centBinIdx])) + "to" + std::to_string(static_cast<int>(centralityBins[centBinIdx+1]));
+        std::string centName = centInfo.binName;
         log(LOG_TRACE, "Filling histograms for " + centName + "/General/ with weight: " + std::to_string(eventWeight));
         // General histograms
         auto fill1D = [&](const std::string& hname, double value, double weight=1.0) {
@@ -772,7 +859,7 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
                 int genMatchedIndex = phoGenMatchedIndex->at(selectedPhotonIndex);
                 if (genMatchedIndex < 0) {
                     selectedPhotonIndex = -1;
-                    cutFlowTracker.applyCut("MCPhotonMatch", false,centBin);
+                    cutFlowTracker.applyCut("MCPhotonMatch", false, centBin);
                 } 
                 else {
                     // Check particle ID (only if mcPID branch is available)
@@ -824,7 +911,7 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
                         for (int momPid : validMomPIDs) {
                             if (mcMomPID->at(genMatchedIndex) == momPid) {
                                 validMomPID = true;
-                                cutFlowTracker.applyCut("MCPhotonMatch", true,centBin);
+                                cutFlowTracker.applyCut("MCPhotonMatch", true, centBin);
                                 break;
                             }
                         }
@@ -839,7 +926,8 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
         cutFlowTracker.applyCut("PhotonHoverE", passHoverE, centBin);
         bool passSigmaIEtaIEta = (phoSigmaIEtaIEta->at(selectedPhotonIndex) <= photonSigmaIEtaIEtaMax);
         cutFlowTracker.applyCut("PhotonSigmaIEtaIEta", passSigmaIEtaIEta, centBin);
-        float phoIso = pho_ecalClusterIsoR3->at(selectedPhotonIndex) + pho_hcalRechitIsoR3->at(selectedPhotonIndex) + pho_trackIsoR3PtCut20->at(selectedPhotonIndex);
+        // float phoIso = pho_ecalClusterIsoR3->at(selectedPhotonIndex) + pho_hcalRechitIsoR3->at(selectedPhotonIndex) + pho_trackIsoR3PtCut20->at(selectedPhotonIndex);
+        float phoIso = pfpIso3subUEec->at(selectedPhotonIndex)+pfcIso3subUEec->at(selectedPhotonIndex)+pfnIso3subUEec->at(selectedPhotonIndex);
         bool passIso = (phoIso <= photonIsoMax);
         cutFlowTracker.applyCut("PhotonIsolation", passIso, centBin);
         bool passR9 = (phoR9->at(selectedPhotonIndex) >= photonR9Min);
@@ -851,7 +939,12 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
         fill1D("hNPhotons", nPhotons, eventWeight);
         fill1D("hVz", vz, eventWeight);
         fill1D("hHiHF", hiHF, eventWeight);
-        fill1D("hCentrality", hiBin, eventWeight);
+        if (useCentrality) {
+            fill1D("hCentrality", hiBin, eventWeight);
+        } else {
+            // For pp system, hiBin is meaningless but we can still fill it for consistency
+            fill1D("hCentrality", -1, eventWeight);  // Use 0 as placeholder for pp
+        }
         fill1D("hPhotonEt", phoEt->at(selectedPhotonIndex), eventWeight);
         fill1D("hPhotonEta", phoEta->at(selectedPhotonIndex), eventWeight);
 
@@ -887,6 +980,8 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
         if (!passSigmaIEtaIEta) { selectedPhotonIndex = -1; continue; }
         if (!passIso) { selectedPhotonIndex = -1; continue; }
         if (!passR9) { selectedPhotonIndex = -1; continue; }
+        if(selectedPhotonIndex<0) continue;
+        log(LOG_TRACE, "Photon selection in event : "+std::to_string(iEvent));
         // Final photon selection check
         nWithPhoton++;
         
@@ -900,13 +995,14 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
         selectedPhotonPhi = phoPhi->at(selectedPhotonIndex);
         selectedPhotonHoverE = phoHoverE->at(selectedPhotonIndex);
         selectedPhotonSigmaIEtaIEta = phoSigmaIEtaIEta->at(selectedPhotonIndex);
-        selectedPhotonECALIso = pho_ecalClusterIsoR3->at(selectedPhotonIndex);
-        selectedPhotonHCALIso = pho_hcalRechitIsoR3->at(selectedPhotonIndex);
-        selectedPhotonTRKIso = pho_trackIsoR3PtCut20->at(selectedPhotonIndex);
+        // selectedPhotonECALIso = pho_ecalClusterIsoR3->at(selectedPhotonIndex);
+        // selectedPhotonHCALIso = pho_hcalRechitIsoR3->at(selectedPhotonIndex);
+        // selectedPhotonTRKIso = pho_trackIsoR3PtCut20->at(selectedPhotonIndex);
         selectedPhotonPFPIso = pfpIso3subUEec->at(selectedPhotonIndex);
         selectedPhotonPFCIso = pfcIso3subUEec->at(selectedPhotonIndex);
         selectedPhotonPFNIso = pfnIso3subUEec->at(selectedPhotonIndex);
-        selectedPhotonIso = pho_ecalClusterIsoR3->at(selectedPhotonIndex) + pho_hcalRechitIsoR3->at(selectedPhotonIndex) + pho_trackIsoR3PtCut20->at(selectedPhotonIndex);
+        selectedPhotonIso = pfpIso3subUEec->at(selectedPhotonIndex)+pfcIso3subUEec->at(selectedPhotonIndex)+pfnIso3subUEec->at(selectedPhotonIndex);
+        // selectedPhotonIso = pho_ecalClusterIsoR3->at(selectedPhotonIndex) + pho_hcalRechitIsoR3->at(selectedPhotonIndex) + pho_trackIsoR3PtCut20->at(selectedPhotonIndex);
         selectedPhotonR9 = phoR9->at(selectedPhotonIndex);
         if (isMC && selectedPhotonIndex >= 0) {
             int genIndex = phoGenMatchedIndex->at(selectedPhotonIndex);
@@ -979,6 +1075,7 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
             cutFlowTracker.applyCut("JetKinematics", passJetKinematics, centBin, collection);
             if (!passJetKinematics) continue;
             if (bestJetIndex >= 0) {
+                log(LOG_TRACE, "Jet Kinematics selection in event : "+std::to_string(iEvent));
                 
                 selectedJetDeltaPhis[collection] = getDeltaPhi(selectedPhotonPhi, jetManager.getJetPhi(collection, bestJetIndex));
                 // Check and apply DeltaPhi cut if configured
@@ -990,7 +1087,7 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
                 }
                 
                 selectedJetXjs[collection] = getXj(jetManager.getJetPt(collection, bestJetIndex), selectedPhotonEt);
-                selectedRefJetXjs[collection] = getXj(jetManager.getRefJetPt(collection, bestJetIndex),selectedMCPhotonEt)
+                selectedRefJetXjs[collection] = getXj(jetManager.getRefJetPt(collection, bestJetIndex),selectedMCPhotonEt);
 
                 // Check and apply XJ cut if configured
                 float xjMin = config->GetValue("XjMin", -1.0);
@@ -1183,9 +1280,26 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
 
 /**
  * Create histograms for output
+ * 
+ * SYSTEM COMPATIBILITY:
+ * This function creates histogram directory structures appropriate for both systems:
+ * - PbPb: Creates centrality-binned directories (e.g., "cent0to60/General/", "cent0to60/AK4Z1/")
+ * - pp: Creates single inclusive directory (e.g., "inclusive/General/", "inclusive/AK4Z1/")
+ * 
+ * DIRECTORY STRUCTURE:
+ * - Event-level histograms: "Event/" (system-agnostic)
+ * - Analysis histograms: "{binName}/{collection}/" where:
+ *   * binName = "cent{low}to{high}" for PbPb or "inclusive" for pp
+ *   * collection = jet algorithm name (AK4Z1, etc.) or "General"
+ * 
+ * @param outFile Output ROOT file
+ * @param jetCollections Vector of jet collection names
+ * @param centralityBins Vector of centrality bin edges (used only if useCentrality=true)
+ * @param plotConfig Plotting configuration with histogram definitions
+ * @param useCentrality Flag to enable centrality binning (PbPb=true, pp=false)
 */
 void createHistograms(TFile* outFile, const std::vector<std::string>& jetCollections, 
-                                 const std::vector<float>& centralityBins, const PlottingConfiguration& plotConfig) {
+                                 const std::vector<float>& centralityBins, const PlottingConfiguration& plotConfig, bool useCentrality) {
     if (!outFile) return;
 
     // Debug: Check input parameters
@@ -1193,19 +1307,10 @@ void createHistograms(TFile* outFile, const std::vector<std::string>& jetCollect
     log(LOG_DEBUG, "  jetCollections.size() = " + std::to_string(jetCollections.size()));
     log(LOG_DEBUG, "  centralityBins.size() = " + std::to_string(centralityBins.size()));
     log(LOG_DEBUG, "  plotConfig.histogramConfigs.size() = " + std::to_string(plotConfig.histogramConfigs.size()));
+    log(LOG_DEBUG, "  useCentrality: " + std::string(useCentrality ? "true" : "false"));
 
     if (jetCollections.empty()) {
         log(LOG_INFO, "jetCollections is empty!");
-        return;
-    }
-
-    if (centralityBins.size() < 2) {
-        log(LOG_INFO, "centralityBins has < 2 elements, cannot create bins!");
-        std::string binContents = "centralityBins contents: ";
-        for (float bin : centralityBins) {
-            binContents += std::to_string(bin) + " ";
-        }
-        log(LOG_INFO, binContents);
         return;
     }
 
@@ -1217,11 +1322,34 @@ void createHistograms(TFile* outFile, const std::vector<std::string>& jetCollect
         log(LOG_DEBUG, "  isMC: " + std::to_string(isMC) + " (from DataType: " + dataType + ")");
     }
 
-    // New structure: centralityDir/collectionDir
-    for (size_t i = 0; i < centralityBins.size() - 1; ++i) {
-        std::string centName = "cent" + std::to_string(static_cast<int>(centralityBins[i])) + "to" + std::to_string(static_cast<int>(centralityBins[i+1]));
-        TDirectory* centDir = outFile->mkdir(centName.c_str());
-        centDir->cd();
+    // Create bin directories based on system type
+    std::vector<std::string> binNames;
+    if (useCentrality) {
+        if (centralityBins.size() < 2) {
+            log(LOG_WARNING, "centralityBins has < 2 elements, cannot create centrality bins!");
+            std::string binContents = "centralityBins contents: ";
+            for (float bin : centralityBins) {
+                binContents += std::to_string(bin) + " ";
+            }
+            log(LOG_WARNING, binContents);
+            return;
+        }
+        // Create centrality bins for PbPb
+        for (size_t i = 0; i < centralityBins.size() - 1; ++i) {
+            std::string centName = "cent" + std::to_string(static_cast<int>(centralityBins[i])/2) + 
+                                   "to" + std::to_string(static_cast<int>(centralityBins[i+1])/2);
+            binNames.push_back(centName);
+        }
+    } else {
+        // Create single inclusive bin for pp
+        binNames.push_back("inclusive");
+    }
+
+    // Create histograms for each bin (centrality or inclusive)
+    for (const std::string& binName : binNames) {
+        TDirectory* binDir = outFile->mkdir(binName.c_str());
+        binDir->cd();
+        
         // === FUTURE EXPANSION: To add eta binning, insert etaDir creation here ===
         // Example:
         // std::vector<std::pair<float, float>> etaBins = { {-2.5, -1.0}, {-1.0, 0.0}, {0.0, 1.0}, {1.0, 2.5} };
@@ -1239,32 +1367,33 @@ void createHistograms(TFile* outFile, const std::vector<std::string>& jetCollect
         // For now, we proceed without etaDir:
         
         // General histograms
-        TDirectory* generalDir = centDir->mkdir("General");
+        TDirectory* generalDir = binDir->mkdir("General");
         generalDir->cd();
         for (const auto& kv : plotConfig.histogramConfigs) {
             const std::string& hname = kv.first;
             const HistogramConfig& hcfg = kv.second;
-            log(LOG_TRACE, "Creating hist: " + centName + "/General/" + hname);
+            log(LOG_TRACE, "Creating hist: " + binName + "/General/" + hname);
             // Use config-driven classification
             if (plotConfig.generalHistograms.count(hname)) {
                 if (hcfg.type == "TH1D") {
                     TH1D* h = createHistogram1D(hcfg,"h"+hname);
                     h->SetDirectory(generalDir);
-                    hist1DMap[centName + "/General/h" + hname] = h;
+                    hist1DMap[binName + "/General/h" + hname] = h;
                 } else if (hcfg.type == "TH2D") {
                     TH2D* h = createHistogram2D(hcfg,"h2"+hname);
                     h->SetDirectory(generalDir);
-                    hist2DMap[centName + "/General/h2" + hname] = h;
+                    hist2DMap[binName + "/General/h2" + hname] = h;
                 } else if (hcfg.type == "TProfile") {
                     TProfile* p = createProfile(hcfg,"p"+hname);
                     p->SetDirectory(generalDir);
-                    profileMap[centName + "/General/p" + hname] = p;
+                    profileMap[binName + "/General/p" + hname] = p;
                 }
             }
         }
+        
         // Per-collection histograms
         for (const auto& collection : jetCollections) {
-            TDirectory* collDir = centDir->mkdir(collection.c_str());
+            TDirectory* collDir = binDir->mkdir(collection.c_str());
             collDir->cd();
             for (const auto& kv : plotConfig.histogramConfigs) {
                 const std::string& hname = kv.first;
@@ -1273,15 +1402,15 @@ void createHistograms(TFile* outFile, const std::vector<std::string>& jetCollect
                     if (hcfg.type == "TH1D") {
                         TH1D* h = createHistogram1D(hcfg,"h"+hname);
                         h->SetDirectory(collDir);
-                        hist1DMap[centName + "/" + collection + "/h" + hname] = h;
+                        hist1DMap[binName + "/" + collection + "/h" + hname] = h;
                     } else if (hcfg.type == "TH2D") {
                         TH2D* h = createHistogram2D(hcfg,"h2"+hname);
                         h->SetDirectory(collDir);
-                        hist2DMap[centName + "/" + collection + "/h2" + hname] = h;
+                        hist2DMap[binName + "/" + collection + "/h2" + hname] = h;
                     } else if (hcfg.type == "TProfile") {
                         TProfile* p = createProfile(hcfg,"p"+hname);
                         p->SetDirectory(collDir);
-                        profileMap[centName + "/" + collection + "/p" + hname] = p;
+                        profileMap[binName + "/" + collection + "/p" + hname] = p;
                     }
                 }
             }

@@ -173,6 +173,54 @@ float findNcoll(int hiBin) {
 /**
  * Setup the input chain with files from the input directory
 */
+
+/**
+ * Centralized centrality bin handling for both PbPb and pp systems
+ * Returns a struct containing all centrality-related information
+ */
+ struct CentralityInfo {
+    bool isValid;           // Whether centrality binning applies to this event
+    int binIndex;          // Index in centralityBins array (-1 for pp or invalid)
+    std::string binName;   // String name like "cent0to60" or "inclusive"
+    std::string displayName; // Display name for histograms
+};
+
+CentralityInfo getCentralityInfo(int hiBin, const std::vector<float>& centralityBins, bool useCentrality) {
+    CentralityInfo info;
+    
+    if (!useCentrality) {
+        // For pp system - use inclusive binning
+        info.isValid = true;
+        info.binIndex = -1;
+        info.binName = "inclusive";
+        info.displayName = "Inclusive";
+        return info;
+    }
+    
+    // For PbPb system - find appropriate centrality bin
+    info.binIndex = -1;
+    for (size_t i = 0; i < centralityBins.size() - 1; ++i) {
+        if (hiBin >= centralityBins[i] && hiBin < centralityBins[i+1]) {
+            info.binIndex = static_cast<int>(i);
+            break;
+        }
+    }
+    
+    if (info.binIndex >= 0) {
+        info.isValid = true;
+        info.binName = "cent" + std::to_string(static_cast<int>(centralityBins[info.binIndex])/2) + 
+                       "to" + std::to_string(static_cast<int>(centralityBins[info.binIndex+1])/2);
+        info.displayName = std::to_string(static_cast<int>(centralityBins[info.binIndex])/2) + 
+                          "-" + std::to_string(static_cast<int>(centralityBins[info.binIndex+1])/2) + "%";
+    } else {
+        info.isValid = false;
+        info.binName = "";
+        info.displayName = "";
+    }
+    
+    return info;
+}
+
 bool setupInputChain(TChain* chain, const std::string& inputDir, bool testMode, int maxFiles) {
     if (!chain) return false;
     
@@ -1137,15 +1185,33 @@ struct CutDimension {
 
 class MultiDimCutFlowTracker {
 public:
-    MultiDimCutFlowTracker(TEnv* config, const std::vector<float>& centralityBins, const std::vector<std::string>& jetCollections) {
+    MultiDimCutFlowTracker(TEnv* config, const std::vector<float>& centralityBins, const std::vector<std::string>& jetCollections, bool useCentrality) {
         isMC = (std::string(config->GetValue("DataType", "Data")) == "MC");
-        // Set up dimensions
+        
+        // Set up centrality dimensions based on whether centrality bins are specified
         std::vector<std::string> centBins;
-        for (size_t i = 0; i < centralityBins.size() - 1; ++i) {
-            centBins.push_back("cent" + std::to_string(int(centralityBins[i])) + "to" + std::to_string(int(centralityBins[i+1])));
+        if (useCentrality && centralityBins.size() >= 2) {
+            // Create centrality bins - convert HiBin values (0-200) to percent (divide by 2)
+            log(LOG_TRACE, "Creating centrality bins from HiBin values (converted to percent):");
+            for (size_t i = 0; i < centralityBins.size() - 1; ++i) {
+                int lowPercent = static_cast<int>(centralityBins[i] / 2.0);
+                int highPercent = static_cast<int>(centralityBins[i+1] / 2.0);
+                std::string binName = "cent" + std::to_string(lowPercent) + "to" + std::to_string(highPercent);
+                centBins.push_back(binName);
+                log(LOG_TRACE, "  Created bin: " + binName + " (from HiBin " + std::to_string(static_cast<int>(centralityBins[i])) + 
+                    " to " + std::to_string(static_cast<int>(centralityBins[i+1])) + ")");
+            }
+        } else {
+            // Create single inclusive bin when centrality bins are not specified
+            centBins.push_back("inclusive");
+            log(LOG_TRACE, "Created single inclusive bin (no centrality bins specified or useCentrality=false)");
         }
+        
         dimensions.emplace_back("centrality", centBins);
         dimensions.emplace_back("jetCollection", jetCollections);
+        log(LOG_TRACE, "MultiDimCutFlowTracker initialized with " + std::to_string(centBins.size()) + 
+            " centrality bins and " + std::to_string(jetCollections.size()) + " jet collections");
+        
         defineCutLevels();
         initializeCuts(config);
     }
@@ -1202,17 +1268,15 @@ public:
     }
 
     void startCentralityBin(const std::string& centBin) {
-        for (auto& kv : dimensionalCuts[centBin]) {
-            if (kv.first == "centrality") {
-                kv.second.totalEvents++;
-                kv.second.currentSequentialPassed = 0;
-            }
-        }
+        std::string resolvedBin = resolveCentralityBin(centBin);
+        log(LOG_TRACE, "startCentralityBin: '" + centBin + "' resolved to '" + resolvedBin + "'");
+        updateCutDimension(resolvedBin, "centrality");
     }
 
     void startJetCollection(const std::string& centBin, const std::string& collection) {
-        dimensionalCuts[centBin][collection].totalEvents++;
-        dimensionalCuts[centBin][collection].currentSequentialPassed = 0;
+        std::string resolvedBin = resolveCentralityBin(centBin);
+        log(LOG_TRACE, "startJetCollection: '" + centBin + "' resolved to '" + resolvedBin + "' for collection '" + collection + "'");
+        updateCutDimension(resolvedBin, collection);
     }
 
     void applyCut(const std::string& cutName, bool passed, const std::string& centBin = "", const std::string& collection = "") {
@@ -1222,20 +1286,26 @@ public:
             return;
         }
         const std::string& level = levelIt->second;
+        
         if (level == "global") {
+            log(LOG_TRACE, "Applying global cut '" + cutName + "' (passed=" + std::to_string(passed) + ")");
             applyGlobalCut(cutName, passed, globalCuts);
         } else if (level == "centrality") {
-            if (centBin.empty()) {
+            std::string resolvedBin = resolveCentralityBin(centBin);
+            if (resolvedBin.empty()) {
                 log(LOG_DEBUG, "Centrality bin not specified for centrality-level cut: " + cutName);
                 return;
             }
-            applyGlobalCut(cutName, passed, dimensionalCuts[centBin]["centrality"]);
+            log(LOG_TRACE, "Applying centrality cut '" + cutName + "' to bin '" + resolvedBin + "' (passed=" + std::to_string(passed) + ")");
+            applyGlobalCut(cutName, passed, dimensionalCuts[resolvedBin]["centrality"]);
         } else if (level == "collection") {
-            if (centBin.empty() || collection.empty()) {
+            std::string resolvedBin = resolveCentralityBin(centBin);
+            if (resolvedBin.empty() || collection.empty()) {
                 log(LOG_DEBUG, "Centrality bin or collection not specified for collection-level cut: " + cutName);
                 return;
             }
-            applyGlobalCut(cutName, passed, dimensionalCuts[centBin][collection]);
+            log(LOG_TRACE, "Applying collection cut '" + cutName + "' to bin '" + resolvedBin + "' collection '" + collection + "' (passed=" + std::to_string(passed) + ")");
+            applyGlobalCut(cutName, passed, dimensionalCuts[resolvedBin][collection]);
         }
     }
 
@@ -1378,17 +1448,67 @@ public:
         cutFlowTree->Write();
     }
 
-    std::string getCentralityBin(int hiBin, const std::vector<float>& centralityBinsValues) const {
-        for (size_t i = 0; i < centralityBinsValues.size() - 1; ++i) {
-            if (hiBin >= centralityBinsValues[i] && hiBin < centralityBinsValues[i+1]) {
-                return "cent" + std::to_string(int(centralityBinsValues[i])) + 
-                       "to" + std::to_string(int(centralityBinsValues[i+1]));
-            }
+    // std::string getCentralityBin(int hiBin, const std::vector<float>& centralityBinsValues) const {
+    //     for (size_t i = 0; i < centralityBinsValues.size() - 1; ++i) {
+    //         if (hiBin >= centralityBinsValues[i] && hiBin < centralityBinsValues[i+1]) {
+    //             return "cent" + std::to_string(int(centralityBinsValues[i])) + 
+    //                    "to" + std::to_string(int(centralityBinsValues[i+1]));
+    //         }
+    //     }
+    //     return "";
+    // }
+
+private:
+    // Helper to resolve centrality bin name (handles pp and PbPb)
+    std::string resolveCentralityBin(const std::string& centBin) const {
+        // If the bin exists in our dimensions, return as is
+        if (std::find(dimensions[0].bins.begin(), dimensions[0].bins.end(), centBin) != dimensions[0].bins.end()) {
+            log(LOG_TRACE, "resolveCentralityBin: '" + centBin + "' found in dimensions");
+            return centBin;
         }
+        
+        // If we only have one bin and it's "inclusive", use that (for pp or when no centrality bins specified)
+        if (dimensions[0].bins.size() == 1 && dimensions[0].bins[0] == "inclusive") {
+            log(LOG_TRACE, "resolveCentralityBin: '" + centBin + "' resolved to 'inclusive' (single bin system)");
+            return "inclusive";
+        }
+        
+        // If empty string provided, return first available bin
+        if (centBin.empty() && !dimensions[0].bins.empty()) {
+            log(LOG_TRACE, "resolveCentralityBin: empty bin resolved to first available '" + dimensions[0].bins[0] + "'");
+            return dimensions[0].bins[0];
+        }
+        
+        // Otherwise, warn and return first bin as fallback
+        if (!dimensions[0].bins.empty()) {
+            log(LOG_WARNING, "resolveCentralityBin: Unknown centrality bin '" + centBin + "', defaulting to '" + dimensions[0].bins[0] + "'");
+            return dimensions[0].bins[0];
+        }
+        
+        log(LOG_ERROR, "resolveCentralityBin: No centrality bins available!");
         return "";
     }
 
-private:
+    // Helper to update CutDimension for a given bin/collection
+    void updateCutDimension(const std::string& centBin, const std::string& collection, bool resetSequential = true) {
+        if (collection == "centrality") {
+            // Centrality-level update
+            for (auto& kv : dimensionalCuts[centBin]) {
+                if (kv.first == "centrality") {
+                    kv.second.totalEvents++;
+                    if (resetSequential) kv.second.currentSequentialPassed = 0;
+                    log(LOG_TRACE, "updateCutDimension: Updated centrality bin '" + centBin + "' (total events: " + std::to_string(kv.second.totalEvents) + ")");
+                    break;
+                }
+            }
+        } else {
+            // Collection-level update
+            dimensionalCuts[centBin][collection].totalEvents++;
+            if (resetSequential) dimensionalCuts[centBin][collection].currentSequentialPassed = 0;
+            log(LOG_TRACE, "updateCutDimension: Updated collection '" + collection + "' in bin '" + centBin + "' (total events: " + std::to_string(dimensionalCuts[centBin][collection].totalEvents) + ")");
+        }
+    }
+
     void defineCutLevels() {
         cutToLevel["RawEvents"] = "global";
         cutToLevel["VertexCut"] = "global";
