@@ -3,6 +3,11 @@
 // Author: CMS Heavy Ion Team - Optimized Version
 // Date: June 2025
 
+// RooUnfold version compatibility:
+// This macro is compatible with RooUnfold v2.0.0 and v3.0.0 as of June 2025.
+// If you use v3.0.0 and encounter API changes, define ROOUNFOLD_VERSION_3 and update code as needed.
+// See include/OptimizedUnfolder.h for details on version-guarding code.
+
 #include <memory>
 #include <iostream>
 #include <string>
@@ -34,6 +39,14 @@
 void RooUnfoldOptimized(const char* configFile = "../configs/UnfoldJetSub_xj_test.config") {
     TStopwatch timer;
     timer.Start();
+    
+    // Print RooUnfold version info for clarity
+    #ifdef ROOUNFOLD_VERSION
+        log(LOG_INFO, std::string("RooUnfold library version (compile-time): ") + ROOUNFOLD_VERSION);
+    #else
+        log(LOG_INFO, "RooUnfold library version: (not defined at compile time)");
+    #endif
+    
     log(LOG_INFO, "=== Optimized RooUnfold Jet Substructure Unfolding ===");
     try {
         // Initialize ConfigParser

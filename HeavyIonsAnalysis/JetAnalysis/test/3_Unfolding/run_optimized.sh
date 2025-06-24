@@ -2,15 +2,33 @@
 
 # Test script for optimized RooUnfold implementation
 # Ensures proper RooUnfold library loading
+#
+# Usage:
+#   Optionally set ROOUNFOLD_VERSION to 2_0_0 or 3_0_0 (default: 2_0_0)
+#   Example: ROOUNFOLD_VERSION=3_0_0 ./run_optimized.sh
 
-echo "=== Testing Optimized RooUnfold Implementation ==="
+ROOUNFOLD_VERSION="${ROOUNFOLD_VERSION:-2_0_0}"
+ROOUNFOLD_DIR="RooUnfold_${ROOUNFOLD_VERSION}"
+ROOUNFOLD_SO="libRooUnfold.so"
 
-# Add RooUnfold library path
-export LD_LIBRARY_PATH=$PWD/RooUnfold:$LD_LIBRARY_PATH
+if [ ! -d "$PWD/$ROOUNFOLD_DIR" ]; then
+    echo "❌ RooUnfold directory '$PWD/$ROOUNFOLD_DIR' not found. Please check ROOUNFOLD_VERSION."
+    exit 1
+fi
+if [ ! -f "$PWD/$ROOUNFOLD_DIR/$ROOUNFOLD_SO" ]; then
+    echo "❌ RooUnfold library '$PWD/$ROOUNFOLD_DIR/$ROOUNFOLD_SO' not found."
+    exit 1
+fi
+
+export LD_LIBRARY_PATH=$PWD/$ROOUNFOLD_DIR:$LD_LIBRARY_PATH
+
+echo "=== Testing Optimized RooUnfold Implementation (version: $ROOUNFOLD_VERSION) ==="
+
+echo "Using RooUnfold library: $PWD/$ROOUNFOLD_DIR/$ROOUNFOLD_SO"
 
 # Run ROOT with the optimized macro
-root -l << 'EOF'
-gSystem->Load("./RooUnfold_2_0_0/libRooUnfold.so");
+root -l << EOF
+gSystem->Load("./$ROOUNFOLD_DIR/$ROOUNFOLD_SO");
 .x RooUnfoldOptimized.C("../configs/UnfoldJetSub_xj_test.config")
 .q
 EOF

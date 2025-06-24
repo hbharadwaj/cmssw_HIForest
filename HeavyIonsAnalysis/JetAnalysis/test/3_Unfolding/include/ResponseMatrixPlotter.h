@@ -81,7 +81,7 @@ public:
             outDir->cd();
             canvas->Write((setName+"_response_matrix_canvas").c_str());
         }
-        log(LOG_INFO, "Enhanced response matrix plot saved as: " + outputName);
+        // log(LOG_DEBUG, "Enhanced response matrix plot saved as: " + outputName);
     }
 
 private:

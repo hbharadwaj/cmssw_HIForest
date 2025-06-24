@@ -25,16 +25,26 @@ private:
     std::unique_ptr<RooUnfoldResponse> response;
     std::unique_ptr<RooUnfold> unfoldAlgorithm;
     std::unique_ptr<TH1> unfoldedHist;
+    std::unique_ptr<TMatrixD> covMatrix; // Store covariance matrix after unfolding
+    std::unique_ptr<TMatrixD> probMatrix; // Store probability matrix from response
+    std::unique_ptr<TH1> purityHist; // Store purity histogram after unfolding
+    std::unique_ptr<TH1> efficiencyHist; // Store efficiency histogram after unfolding
     
+    // Numerator/denominator histograms for purity and efficiency (template logic)
+    std::unique_ptr<TH1> purityNum, purityDen, effNum, effDen;
+    std::unique_ptr<TH2> probabilityMatrixHist2D; // For saving the probability matrix as TH2D
+
 public:
     OptimizedUnfolder(const UnfoldConfig& cfg) : config(cfg), histManager(cfg) {
         log(LOG_DEBUG, "Created unfolder for " + std::to_string(cfg.dimension) + "D case");
+        initializePurityEfficiencyHistograms();
     }
     
     void fillFromTrees(TTree* dataTree, TTree* mcTree) {
         log(LOG_DEBUG, "Filling histograms from trees");
         fillTree(dataTree, true);   // isData = true
         fillTree(mcTree, false);    // isData = false
+        calculatePurityAndEfficiency();
     }
     
     void performUnfolding() {
@@ -59,6 +69,10 @@ public:
         // Setup RooUnfold response
         response = std::make_unique<RooUnfoldResponse>(h_mc_meas_flat, h_mc_truth_flat, histManager.getResponse());
         
+        // Get probability matrix from response
+        const TMatrixD& prob = response->Mresponse();
+        probMatrix = std::make_unique<TMatrixD>(prob);
+        
         // Choose unfolding algorithm
         if (config.method == "Bayes") {
             unfoldAlgorithm = std::make_unique<RooUnfoldBayes>(response.get(), h_data_flat, config.iterations);
@@ -80,10 +94,17 @@ public:
                 unfoldedHist.reset();
             }
         }
+        
+        // Get covariance matrix from unfolding algorithm
+        if (unfoldAlgorithm) {
+            const TMatrixD& cov = unfoldAlgorithm->Ereco();
+            covMatrix = std::make_unique<TMatrixD>(cov);
+        }
+        
         log(LOG_INFO, "Unfolding with " + config.method + " method completed");
     }
     
-    void saveResults(TDirectory* testDir, const std::string& testLabel, const std::string& details, TH1D* effHist, TMatrixD* covMatrix) {
+    void saveResults(TDirectory* testDir, const std::string& testLabel, const std::string& details, TH1D* effHist, TMatrixD* externalCovMatrix) {
         testDir->cd();
         // Helper lambda to clone and write a histogram into the subdirectory
         auto writeToDir = [testDir](TH1* h, const std::string& name) {
@@ -113,16 +134,56 @@ public:
             delete clone;
             log(LOG_DEBUG, "Wrote h_unfolded_" + testLabel + " to " + testDir->GetPath());
         }
-        if (effHist) {
-            auto* clone = (TH1*)effHist->Clone(("efficiency_" + testLabel).c_str());
-            clone->SetDirectory(testDir);
-            clone->Write();
-            delete clone;
-            log(LOG_DEBUG, "Wrote efficiency_" + testLabel + " to " + testDir->GetPath());
+        if (purityHist.get() && efficiencyHist.get()) {
+            // Write purity and efficiency histograms
+            // purityHist.get()->SetDirectory(testDir);
+            writeToDir(purityHist.get(), "h_purity_" + testLabel);
+            log(LOG_DEBUG, "Wrote h_purity_" + testLabel + " to " + testDir->GetPath());
+            writeToDir(efficiencyHist.get(), "h_efficiency_" + testLabel);
+            log(LOG_DEBUG, "Wrote h_efficiency_" + testLabel + " to " + testDir->GetPath());
+            
+            // Write numerator/denominator histograms for debugging
+            writeToDir(purityNum.get(), "h_purity_num_" + testLabel);
+            writeToDir(purityDen.get(), "h_purity_den_" + testLabel);
+            writeToDir(effNum.get(), "h_eff_num_" + testLabel);
+            writeToDir(effDen.get(), "h_eff_den_" + testLabel);
         }
+        
+        
+        // Write probability matrix from response
+        if (probMatrix) {
+            // Create TH2D histogram directly from the matrix
+            TH2D probability_hist2D(*probMatrix);
+            probability_hist2D.SetName(("probability_hist_" + testLabel).c_str());
+            probability_hist2D.SetTitle("Probability Matrix;True Bin Number;Reco Bin Number");
+            probability_hist2D.SetDirectory(testDir);
+            probability_hist2D.Write();
+            log(LOG_DEBUG, "Wrote probability matrix histogram for " + testLabel + " to " + testDir->GetPath());
+        }
+        
+        // Write covariance matrix (prioritize internal one)
         if (covMatrix) {
-            covMatrix->Write(("covariance_" + testLabel).c_str());
-            log(LOG_DEBUG, "Wrote covariance_" + testLabel + " to " + testDir->GetPath());
+            // Create TH2D histogram directly from the matrix
+            TH2D mat_covariance_hist2D(*covMatrix);
+            mat_covariance_hist2D.SetName(("covariance_hist_" + testLabel).c_str());
+            mat_covariance_hist2D.SetTitle("Covariance Matrix;Bin Number;Bin Number");
+            mat_covariance_hist2D.SetDirectory(testDir);
+            mat_covariance_hist2D.Write();
+            
+            // Also write the matrix in its original format
+            // covMatrix->Write(("covariance_matrix_" + testLabel).c_str());
+            log(LOG_DEBUG, "Wrote internal covariance matrix histogram for " + testLabel + " to " + testDir->GetPath());
+        } else if (externalCovMatrix) {
+            // Create TH2D histogram directly from the external matrix
+            TH2D mat_covariance_hist2D(*externalCovMatrix);
+            mat_covariance_hist2D.SetName(("covariance_hist_" + testLabel).c_str());
+            mat_covariance_hist2D.SetTitle("Covariance Matrix");
+            mat_covariance_hist2D.SetDirectory(testDir);
+            mat_covariance_hist2D.Write();
+            
+            // Also write the matrix in its original format
+            // externalCovMatrix->Write(("covariance_matrix_" + testLabel).c_str());
+            log(LOG_DEBUG, "Wrote external covariance matrix and histogram for " + testLabel + " to " + testDir->GetPath());
         }
         TObjString checkInfo(details.c_str());
         checkInfo.Write(("unfoldability_check_" + testLabel).c_str());
@@ -133,6 +194,65 @@ public:
     const UnfoldConfig& getConfig() const { return config; }
     
 private:
+    void initializePurityEfficiencyHistograms() {
+        log(LOG_DEBUG, "Initializing purity and efficiency histograms for " + std::to_string(config.dimension) + "D case");
+        
+        if (config.dimension == 1) {
+            // Purity histograms (detector level binning)
+            purityNum = std::make_unique<TH1D>("purityNum", "Purity Numerator", 
+                                              config.measuredBins[0].size()-1, config.measuredBins[0].data());
+            purityDen = std::make_unique<TH1D>("purityDen", "Purity Denominator", 
+                                              config.measuredBins[0].size()-1, config.measuredBins[0].data());
+            // Efficiency histograms (truth level binning)
+            effNum = std::make_unique<TH1D>("effNum", "Efficiency Numerator", 
+                                           config.truthBins[0].size()-1, config.truthBins[0].data());
+            effDen = std::make_unique<TH1D>("effDen", "Efficiency Denominator", 
+                                           config.truthBins[0].size()-1, config.truthBins[0].data());
+        } else if (config.dimension == 2) {
+            // Purity histograms (detector level binning)
+            purityNum = std::make_unique<TH2D>("purityNum", "Purity Numerator", 
+                                              config.measuredBins[0].size()-1, config.measuredBins[0].data(),
+                                              config.measuredBins[1].size()-1, config.measuredBins[1].data());
+            purityDen = std::make_unique<TH2D>("purityDen", "Purity Denominator", 
+                                              config.measuredBins[0].size()-1, config.measuredBins[0].data(),
+                                              config.measuredBins[1].size()-1, config.measuredBins[1].data());
+            // Efficiency histograms (truth level binning)
+            effNum = std::make_unique<TH2D>("effNum", "Efficiency Numerator", 
+                                           config.truthBins[0].size()-1, config.truthBins[0].data(),
+                                           config.truthBins[1].size()-1, config.truthBins[1].data());
+            effDen = std::make_unique<TH2D>("effDen", "Efficiency Denominator", 
+                                           config.truthBins[0].size()-1, config.truthBins[0].data(),
+                                           config.truthBins[1].size()-1, config.truthBins[1].data());
+        } else if (config.dimension == 3) {
+            // Purity histograms (detector level binning)
+            purityNum = std::make_unique<TH3D>("purityNum", "Purity Numerator", 
+                                              config.measuredBins[0].size()-1, config.measuredBins[0].data(),
+                                              config.measuredBins[1].size()-1, config.measuredBins[1].data(),
+                                              config.measuredBins[2].size()-1, config.measuredBins[2].data());
+            purityDen = std::make_unique<TH3D>("purityDen", "Purity Denominator", 
+                                              config.measuredBins[0].size()-1, config.measuredBins[0].data(),
+                                              config.measuredBins[1].size()-1, config.measuredBins[1].data(),
+                                              config.measuredBins[2].size()-1, config.measuredBins[2].data());
+            // Efficiency histograms (truth level binning)
+            effNum = std::make_unique<TH3D>("effNum", "Efficiency Numerator", 
+                                           config.truthBins[0].size()-1, config.truthBins[0].data(),
+                                           config.truthBins[1].size()-1, config.truthBins[1].data(),
+                                           config.truthBins[2].size()-1, config.truthBins[2].data());
+            effDen = std::make_unique<TH3D>("effDen", "Efficiency Denominator", 
+                                           config.truthBins[0].size()-1, config.truthBins[0].data(),
+                                           config.truthBins[1].size()-1, config.truthBins[1].data(),
+                                           config.truthBins[2].size()-1, config.truthBins[2].data());
+        }
+        
+        // Set directory to null to avoid ROOT memory management issues
+        if (purityNum) purityNum->SetDirectory(0);
+        if (purityDen) purityDen->SetDirectory(0);
+        if (effNum) effNum->SetDirectory(0);
+        if (effDen) effDen->SetDirectory(0);
+        
+        log(LOG_DEBUG, "Purity and efficiency histograms initialized successfully");
+    }
+
     void fillTree(TTree* tree, bool isData) {
         if (!tree) {
             log(LOG_ERROR, "Null tree pointer");
@@ -150,11 +270,8 @@ private:
             }
         }
         tree->SetBranchAddress(config.weightBranch.c_str(), &weight);
-        
         Long64_t nEntries = tree->GetEntries();
-        log(LOG_DEBUG, "Processing " + std::to_string(nEntries) + " entries from " + 
-            (isData ? "data" : "MC") + " tree");
-        
+        log(LOG_DEBUG, "Processing " + std::to_string(nEntries) + " entries from " + (isData ? "data" : "MC") + " tree");        
         int validEntries = 0;
         for (Long64_t i = 0; i < nEntries; ++i) {
             tree->GetEntry(i);
@@ -181,14 +298,94 @@ private:
                 if (isData) {
                     histManager.fillData(std::vector<double>(measValues.begin(), measValues.end()), weight);
                 } else {
+                    // MC: fill measured and truth, and fill numerator/denominator for purity/efficiency
                     histManager.fillMC(std::vector<double>(measValues.begin(), measValues.end()),
                                      std::vector<double>(truthValues.begin(), truthValues.end()), weight);
+                    
+                    // Check if event passes detector cuts
+                    bool passesDetectorCuts = true;
+                    for (int j = 0; j < config.dimension; ++j) {
+                        if (measValues[j] < config.measuredBins[j][0] || 
+                            measValues[j] >= config.measuredBins[j].back()) {
+                            passesDetectorCuts = false;
+                            break;
+                        }
+                    }
+                    
+                    // Check if event passes truth cuts
+                    bool passesTruthCuts = true;
+                    for (int j = 0; j < config.dimension; ++j) {
+                        if (truthValues[j] < config.truthBins[j][0] || 
+                            truthValues[j] >= config.truthBins[j].back()) {
+                            passesTruthCuts = false;
+                            break;
+                        }
+                    }
+                    
+                    // Fill purity histograms (detector level values)
+                    if (passesDetectorCuts) {
+                        fillHistogram(purityDen.get(), std::vector<double>(measValues.begin(), measValues.end()), weight);
+                        if (passesTruthCuts) {
+                            fillHistogram(purityNum.get(), std::vector<double>(measValues.begin(), measValues.end()), weight);
+                        }
+                    }
+                    
+                    // Fill efficiency histograms (truth level values)
+                    if (passesTruthCuts) {
+                        fillHistogram(effDen.get(), std::vector<double>(truthValues.begin(), truthValues.end()), weight);
+                        if (passesDetectorCuts) {
+                            fillHistogram(effNum.get(), std::vector<double>(truthValues.begin(), truthValues.end()), weight);
+                        }
+                    }
                 }
                 validEntries++;
             }
+        }        
+        log(LOG_DEBUG, "Filled " + std::to_string(validEntries) + " valid entries");
+    }
+    
+    void fillHistogram(TH1* hist, const std::vector<double>& values, double weight) {
+        if (!hist) return;
+        if (config.dimension == 1) hist->Fill(values[0], weight);
+        else if (config.dimension == 2) ((TH2*)hist)->Fill(values[0], values[1], weight);
+        else if (config.dimension == 3) ((TH3*)hist)->Fill(values[0], values[1], values[2], weight);
+    }
+    
+    void calculatePurityAndEfficiency() {
+        log(LOG_DEBUG, "Calculating purity and efficiency histograms");
+        
+        if (!purityNum || !purityDen || !effNum || !effDen) {
+            log(LOG_WARNING, "Purity/efficiency histograms not initialized properly");
+            return;
         }
         
-        log(LOG_DEBUG, "Filled " + std::to_string(validEntries) + " valid entries");
+        // Calculate purity histogram (detector level binning) and efficiency histogram (truth level binning)
+        if (config.dimension == 1) {
+            purityHist = std::make_unique<TH1D>(*((TH1D*)purityNum.get()));
+            efficiencyHist = std::make_unique<TH1D>(*((TH1D*)effNum.get()));
+        } else if (config.dimension == 2) {
+            purityHist = std::make_unique<TH2D>(*((TH2D*)purityNum.get()));
+            efficiencyHist = std::make_unique<TH2D>(*((TH2D*)effNum.get()));
+        } else if (config.dimension == 3) {
+            purityHist = std::make_unique<TH3D>(*((TH3D*)purityNum.get()));
+            efficiencyHist = std::make_unique<TH3D>(*((TH3D*)effNum.get()));
+        }
+        
+        // Set names
+        purityHist->SetName("purity");
+        purityHist->SetTitle("Purity");
+        efficiencyHist->SetName("efficiency");
+        efficiencyHist->SetTitle("Efficiency");
+        
+        // Divide to get purity and efficiency
+        purityHist->Divide(purityNum.get(), purityDen.get(), 1.0, 1.0, "B");
+        efficiencyHist->Divide(effNum.get(), effDen.get(), 1.0, 1.0, "B");
+        
+        // Set directory to null
+        purityHist->SetDirectory(0);
+        efficiencyHist->SetDirectory(0);
+        
+        log(LOG_DEBUG, "Purity and efficiency calculation completed");
     }
     
     TH1D* createFlattenedHistogram(TH1* source, const std::string& name) {

@@ -15,10 +15,13 @@
 #include <iomanip>
 #include <cctype>
 #include <cmath>
+#include <functional>
 #include <Eigen/Dense>
 #include <TObjString.h>
 #include <TMatrixD.h>
 #include <TH1D.h>
+#include <TH2D.h>
+#include <TH3D.h>
 
 // Structure to hold binning for arbitrary variables
 typedef std::vector<double> BinEdges;
@@ -256,17 +259,41 @@ inline bool checkUnfoldability(const HistogramManager& histManager, const Unfold
     int nEmptyMeas = emptyMeas.size();
     double pctEmptyTruth = 100.0 * nEmptyTruth / nX;
     double pctEmptyMeas = 100.0 * nEmptyMeas / nY;
-    // Purity histogram (fakes)
-    TH1D* purityHist = new TH1D("purity", "Purity (fraction of true signal in measured bins)", nY, 0.5, nY+0.5);
+    // Purity histogram calculation using existing flattening helpers
+    auto* hmeas = histManager.getMeasuredMC();
+    
+    // Get number of bins per dimension for measured histogram  
+    std::vector<int> measNBins;
+    if (config.dimension == 1) {
+        measNBins.push_back(hmeas->GetNbinsX());
+    } else if (config.dimension == 2) {
+        TH2* h2meas = (TH2*)hmeas;
+        measNBins.push_back(h2meas->GetNbinsX());
+        measNBins.push_back(h2meas->GetNbinsY());
+    } else if (config.dimension == 3) {
+        TH3* h3meas = (TH3*)hmeas;
+        measNBins.push_back(h3meas->GetNbinsX());
+        measNBins.push_back(h3meas->GetNbinsY());
+        measNBins.push_back(h3meas->GetNbinsZ());
+    }
+    
+    // Calculate total measured bins using existing helper logic
+    int totalMeasBins = 1;
+    for (int n : measNBins) totalMeasBins *= n;
+    
+    TH1D* purityHist = new TH1D("fake", "Fakes measured with response matrix (fraction of true signal in measured bins)", totalMeasBins, 0.5, totalMeasBins + 0.5);
     purityHist->SetMinimum(0.0);
     purityHist->SetMaximum(1.0);
     int nFakeBins = 0;
     double totalFakes = 0.0, totalMeas = 0.0;
-    for (int j = 1; j <= nY; ++j) {
+    
+    // Use direct flattened indexing for purity calculation
+    for (int j = 1; j <= totalMeasBins; ++j) {
         double sumTruth = 0.0;
         for (int i = 1; i <= nX; ++i) sumTruth += hresp->GetBinContent(i, j);
         double purity = 0.0;
         if (sumTruth > 0) {
+            // For purity, we use diagonal elements of response matrix
             purity = hresp->GetBinContent(j, j) / sumTruth;
         }
         purityHist->SetBinContent(j, purity);
@@ -276,27 +303,89 @@ inline bool checkUnfoldability(const HistogramManager& histManager, const Unfold
         if (sumTruth > 0 && hresp->GetBinContent(0, j) > 0) totalFakes += hresp->GetBinContent(0, j);
     }
     if (outDir) outDir->cd();
-    purityHist->Write("purity_histogram");
-    out << "Purity histogram: " << nFakeBins << " measured bins with no true signal\n";
+    purityHist->Write("Fakes_histogram_flattened");
+    // Efficiency calculation for all dimensions (using existing flattening helpers)
+    auto* htruthEff = histManager.getTruthMC();
+    
+    // Get number of bins per dimension for truth histogram
+    std::vector<int> truthNBins;
+    if (config.dimension == 1) {
+        truthNBins.push_back(htruthEff->GetNbinsX());
+    } else if (config.dimension == 2) {
+        TH2* h2truth = (TH2*)htruthEff;
+        truthNBins.push_back(h2truth->GetNbinsX());
+        truthNBins.push_back(h2truth->GetNbinsY());
+    } else if (config.dimension == 3) {
+        TH3* h3truth = (TH3*)htruthEff;
+        truthNBins.push_back(h3truth->GetNbinsX());
+        truthNBins.push_back(h3truth->GetNbinsY());
+        truthNBins.push_back(h3truth->GetNbinsZ());
+    }
+    
+    // Calculate total truth bins using existing helper
+    int totalTruthBins = 1;
+    for (int n : truthNBins) totalTruthBins *= n;
+    
+    effHist = new TH1D("efficiency", "Efficiency per truth bin", totalTruthBins, 0.5, totalTruthBins + 0.5);
+    effHist->SetMinimum(0.0);
+    effHist->SetMaximum(1.1);
+    
+    int nEffZero = 0, nEffFull = 0;
+    
+    // Fill efficiency histogram using existing flattening logic
+    if (config.dimension == 1) {
+        // 1D case - direct bin access
+        for (int i = 1; i <= truthNBins[0]; ++i) {
+            double denom = 0.0;
+            for (int j = 1; j <= nY; ++j) denom += hresp->GetBinContent(i, j);
+            double num = htruthEff->GetBinContent(i);
+            double eff = (denom > 0) ? num / denom : 0.0;
+            if (eff > 1.0) eff = 1.0;
+            effHist->SetBinContent(i, eff);
+            if (eff == 0.0) nEffZero++;
+            if (eff == 1.0) nEffFull++;
+        }
+    } else {
+        // Multi-dimensional case using existing helper functions
+        std::vector<int> indices(config.dimension);
+        
+        // Generate all possible bin combinations
+        std::function<void(int)> fillBins = [&](int dim) {
+            if (dim == config.dimension) {
+                // Calculate flattened index using existing helper
+                int flatBin = flattenIndices(indices, truthNBins) + 1; // +1 for ROOT indexing
+                
+                // Get histogram content based on dimension
+                double num = 0.0;
+                if (config.dimension == 2) {
+                    num = ((TH2*)htruthEff)->GetBinContent(indices[0] + 1, indices[1] + 1);
+                } else if (config.dimension == 3) {
+                    num = ((TH3*)htruthEff)->GetBinContent(indices[0] + 1, indices[1] + 1, indices[2] + 1);
+                }
+                
+                // Calculate efficiency
+                double denom = 0.0;
+                for (int j = 1; j <= nY; ++j) denom += hresp->GetBinContent(flatBin, j);
+                double eff = (denom > 0) ? num / denom : 0.0;
+                if (eff > 1.0) eff = 1.0;
+                effHist->SetBinContent(flatBin, eff);
+                if (eff == 0.0) nEffZero++;
+                if (eff == 1.0) nEffFull++;
+                return;
+            }
+            
+            for (int i = 0; i < truthNBins[dim]; ++i) {
+                indices[dim] = i;
+                fillBins(dim + 1);
+            }
+        };
+        
+        fillBins(0);
+    }
     out << "Total fakes subtracted: " << totalFakes << " (" << (totalFakes/totalMeas*100.0) << "%)\n";
     out << "Empty truth bins: " << nEmptyTruth << "/" << nX << " (" << pctEmptyTruth << "%)\n";
     out << "Empty measured bins: " << nEmptyMeas << "/" << nY << " (" << pctEmptyMeas << "%)\n";
-    // Efficiency (range 0 to 1.1, correct for 1D/2D/3D)
-    effHist = (TH1D*)htruth->Clone("efficiency");
-    effHist->SetTitle("Efficiency per truth bin");
-    effHist->SetMinimum(0.0);
-    effHist->SetMaximum(1.1);
-    int nEffZero = 0, nEffFull = 0;
-    for (int i = 1; i <= htruth->GetNbinsX(); ++i) {
-        double denom = 0.0;
-        for (int j = 1; j <= nY; ++j) denom += hresp->GetBinContent(i, j);
-        double num = htruth->GetBinContent(i);
-        double eff = (denom > 0) ? num / denom : 0.0;
-        if (eff > 1.0) eff = 1.0;
-        effHist->SetBinContent(i, eff);
-        if (eff == 0.0) nEffZero++;
-        if (eff == 1.0) nEffFull++;
-    }
+    out << "Purity histogram (flattened): " << nFakeBins << " measured bins with no true signal\n";
     out << "Efficiency histogram: " << nEffZero << " bins with 0, " << nEffFull << " bins with 1\n";
     // Covariance matrix (dummy example: identity)
     covMatrix = new TMatrixD(nX, nY);

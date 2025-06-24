@@ -101,8 +101,8 @@ public:
     }
     
     // Accessors
-    TH1* getData() { return h_data.get(); }
-    TH1* getMeasuredMC() { return h_mc_meas.get(); }
+    TH1* getData() const { return h_data.get(); }
+    TH1* getMeasuredMC() const { return h_mc_meas.get(); }
     TH1* getTruthMC() const { return h_mc_truth.get(); }
     TH2D* getResponse() const { return h_response.get(); }
     
