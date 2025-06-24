@@ -1093,15 +1093,17 @@ def create_multi_file_overlays(config_data, root_files, file_cfgs, outdir, plot_
             logger.warning(f"  File 1: {structure}")
             logger.warning(f"  File {i+1}: {other_structure}")
     
-    # Get display labels
+    # Get display labels from InputFile entries in config_data
     display_labels = []
-    for i, file_cfg in enumerate(file_cfgs):
-        label = file_cfg.get("CMSExtraText", f"File{i+1}")
-        if label == "Simulation":
-            label = "PYTHIA8"
-        elif not label:
-            label = "Data"
-        display_labels.append(label)
+    inputfile_keys = [k for k in config_data if k.startswith("InputFile.")]
+    # inputfile_keys_sorted = sorted(inputfile_keys)  # Ensure consistent order
+    for k in inputfile_keys:
+        val = config_data[k]
+        parts = val.split(":")
+        if len(parts) >= 3:
+            display_labels.append(parts[2].strip())
+        else:
+            display_labels.append(k.replace("InputFile.", ""))
     
     # Create overlays for each path and histogram
     overlay_count = 0
@@ -1186,6 +1188,40 @@ def create_ratio_histogram(num_hist, den_hist, config_data):
     ratio.Divide(den_hist)
     
     return ratio
+
+def create_explicit_overlay(overlay_name, hist_paths, root_files, file_cfgs, outdir, plot_formats, config_data):
+    """
+    Create an overlay plot for explicitly specified histogram paths (multi-file).
+    """
+    # Extract display labels from config_data InputFile entries
+    input_labels = []
+    inputfile_keys = [k for k in config_data if k.startswith("InputFile.")]
+    # inputfile_keys_sorted = sorted(inputfile_keys)  # Ensure consistent order
+    for k in inputfile_keys:
+        val = config_data[k]
+        parts = val.split(":")
+        if len(parts) >= 3:
+            input_labels.append(parts[2].strip())
+        else:
+            input_labels.append(k.replace("InputFile.", ""))
+
+    hists = []
+    labels = []
+    for i, (path, rf, cfg) in enumerate(zip(hist_paths, root_files, file_cfgs)):
+        hist = get_histogram_recursive(rf, path)
+        if hist:
+            hists.append(hist)
+            # Use display label from InputFile entry if available
+            label = input_labels[i] if i < len(input_labels) else f"File{i+1}"
+            labels.append(label)
+        else:
+            logger.warning(f"ExplicitOverlay {overlay_name}: Histogram not found at {path} in file {i+1}")
+    if len(hists) >= 2:
+        create_overlay_plot(hists, labels, overlay_name, config_data, outdir, plot_formats, "explicit")
+        return 1
+    else:
+        logger.warning(f"ExplicitOverlay {overlay_name}: Not enough histograms found for overlay")
+        return 0
 
 def add_selection_text(pad, config_data, hists=None):
     """

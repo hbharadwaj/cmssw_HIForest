@@ -189,6 +189,31 @@ def main():
             config_data, root_files, file_cfgs, outdir, plot_formats, 
             args.test, args.maxplots if args.test else None, plot_list=plot_list
         )
+
+        # --- Process ExplicitOverlay keys ---
+        explicit_overlay_count = 0
+        for key, value in config_data.items():
+            if key.startswith("ExplicitOverlay.") and not key.endswith(".Path"):
+                overlay_name = key[len("ExplicitOverlay."):]
+
+                # Parse histogram paths (colon-separated)
+                hist_paths = value.split(":")
+                if len(hist_paths) != len(root_files):
+                    logger.warning(f"ExplicitOverlay {overlay_name}: number of paths does not match number of files")
+                    continue
+
+                # Get output path (optional)
+                out_path = config_data.get(f"ExplicitOverlay.{overlay_name}.Path", f"overlays/Explicit/{overlay_name}")
+
+                # Call helper to create overlay
+                result = plot_helpers.create_explicit_overlay(
+                    overlay_name, hist_paths, root_files, file_cfgs, 
+                    os.path.join(outdir, out_path), plot_formats, config_data
+                )
+                explicit_overlay_count += int(result)
+
+        if explicit_overlay_count > 0:
+            logger.info(f"Created {explicit_overlay_count} explicit overlay plots")
         
         if args.test:
             logger.info(f"Test mode: created {overlay_count} multi-file overlay plots")
