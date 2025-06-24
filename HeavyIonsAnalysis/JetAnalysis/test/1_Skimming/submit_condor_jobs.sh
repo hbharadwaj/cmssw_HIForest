@@ -37,6 +37,7 @@ REMOVE_JOBS=0  # By default, don't remove existing jobs
 VERBOSITY=1    # Default verbosity level: 0=minimal, 1=normal, 2=debug, 3=trace
 EXECUTABLE="SkimHiForest"
 OS_VERSION="el8"   # Default to el8 OS version
+PTHAT_WEIGHTS_FILE=""  # Default: not set
 
 # Function to create a unique logs directory for each submission
 create_logs_directory() {
@@ -111,6 +112,11 @@ while [[ $# -gt 0 ]]; do
             shift
             shift
             ;;
+        --pthat-weights)
+            PTHAT_WEIGHTS_FILE="$2"
+            shift
+            shift
+            ;;
         -h|--help)
             echo "Usage: $0 [options]"
             echo "Options:"
@@ -125,6 +131,7 @@ while [[ $# -gt 0 ]]; do
             echo "  -q, --quiet                Show only error messages (level 0)"
             echo "  --os-version VERSION       Specify OS version to use (e.g., 'el8' or 'el9')"
             echo "  --verbosity LEVEL          Set verbosity level manually (0-3)"
+            echo "  --pthat-weights TXT_FILE   Text file with the pthat weights"
             echo "  -h, --help                 Show this help message"
             exit 0
             ;;
@@ -278,6 +285,10 @@ log 1 "Executable copied with permissions: $(stat -c '%a' "$BATCH_DIR/$EXECUTABL
 # Copy source files
 log 1 "Copying source files..."
 cp "SkimHiForest.C" "$BATCH_DIR/"
+if [[ -n "$PTHAT_WEIGHTS_FILE" ]]; then
+    cp "$PTHAT_WEIGHTS_FILE" "$BATCH_DIR/"
+    log 1 "Copied pthat weights file: $PTHAT_WEIGHTS_FILE to $BATCH_DIR/"
+fi
 
 # Create a modified copy of the config file specifically for the batch job
 log 1 "Creating batch-specific config file..."
@@ -313,6 +324,9 @@ log 2 "Files to be transferred to condor job:"
 log 2 "- $EXECUTABLE"
 log 2 "- $(basename "$CONFIG_FILE")"
 log 2 "- run_skimming.sh"
+if [[ -n "$PTHAT_WEIGHTS_FILE" ]]; then
+    log 2 "- $(basename "$PTHAT_WEIGHTS_FILE")"
+fi
 
 # Create a simple wrapper script without any external dependencies
 WRAPPER_SCRIPT="$BATCH_DIR/run_skimming.sh"
@@ -372,6 +386,12 @@ log = $LOGS_DIR/skim_\$(Process).log
 
 # Transfer all necessary files
 transfer_input_files = $BATCH_DIR/$EXECUTABLE,$BATCH_DIR/$(basename "$CONFIG_FILE")
+EOF
+if [[ -n "$PTHAT_WEIGHTS_FILE" ]]; then
+    sed -i "/^transfer_input_files =/ s|
+$|,$BATCH_DIR/$(basename \"$PTHAT_WEIGHTS_FILE\")|" "$CONDOR_FILE"
+fi
+cat >> "$CONDOR_FILE" << EOF
 should_transfer_files = YES
 when_to_transfer_output = ON_EXIT
 

@@ -20,6 +20,7 @@
 #include <cctype>
 #include <chrono>
 #include <string>
+#include <fstream>
 
 // System includes
 #include <sys/stat.h>
@@ -213,6 +214,36 @@ std::vector<BranchConfig> ParseBranchSelection(TEnv& env, const std::map<std::st
     return configs;
 }
 
+// Helper function to load pthat weights from file
+std::map<float, double> LoadPthatWeights(const std::string& weightsFile) {
+    std::map<float, double> weights;
+    std::ifstream fin(weightsFile);
+    if (!fin) {
+        std::cerr << "[ERROR] Could not open pthat weights file: " << weightsFile << std::endl;
+        return weights;
+    }
+    std::string line;
+    while (std::getline(fin, line)) {
+        if (line.empty() || line[0] == '#') continue;
+        std::istringstream iss(line);
+        float bin; double w;
+        if (iss >> bin >> w) {
+            weights[bin] = w;
+        }
+    }
+    return weights;
+}
+
+// Helper function to get the pthat bin for a given value
+float GetPthatBin(float pthat, const std::vector<float>& bins) {
+    float result = bins.front();
+    for (size_t i = 0; i < bins.size(); ++i) {
+        if (pthat >= bins[i]) result = bins[i];
+        else break;
+    }
+    return result;
+}
+
 // Function to process a single batch of files
 void ProcessBatch(const TEnv& env, const std::vector<std::string>& batchFiles, 
                  const std::string& outputDir, const std::string& outName, 
@@ -397,7 +428,30 @@ void ProcessBatch(const TEnv& env, const std::vector<std::string>& batchFiles,
     // Show progress
     std::cout << "[INFO] Batch " << batchIndex << "/" << (totalBatches-1) << ": Writing output..." << std::endl;
     
-    df.Snapshot("jet_tree", outFile, outCols, options);
+    // In ProcessBatch and the non-batch mode, before creating the RDataFrame, add:
+    // (Assume the weights file is specified in the config as PthatWeightsFile or hardcode for now)
+    std::string weightsFile = env.GetValue("PthatWeightsFile", "2018_pthat_nominal_weights.txt");
+    auto pthatWeights = LoadPthatWeights(weightsFile);
+    std::vector<float> pthatBins;
+    for (const auto& kv : pthatWeights) pthatBins.push_back(kv.first);
+    std::sort(pthatBins.begin(), pthatBins.end());
+
+    // Add a new column 'weight_pthat' using Define
+    if (colSet.count("pthat")) {
+        auto get_weight = [pthatWeights, pthatBins](float pthat) {
+            float bin = GetPthatBin(pthat, pthatBins);
+            auto it = pthatWeights.find(bin);
+            if (it != pthatWeights.end()) return static_cast<float>(it->second);
+            return 0.f;
+        };
+        // Chain Define directly into Snapshot
+        df.Define("weight_pthat", get_weight, {"pthat"})
+          .Snapshot("jet_tree", outFile, outCols, options);
+        outCols.push_back("weight_pthat");
+    } else {
+        std::cerr << "[ERROR] 'pthat' branch not found, cannot assign weight_pthat." << std::endl;
+        df.Snapshot("jet_tree", outFile, outCols, options);
+    }
 
     // Calculate elapsed time
     auto endTime = std::chrono::steady_clock::now();
@@ -687,7 +741,30 @@ void SkimHiForest(const std::string &cfgPath = "../configs/2023_PbPb_Data_HirawP
     ROOT::RDF::RSnapshotOptions options;
     options.fMode = "RECREATE";
     
-    df.Snapshot("jet_tree", outFile, outCols, options);
+    // In ProcessBatch and the non-batch mode, before creating the RDataFrame, add:
+    // (Assume the weights file is specified in the config as PthatWeightsFile or hardcode for now)
+    std::string weightsFile = env.GetValue("PthatWeightsFile", "2018_pthat_nominal_weights.txt");
+    auto pthatWeights = LoadPthatWeights(weightsFile);
+    std::vector<float> pthatBins;
+    for (const auto& kv : pthatWeights) pthatBins.push_back(kv.first);
+    std::sort(pthatBins.begin(), pthatBins.end());
+
+    // Add a new column 'weight_pthat' using Define
+    if (colSet.count("pthat")) {
+        auto get_weight = [pthatWeights, pthatBins](float pthat) {
+            float bin = GetPthatBin(pthat, pthatBins);
+            auto it = pthatWeights.find(bin);
+            if (it != pthatWeights.end()) return static_cast<float>(it->second);
+            return 0.f;
+        };
+        // Chain Define directly into Snapshot
+        df.Define("weight_pthat", get_weight, {"pthat"})
+          .Snapshot("jet_tree", outFile, outCols, options);
+        outCols.push_back("weight_pthat");
+    } else {
+        std::cerr << "[ERROR] 'pthat' branch not found, cannot assign weight_pthat." << std::endl;
+        df.Snapshot("jet_tree", outFile, outCols, options);
+    }
 
     // Calculate elapsed time for the entire process
     auto endTimeTotal = std::chrono::steady_clock::now();
