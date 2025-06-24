@@ -430,6 +430,141 @@ This document provides comprehensive documentation of all functions available in
 - **Config keys**: `OverlayJetCollections`, `OverlayCentralityBins`
 
 ---
+# PLOTTING_UPDATE.md
+
+## Status: June 13, 2025
+
+### Project: CMS Heavy Ion Gamma-Jet Analysis Plotting
+
+---
+
+### Current Status
+- ✅ **COMPLETE**: Overlay plotting, legend/label customization, normalization, and plot filtering are fully functional.
+- ✅ **COMPLETE**: Single-file overlays (centrality and jet collection overlays) are working with proper config filtering.
+- ✅ **COMPLETE**: Test mode with proper prioritization (overlays first, then individual plots).
+- ✅ **COMPLETE**: Histogram styling preservation (overlays use copies, individual plots use originals).
+- ✅ **COMPLETE**: Smart overlay naming and ROOT output message suppression.
+- ✅ **COMPLETE**: Enhanced logging system with TRACE/DEBUG/INFO/WARNING/ERROR levels.
+- ✅ **COMPLETE**: Content-aware positioning for legends and selection text with collision detection.
+- ✅ **COMPLETE**: LaTeX rendering fixes for ROOT TLatex (Greek letters, math symbols).
+- The script is robust to config structure and supports Data/MC overlays, config-driven plotting, and batch/test mode.
+- Output formats are determined by the `PlotFormats` config parameter.
+
+---
+
+### Context / Implementation Details
+- Overlay keys are parsed from `OverlayPlots` in the overlay config.
+- For each overlay key, the script resolves the correct histogram name for each input file by checking:
+    1. The overlay config itself
+    2. The per-file config (from `InputFile.*` entries)
+    3. The `HistogramConfigFile` referenced in the per-file config
+- The script retrieves the histogram from each file using the resolved name and overlays them if at least two are found.
+- The script supports both single-plot and overlay plotting, with output in user-specified formats.
+- The code is modular, with helpers for legend, label, and normalization logic.
+- Output directory structure mirrors the ROOT file structure by default, but can be overridden for specific plots via config.
+- **Single-file overlays**: Now fully implemented with proper jet collection filtering via `OverlayJetCollections`.
+- **Test mode**: Overlays are created first (higher priority), then individual plots fill remaining budget.
+- **Histogram preservation**: Overlays work on copies to preserve original styling for individual plots.
+- **Smart naming**: `AK2Z1,AK2Z2,AK2Z3` → `AK2Z123` for compact names.
+- Canvas size and style are configurable per plot type (single, overlay, ratio, etc.).
+- A global default color scheme is used, but can be overridden per plot/overlay.
+- Plot enabling supports wildcards, regex, explicit names, and global switches.
+- Legend collision detection is enabled by default, and selection text also uses collision detection.
+
+---
+
+### Remaining Tasks
+
+#### High Priority
+- [ ] **Ratio plots for overlays** (if enabled in config)
+- [ ] **Error bars and draw options** (enhanced config-driven control)
+- [ ] **Grid and axis options** (grid lines, log axes)
+
+#### Medium Priority  
+- [ ] **Color schemes** (configurable, colorblind-friendly, per-plot override)
+- [ ] **Canvas and style customization** (size, margins, auto-adjust, per plot type)
+- [ ] **Advanced legend placement** (enhanced collision detection, preferred/alternative positions)
+
+#### Low Priority
+- [ ] **Plot enabling/disabling** (with wildcards, regex, explicit names, global)
+- [ ] **Robust error handling and logging** (enhanced error recovery)
+- [ ] **Future hooks for graphs/efficiency plots**
+
+#### User Testing
+- [ ] User provides test files/configs for advanced features
+- [ ] Run script, collect feedback, iterate
+
+---
+
+### Recent Improvements (June 13, 2025)
+- ✅ **Logging System Overhaul**: Implemented TRACE/DEBUG/INFO/WARNING/ERROR hierarchy
+  - `TRACE = 0`: Very detailed output (histogram listings, positioning details)
+  - `DEBUG = 1`: Development debugging (file operations, algorithm decisions)  
+  - `INFO = 2`: Normal operation (default level)
+  - `WARNING = 3`: Warnings
+  - `ERROR = 4`: Errors
+- ✅ **CLI Verbosity Mapping**: `-v` for DEBUG, `-vv` for TRACE
+- ✅ **Clean Debug Output**: Moved histogram listings to TRACE level
+- ✅ **LaTeX Rendering**: Fixed ROOT TLatex Greek letter rendering issues
+
+---
+
+### Coding Style and Structure
+- Modular helpers for legend, label, normalization, and file/config parsing.
+- All plotting options are config-driven.
+- Output formats and directory structure are determined by config.
+- Overlay logic is robust to missing histograms and config structure.
+- Each advanced feature should be implemented as a helper or modular section.
+- Follow the COPILOT EDITS OPERATIONAL GUIDELINES for large/complex changes.
+
+---
+
+### Clarified Feature Behavior
+- **Output Structure:** Mirrors ROOT by default, overridable per plot in config.
+- **Overlay Features:** Controlled by config collection lists; no master switch needed.
+- **Ratio Plots:** If enabled, all overlays get ratios.
+- **Canvas/Style:** Configurable per plot type (single, overlay, ratio, etc.).
+- **Color/Marker:** Global default, per-plot/overlay override supported.
+- **Plot Enabling:** Supports wildcards, regex, explicit names, and global switches.
+- **Legend/Selection Collision:** Enabled by default for both legend and selection text.
+
+---
+
+### Architecture Overview
+
+#### **Mode Detection**
+- **Single-file mode**: Input file + PlotJetSub*.config (histogram-defining config)
+- **Multi-file mode**: Config with `InputFile.*` parameters
+
+#### **Output Directory Structure**
+- **Multi-file mode**: `plots/overlays/` + ROOT file structure mirroring
+- **Single-file mode**: `plots/{display_label}/` + ROOT structure + `overlays/` subdir if enabled
+
+#### **Config Parameter Priority**
+- **Multi-file mode**: Overlay config (DataMC_overlay.config) → Individual PlotJetSub configs
+- **Single-file mode**: PlotJetSub config only
+
+#### **Overlay Types**
+- **Multi-file overlays**: Data vs MC across identical ROOT paths
+- **Single-file overlays**: 
+  - Centrality overlays: Same histogram across different jet collections within centrality
+  - Jet collection overlays: Same histogram across different centralities within jet collection
+- **Explicit overlays**: Custom path specifications via `ExplicitOverlay.*` config
+
+#### **Smart Naming Convention**
+- Overlay names extract common patterns: `AK2Z123` vs `AK2Z1_AK3Z2_AK4Z3`
+- Output format: `{histogram}_{context}_{collections}_overlay.{ext}`
+
+---
+
+**Current phase:**
+- ✅ **Core plotting functionality is COMPLETE** - Individual plots, overlays, normalization, styling, and test mode.
+- ✅ **Single-file overlays are COMPLETE** - Working with proper jet collection filtering, test mode prioritization, and histogram preservation.
+- ✅ **Logging system is COMPLETE** - Enhanced TRACE/DEBUG/INFO hierarchy with clean output.
+- ✅ **Content-aware positioning is COMPLETE** - Legend and selection text collision detection working.
+- 🎯 **Next focus**: Ratio plots for overlays and enhanced styling options.
+
+---
 
 ## Main Function
 
