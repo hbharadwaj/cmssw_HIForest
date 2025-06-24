@@ -10,7 +10,7 @@ process = cms.Process('HiForest', Run3_pp_on_PbPb_2024)
 
 # HiForest info
 process.load("HeavyIonsAnalysis.EventAnalysis.HiForestInfo_cfi")
-process.HiForestInfo.info = cms.vstring("HiForest, miniAOD, 140X, mc")
+process.HiForestInfo.info = cms.vstring("HiForest, miniAOD, 141X, mc")
 
 ###############################################################################
 
@@ -19,7 +19,7 @@ process.source = cms.Source("PoolSource",
     duplicateCheckMode = cms.untracked.string("noDuplicateCheck"),
     fileNames = cms.untracked.vstring(
         #'/store/group/phys_heavyions/jviinika/PythiaHydjetRun3_5p36TeV_dijet_ptHat15_100kEvents_miniAOD_2023_08_30/PythiaHydjetDijetRun3/PythiaHydjetRun3_dijet_ptHat15_5p36TeV_miniAOD/230830_165931/0000/pythiaHydjet_miniAOD_11.root'
-        'root://cms-xrd-global.cern.ch///store/user/bharikri/Run3MC_PbPb/MINIAODSIM/2024_Sep_19_step4_MINIAODSIM_Pythia8_Embedded_QCDPhoton15_TuneCP5/Pythia8_Embedded_QCDPhoton_TuneCP5_2024/step4_MINIAODSIM_Pythia8_Embedded_QCDPhoton15_TuneCP5_14_0_13/240930_121003/0000/step4_1.root'
+        'root://cms-xrd-global.cern.ch///store/user/bharikri/Run3MC_PbPb/MINIAOD/2025_Jun_10_step4_MINIAODSIM_Pythia8_Embedded_QCDPhoton50_TuneCP5_14_1_7/Pythia8_Embedded_QCDPhoton_TuneCP5_2024/step4_MINIAODSIM_Pythia8_Embedded_QCDPhoton50_TuneCP5_14_1_7/250629_151438/0000/step4_1.root'
     ),
 )
 
@@ -39,7 +39,7 @@ process.load('FWCore.MessageService.MessageLogger_cfi')
 
 
 from Configuration.AlCa.GlobalTag import GlobalTag
-process.GlobalTag = GlobalTag(process.GlobalTag, '141X_mcRun3_2024_realistic_HI_v11', '')
+process.GlobalTag = GlobalTag(process.GlobalTag, '141X_mcRun3_2024_realistic_HI_v14', '')
 process.HiForestInfo.GlobalTagLabel = process.GlobalTag.globaltag
 process.GlobalTag.snapshotTime = cms.string("9999-12-31 23:59:59.000")
 process.GlobalTag.toGet.extend([
@@ -147,7 +147,7 @@ doSubstructure = True
 sdZList = ["1", "2", "3"]
 
 # Choose which additional information is added to jet trees
-doHIJetID = False             # Fill jet ID and composition information branches
+doHIJetID = True             # Fill jet ID and composition information branches
 doWTARecluster = False        # Add jet phi and eta for WTA axis
 doBtagging = False           # Note that setting to True increases computing time a lot
 

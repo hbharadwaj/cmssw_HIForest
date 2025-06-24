@@ -206,6 +206,7 @@ private:
     float jt_thrust[MAXJETS] = {0};
     float jt_LHA[MAXJETS] = {0};
     float jt_pTD[MAXJETS] = {0};
+    float jt_tau_form[MAXJETS] = {0};
 
     float jtsym[MAXJETS] = {0};
     int jtdroppedBranches[MAXJETS] = {0};
@@ -380,6 +381,7 @@ private:
     float ref_thrust[MAXJETS] = {0};
     float ref_LHA[MAXJETS] = {0};
     float ref_pTD[MAXJETS] = {0};
+    float ref_tau_form[MAXJETS] = {0};
 
     float refptG[MAXJETS] = {0};
     float refetaG[MAXJETS] = {0};
@@ -431,6 +433,7 @@ private:
     float gen_thrust[MAXJETS] = {0};
     float gen_LHA[MAXJETS] = {0};
     float gen_pTD[MAXJETS] = {0};
+    float gen_tau_form[MAXJETS] = {0};
 
     float genptG[MAXJETS] = {0};
     float genetaG[MAXJETS] = {0};

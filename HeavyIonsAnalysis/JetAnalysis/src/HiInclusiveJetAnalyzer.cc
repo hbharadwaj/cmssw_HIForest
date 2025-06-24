@@ -294,6 +294,7 @@ void HiInclusiveJetAnalyzer::beginJob() {
     t->Branch("jt_thrust", jets_.jt_thrust,"jt_thrust[nref]/F");
     t->Branch("jt_LHA", jets_.jt_LHA,"jt_LHA[nref]/F");
     t->Branch("jt_pTD", jets_.jt_pTD,"jt_pTD[nref]/F");    
+    t->Branch("jt_tau_form", jets_.jt_tau_form,"jt_tau_form[nref]/F");    
   }
 
   // Jet ID
@@ -352,6 +353,7 @@ void HiInclusiveJetAnalyzer::beginJob() {
       t->Branch("ref_thrust", jets_.ref_thrust,"ref_thrust[nref]/F");
       t->Branch("ref_LHA", jets_.ref_LHA,"ref_LHA[nref]/F");
       t->Branch("ref_pTD", jets_.ref_pTD,"ref_pTD[nref]/F");
+      t->Branch("ref_tau_form", jets_.ref_tau_form,"ref_tau_form[nref]/F");    
     }
 
     if (doGenTaus_) {
@@ -432,6 +434,7 @@ void HiInclusiveJetAnalyzer::beginJob() {
         t->Branch("gen_thrust", jets_.gen_thrust,"gen_thrust[ngen]/F");
         t->Branch("gen_LHA", jets_.gen_LHA,"gen_LHA[ngen]/F");
         t->Branch("gen_pTD", jets_.gen_pTD,"gen_pTD[ngen]/F");
+        t->Branch("gen_tau_form", jets_.gen_tau_form,"gen_tau_form[nref]/F");    
       }
 
       //for reWTA reclustering
@@ -590,6 +593,7 @@ void HiInclusiveJetAnalyzer::analyze(const Event& iEvent, const EventSetup& iSet
     jets_.jt_thrust[jets_.nref] = 0;
     jets_.jt_LHA[jets_.nref] = 0;
     jets_.jt_pTD[jets_.nref] = 0;
+    jets_.jt_tau_form[jets_.nref] = 0; 
 
 
     jets_.refdyn_split[jets_.nref] = 0;
@@ -603,6 +607,7 @@ void HiInclusiveJetAnalyzer::analyze(const Event& iEvent, const EventSetup& iSet
     jets_.ref_thrust[jets_.nref] = 0;
     jets_.ref_LHA[jets_.nref] = 0;
     jets_.ref_pTD[jets_.nref] = 0;
+    jets_.ref_tau_form[jets_.nref] = 0;
     
     jets_.gendyn_split[jets_.ngen] = 0;
     jets_.gendyn_eta[jets_.ngen] = 0;
@@ -615,6 +620,7 @@ void HiInclusiveJetAnalyzer::analyze(const Event& iEvent, const EventSetup& iSet
     jets_.gen_thrust[jets_.ngen] = 0;
     jets_.gen_LHA[jets_.ngen] = 0;
     jets_.gen_pTD[jets_.ngen] = 0;
+    jets_.gen_tau_form[jets_.ngen] = 0;
   }
 
   auto getTag = [](const edm::Handle<reco::JetTagCollection> &bTags,const pat::Jet &jet) {
@@ -1168,6 +1174,7 @@ void HiInclusiveJetAnalyzer::IterativeDeclustering(int flagGen, const reco::Jet&
   double dyn_deltaR = 0;
   double dyn_kt = std::numeric_limits<double>::min();
   double dyn_z = 0;
+  double jet_tau_form = 0;
 
   Int_t intjet_multi = 0;
   float jet_girth = 0;
@@ -1243,11 +1250,28 @@ void HiInclusiveJetAnalyzer::IterativeDeclustering(int flagGen, const reco::Jet&
     double delta_R = j1.delta_R(j2);
     var_z = j2.perp()/(j1.perp()+j2.perp());
 
+    double var_z1 = j1.perp()/(j1.perp()+j2.perp());
+
+    // Extract momentum components
+    double px1 = j1.px(), py1 = j1.py(), pz1 = j1.pz();
+    double px2 = j2.px(), py2 = j2.py(), pz2 = j2.pz();
+
+    // Compute dot product
+    double dot = px1 * px2 + py1 * py2 + pz1 * pz2;
+
+    // Compute magnitudes
+    double mag1 = std::sqrt(px1*px1 + py1*py1 + pz1*pz1);
+    double mag2 = std::sqrt(px2*px2 + py2*py2 + pz2*pz2);
+
+    // Compute angle in radians
+    double cos_theta = dot / (mag1 * mag2);
+
     // lateSD
     if((groomType_==0) && (var_z > sdZcut_*pow(delta_R/rParam_,sdBeta_))){
       dyn_split = nsplit;
       dyn_deltaR = delta_R;
       dyn_z = var_z;
+      jet_tau_form = 1/(2*myjet.E()*var_z*var_z1*(1-cos_theta));
       dyn_eta = j2.eta();
       dyn_phi = j2.phi();
       *sub1 = j1;
@@ -1259,6 +1283,7 @@ void HiInclusiveJetAnalyzer::IterativeDeclustering(int flagGen, const reco::Jet&
       dyn_split = nsplit;
       dyn_deltaR = delta_R;
       dyn_z = var_z;
+      jet_tau_form = 1/(2*myjet.E()*var_z*var_z1*(1-cos_theta));
       dyn_eta = j2.eta();
       dyn_phi = j2.phi();
       *sub1 = j1;
@@ -1299,7 +1324,8 @@ void HiInclusiveJetAnalyzer::IterativeDeclustering(int flagGen, const reco::Jet&
     jets_.gen_girth[jets_.ngen] = jet_girth;
     jets_.gen_thrust[jets_.ngen] = jet_thrust;
     jets_.gen_LHA[jets_.ngen] = jet_LHA;
-    jets_.gen_pTD[jets_.ngen] = jet_pTD;
+    jets_.gen_pTD[jets_.ngen] = jet_pTD; 
+    jets_.gen_tau_form[jets_.ngen] = jet_tau_form;
 
   }
   else if(flagGen==kMatchGen){
@@ -1314,6 +1340,7 @@ void HiInclusiveJetAnalyzer::IterativeDeclustering(int flagGen, const reco::Jet&
     jets_.ref_thrust[jets_.nref] = jet_thrust;
     jets_.ref_LHA[jets_.nref] = jet_LHA;
     jets_.ref_pTD[jets_.nref] = jet_pTD;
+    jets_.ref_tau_form[jets_.ngen] = jet_tau_form;
   }
   else if(flagGen==kReco){
     jets_.jtdyn_split[jets_.nref] = dyn_split;
@@ -1327,6 +1354,7 @@ void HiInclusiveJetAnalyzer::IterativeDeclustering(int flagGen, const reco::Jet&
     jets_.jt_thrust[jets_.nref] = jet_thrust;
     jets_.jt_LHA[jets_.nref] = jet_LHA;
     jets_.jt_pTD[jets_.nref] = jet_pTD;
+    jets_.jt_tau_form[jets_.nref] = jet_tau_form;
   }
   else{
     //TODO: Handle Exception
