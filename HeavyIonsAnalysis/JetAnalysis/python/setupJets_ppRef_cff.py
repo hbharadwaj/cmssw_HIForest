@@ -5,7 +5,8 @@ def candidateBtaggingMiniAOD(process, isMC = True, jetPtMin = 15, jetCorrLevels 
     jetR = 0.1*float(labelR)
     if labelR == "0": jetR = 0.4
 
-    jetCorrectionsAK4 = ('AK4PFchs' if labelR == "0" else 'AK'+labelR+'PFchs', jetCorrLevels, 'None')
+    # jetCorrectionsAK4 = ('AK4PFchs' if labelR == "0" else 'AK'+labelR+'PFchs', jetCorrLevels, 'None')
+    jetCorrectionsAK4 = ('AK4PFchs', jetCorrLevels, 'None')  # temporary while we wait for updated JECs
 
 
     if doBtagging:
@@ -129,7 +130,8 @@ def candidateBtaggingMiniAOD(process, isMC = True, jetPtMin = 15, jetCorrLevels 
         getJetMCFlavour    = isMC,
         genJetCollection   = cms.InputTag(matchedGenJets),
         genParticles       = cms.InputTag("hiSignalGenParticles" if isMC else ""),
-        jetCorrections     = ('AK4PFchs' if labelR=='0' else 'AK'+labelR+'PFchs',) + jetCorrectionsAK4[1:],
+        # jetCorrections     = ('AK4PFchs' if labelR=='0' else 'AK'+labelR+'PFchs',) + jetCorrectionsAK4[1:],
+        jetCorrections     = ('AK4PFchs',) + jetCorrectionsAK4[1:],  #tempoorary while we wait for updated JECs
     )
 
     getattr(process,"patJetsAK"+labelR+"PFUnsubJets").useLegacyJetMCFlavour = False
