@@ -155,7 +155,7 @@ doSubstructure = True
 sdZList = ["1", "2", "3", "4", "5"]
 
 # Choose which additional information is added to jet trees
-doHIJetID = False             # Fill jet ID and composition information branches
+doHIJetID = True             # Fill jet ID and composition information branches
 doWTARecluster = False        # Add jet phi and eta for WTA axis
 doBtagging = False           # Note that setting to True increases computing time a lot
 

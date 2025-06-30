@@ -160,7 +160,7 @@ doSubstructure = True
 sdZList = ["1", "2", "3"]
 
 # Choose which additional information is added to jet trees
-doHIJetID = False            # Fill jet ID and composition information branches (set to False like MC gammaJet)
+doHIJetID = True             # Fill jet ID and composition information branches (set to False like MC gammaJet)
 doWTARecluster = False       # Add jet phi and eta for WTA axis (set to False like MC gammaJet)
 doBtagging  =  False         # Note that setting to True increases computing time a lot
 matchJets = False            # No MC truth matching for data
