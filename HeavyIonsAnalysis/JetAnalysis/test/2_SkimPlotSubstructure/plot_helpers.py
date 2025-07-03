@@ -189,6 +189,10 @@ def get_color_scheme(scheme_name, color_blind=False):
         'viridis': [
             ROOT.kBlue+2, ROOT.kAzure+7, ROOT.kTeal+2, ROOT.kGreen+2, ROOT.kYellow+1
         ],
+        'PbPb_pp': [
+            ROOT.TColor.GetColor("#5790fc"),  # Blue
+            ROOT.TColor.GetColor("#e42536"),  # Red
+        ],
         'default': [
             ROOT.kBlack, ROOT.kBlue, ROOT.kRed, ROOT.kMagenta, 
             ROOT.kGreen+2, ROOT.kOrange, ROOT.kCyan, ROOT.kYellow+2, ROOT.kGray+2

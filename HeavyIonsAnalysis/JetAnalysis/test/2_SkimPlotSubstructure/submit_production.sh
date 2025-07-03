@@ -279,7 +279,7 @@ timestamp=$(date '+%Y%m%d_%H%M%S')
 if [ -n "$CUSTOM_JOB_NAME" ]; then
     job_name="$CUSTOM_JOB_NAME"
 else
-    job_name="${config_name}_${timestamp}"
+    job_name="${timestamp}_${config_name}"
 fi
 batch_dir=$SCRIPT_DIR"/batch/job_${job_name}"
 

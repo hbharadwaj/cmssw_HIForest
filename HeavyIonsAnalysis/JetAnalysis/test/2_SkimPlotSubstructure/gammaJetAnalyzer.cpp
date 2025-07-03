@@ -489,6 +489,7 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
     
     // Event weight for MC
     float weight = 1.0;
+    float weight_pthat = 1.0;
     
     // Setup branch addresses for event variables
     chain->SetBranchAddress("hiBin", &hiBin);
@@ -578,6 +579,13 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
         } else {
             log(LOG_INFO, "No weight branch found, using weight = 1.0 for all events");
         }
+        TBranch* weightPthatBranch = chain->GetBranch("weight_pthat");
+        if (weightPthatBranch) {
+            chain->SetBranchAddress("weight_pthat", &weight_pthat);
+            log(LOG_INFO, "Pthat Weight branch found and connected for MC events");
+        } else {
+            log(LOG_INFO, "No pthat weight branch found, using pthat weight = 1.0 for all events");
+        }
     }
     
     // Output variables
@@ -621,6 +629,7 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
     std::map<std::string, float> selectedJetThrusts;
     std::map<std::string, float> selectedJetLHAs;
     std::map<std::string, float> selectedJetPtDs;
+    std::map<std::string, float> selectedJetTauForm;
     std::map<std::string, float> selectedJetDeltaPhis;
     std::map<std::string, float> selectedJetXjs;
     std::map<std::string, float> selectedJetDynDeltaRs;
@@ -639,6 +648,7 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
     std::map<std::string, float> selectedRefJetThrusts;
     std::map<std::string, float> selectedRefJetLHAs;
     std::map<std::string, float> selectedRefJetPtDs;
+    std::map<std::string, float> selectedRefJetTauForm;
     std::map<std::string, float> selectedRefJetDynDeltaRs;
     std::map<std::string, int> selectedRefJetIntJetMultis;
     
@@ -686,6 +696,7 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
         selectedJetThrusts[collection] = -999;
         selectedJetLHAs[collection] = -999;
         selectedJetPtDs[collection] = -999;
+        selectedJetTauForm[collection] = -999;
         selectedJetDeltaPhis[collection] = -999;
         selectedJetXjs[collection] = -999;
         selectedJetDynDeltaRs[collection] = -999;
@@ -705,6 +716,7 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
         outTree->Branch(("jetThrust_" + collection).c_str(), &selectedJetThrusts[collection]);
         outTree->Branch(("jetLHA_" + collection).c_str(), &selectedJetLHAs[collection]);
         outTree->Branch(("jetPtD_" + collection).c_str(), &selectedJetPtDs[collection]);
+        outTree->Branch(("jetTauForm_" + collection).c_str(), &selectedJetTauForm[collection]);
         outTree->Branch(("deltaPhi_" + collection).c_str(), &selectedJetDeltaPhis[collection]);
         outTree->Branch(("xj_" + collection).c_str(), &selectedJetXjs[collection]);
         outTree->Branch(("jetDynDeltaR_" + collection).c_str(), &selectedJetDynDeltaRs[collection]);
@@ -725,6 +737,7 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
             outTree->Branch(("refJetThrust_" + collection).c_str(), &selectedRefJetThrusts[collection]);
             outTree->Branch(("refJetLHA_" + collection).c_str(), &selectedRefJetLHAs[collection]);
             outTree->Branch(("refJetPtD_" + collection).c_str(), &selectedRefJetPtDs[collection]);
+            outTree->Branch(("refJetTauForm_" + collection).c_str(), &selectedRefJetTauForm[collection]);
             outTree->Branch(("refJetDynDeltaR_" + collection).c_str(), &selectedRefJetDynDeltaRs[collection]);
             outTree->Branch(("refJetIntJetMulti_" + collection).c_str(), &selectedRefJetIntJetMultis[collection]);
         }
@@ -754,8 +767,11 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
         chain->GetEntry(iEvent);
         nProcessed++;
         float eventWeight = 1.0;
-        if (isMC && isPbPb){
-            eventWeight = weight * findNcoll(hiBin);
+        if (isMC){
+            eventWeight = weight * weight_pthat;
+            if(isPbPb){
+                eventWeight *= findNcoll(hiBin);
+            }
         }
         else{
             eventWeight = 1.0;
@@ -1028,6 +1044,7 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
             selectedJetThrusts[collection] = -999;
             selectedJetLHAs[collection] = -999;
             selectedJetPtDs[collection] = -999;
+            selectedJetTauForm[collection] = -999;
             selectedJetDeltaPhis[collection] = -999;
             selectedJetXjs[collection] = -999;
             selectedJetDynDeltaRs[collection] = -999;
@@ -1047,6 +1064,7 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
             selectedRefJetThrusts[collection] = -999;
             selectedRefJetLHAs[collection] = -999;
             selectedRefJetPtDs[collection] = -999;
+            selectedRefJetTauForm[collection] = -999;
         }
         
         // Jet selection for each collection with individual cut tracking
@@ -1109,6 +1127,7 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
                 selectedJetThrusts[collection] = jetManager.getJetThrust(collection, bestJetIndex);
                 selectedJetLHAs[collection] = jetManager.getJetLHA(collection, bestJetIndex);
                 selectedJetPtDs[collection] = jetManager.getJetPtD(collection, bestJetIndex);
+                selectedJetTauForm[collection] = jetManager.getJetTauForm(collection, bestJetIndex);
                 selectedJetDynDeltaRs[collection] = jetManager.getJetDynDeltaR(collection, bestJetIndex);
                 selectedJetIntJetMultis[collection] = jetManager.getJetIntJetMulti(collection, bestJetIndex);
                 selectedRefJetPts[collection] = jetManager.getRefJetPt(collection, bestJetIndex);
@@ -1123,6 +1142,7 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
                 selectedRefJetThrusts[collection] = jetManager.getRefJetThrust(collection, bestJetIndex);
                 selectedRefJetLHAs[collection] = jetManager.getRefJetLHA(collection, bestJetIndex);
                 selectedRefJetPtDs[collection] = jetManager.getRefJetPtD(collection, bestJetIndex);
+                selectedRefJetTauForm[collection] = jetManager.getRefJetTauForm(collection, bestJetIndex);
                 selectedRefJetDynDeltaRs[collection] = jetManager.getRefJetDynDeltaR(collection, bestJetIndex);
                 selectedRefJetIntJetMultis[collection] = jetManager.getRefJetIntJetMulti(collection, bestJetIndex);
                 
@@ -1164,6 +1184,7 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
                     fill1Djet("hJetThrust", selectedJetThrusts[collection], eventWeight);
                     fill1Djet("hJetLHA", selectedJetLHAs[collection], eventWeight);
                     fill1Djet("hJetPtD", selectedJetPtDs[collection], eventWeight);
+                    fill1Djet("hJetTauForm", selectedJetTauForm[collection], eventWeight);
                     
                     fill1Djet("hNJets", jetManager.getNJets(collection), eventWeight);
                     fill2Djet("h2JetEtaVsJetPt", selectedJetEtas[collection], selectedJetPts[collection], eventWeight);
@@ -1173,6 +1194,7 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
                     fill2Djet("h2JetPtVsJetGirth", selectedJetPts[collection], selectedJetGirths[collection], eventWeight);
                     fill2Djet("h2JetPtVsJetThrust", selectedJetPts[collection], selectedJetThrusts[collection], eventWeight);
                     fill2Djet("h2JetPtVsJetPtD", selectedJetPts[collection], selectedJetPtDs[collection], eventWeight);
+                    fill2Djet("h2PhotonEtVsJetTauForm", selectedPhotonEt, selectedJetTauForm[collection], eventWeight);
                     // fillProfilejet("pGirthVsPt", selectedJetPts[collection], selectedJetGirths[collection], eventWeight);
                     // fillProfilejet("pThrustVsPt", selectedJetPts[collection], selectedJetThrusts[collection], eventWeight);
                     // fillProfilejet("pPtDVsPt", selectedJetPts[collection], selectedJetPtDs[collection], eventWeight);
@@ -1194,6 +1216,7 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
                         fill1Djet("hRefThrust", selectedRefJetThrusts[collection], eventWeight);
                         fill1Djet("hRefLHA", selectedRefJetLHAs[collection], eventWeight);
                         fill1Djet("hRefPtD", selectedRefJetPtDs[collection], eventWeight);
+                        fill1Djet("hRefTauForm", selectedRefJetTauForm[collection], eventWeight);
 
                         // 2D and profile ref jet histograms
                         fill2Djet("h2RefJetEtaVsRefJetPt", selectedRefJetEtas[collection], selectedRefJetPts[collection], eventWeight);
