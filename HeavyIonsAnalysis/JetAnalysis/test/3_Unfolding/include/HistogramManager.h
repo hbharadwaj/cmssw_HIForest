@@ -39,9 +39,10 @@ public:
                                               config.truthBins[0].size()-1, 
                                               config.truthBins[0].data());
             h_mc_truth->SetDirectory(0);
+            // Fix: x axis = measured, y axis = truth
             h_response = std::make_unique<TH2D>("h_response", "Response Matrix",
-                                              config.truthBins[0].size()-1, config.truthBins[0].data(),
-                                              config.measuredBins[0].size()-1, config.measuredBins[0].data());
+                                              config.measuredBins[0].size()-1, config.measuredBins[0].data(),
+                                              config.truthBins[0].size()-1, config.truthBins[0].data());
             h_response->SetDirectory(0);
         }
         else if (ndim == 2) {
@@ -57,11 +58,12 @@ public:
                                               config.truthBins[0].size()-1, config.truthBins[0].data(),
                                               config.truthBins[1].size()-1, config.truthBins[1].data());
             h_mc_truth->SetDirectory(0);
-            int nTruthBins = (config.truthBins[0].size()-1) * (config.truthBins[1].size()-1);
             int nMeasBins = (config.measuredBins[0].size()-1) * (config.measuredBins[1].size()-1);
+            int nTruthBins = (config.truthBins[0].size()-1) * (config.truthBins[1].size()-1);
+            // Fix: x axis = measured, y axis = truth
             h_response = std::make_unique<TH2D>("h_response", "Response Matrix",
-                                              nTruthBins, 0, nTruthBins,
-                                              nMeasBins, 0, nMeasBins);
+                                              nMeasBins, 0, nMeasBins,
+                                              nTruthBins, 0, nTruthBins);
             h_response->SetDirectory(0);
         }
         else if (ndim == 3) {
@@ -83,8 +85,8 @@ public:
             int nTruthBins = (config.truthBins[0].size()-1) * (config.truthBins[1].size()-1) * (config.truthBins[2].size()-1);
             int nMeasBins = (config.measuredBins[0].size()-1) * (config.measuredBins[1].size()-1) * (config.measuredBins[2].size()-1);
             h_response = std::make_unique<TH2D>("h_response", "Response Matrix",
-                                              nTruthBins, 0, nTruthBins,
-                                              nMeasBins, 0, nMeasBins);
+                                              nMeasBins, 0, nMeasBins,
+                                              nTruthBins, 0, nTruthBins);
             h_response->SetDirectory(0);
         }
         log(LOG_DEBUG, "Histograms created successfully");
@@ -115,37 +117,68 @@ private:
     
     void fillResponse(const std::vector<double>& measValues, const std::vector<double>& truthValues, double weight) {
         if (ndim == 1) {
-            h_response->Fill(truthValues[0], measValues[0], weight);
+            // Fix: Fill as (measured, truth)
+            h_response->Fill(measValues[0], truthValues[0], weight);
         } else {
             // Use unified flattening for multi-dimensional
-            auto truthFlat = calculateFlatIndex(truthValues, h_mc_truth.get());
             auto measFlat = calculateFlatIndex(measValues, h_mc_meas.get());
-            h_response->Fill(truthFlat, measFlat, weight);
+            auto truthFlat = calculateFlatIndex(truthValues, h_mc_truth.get());
+            h_response->Fill(measFlat, truthFlat, weight);
         }
     }
     
     int calculateFlatIndex(const std::vector<double>& values, TH1* hist) {
-        // Unified bin index calculation
+        // Unified bin index calculation using ROW-MAJOR ordering
         std::vector<int> binIndices;
         std::vector<int> nBins;
         
         if (ndim == 2) {
             TH2* h2 = (TH2*)hist;
-            binIndices.push_back(h2->GetXaxis()->FindBin(values[0]) - 1);
-            binIndices.push_back(h2->GetYaxis()->FindBin(values[1]) - 1);
-            nBins.push_back(h2->GetNbinsX());
-            nBins.push_back(h2->GetNbinsY());
+            int binX = h2->GetXaxis()->FindBin(values[0]) - 1; // Convert to 0-based
+            int binY = h2->GetYaxis()->FindBin(values[1]) - 1;
+            
+            binIndices = {binX, binY};
+            nBins = {h2->GetNbinsX(), h2->GetNbinsY()};
+            
+            log(LOG_TRACE, "calculateFlatIndex 2D: values[" + std::to_string(values[0]) + 
+                "," + std::to_string(values[1]) + "] -> bins[" + std::to_string(binX) + 
+                "," + std::to_string(binY) + "]");
+                
         } else if (ndim == 3) {
             TH3* h3 = (TH3*)hist;
-            binIndices.push_back(h3->GetXaxis()->FindBin(values[0]) - 1);
-            binIndices.push_back(h3->GetYaxis()->FindBin(values[1]) - 1);
-            binIndices.push_back(h3->GetZaxis()->FindBin(values[2]) - 1);
-            nBins.push_back(h3->GetNbinsX());
-            nBins.push_back(h3->GetNbinsY());
-            nBins.push_back(h3->GetNbinsZ());
+            int binX = h3->GetXaxis()->FindBin(values[0]) - 1; // Convert to 0-based
+            int binY = h3->GetYaxis()->FindBin(values[1]) - 1;
+            int binZ = h3->GetZaxis()->FindBin(values[2]) - 1;
+            
+            binIndices = {binX, binY, binZ};
+            nBins = {h3->GetNbinsX(), h3->GetNbinsY(), h3->GetNbinsZ()};
+            
+            log(LOG_TRACE, "calculateFlatIndex 3D: values[" + std::to_string(values[0]) + 
+                "," + std::to_string(values[1]) + "," + std::to_string(values[2]) + 
+                "] -> bins[" + std::to_string(binX) + "," + std::to_string(binY) + 
+                "," + std::to_string(binZ) + "]");
+        } else {
+            log(LOG_ERROR, "calculateFlatIndex: unsupported dimension " + std::to_string(ndim));
+            return -1;
         }
         
-        return flattenIndices(binIndices, nBins);
+        // Validate indices are within bounds
+        for (size_t i = 0; i < binIndices.size(); ++i) {
+            if (binIndices[i] < 0 || binIndices[i] >= nBins[i]) {
+                log(LOG_WARNING, "calculateFlatIndex: bin index out of bounds - dim=" + 
+                    std::to_string(i) + ", index=" + std::to_string(binIndices[i]) + 
+                    ", nBins=" + std::to_string(nBins[i]) + 
+                    ", value=" + std::to_string(values[i]));
+                // Clamp to valid range
+                binIndices[i] = std::max(0, std::min(binIndices[i], nBins[i] - 1));
+            }
+        }
+        
+        int flatIndex = flattenIndices(binIndices, nBins);
+        
+        log(LOG_TRACE, "calculateFlatIndex result: " + std::to_string(flatIndex));
+        
+        return flatIndex;
     }
 };
 

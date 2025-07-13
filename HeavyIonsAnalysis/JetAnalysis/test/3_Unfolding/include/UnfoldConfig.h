@@ -58,7 +58,7 @@ struct UnfoldConfig {
     std::vector<std::vector<double>> measuredBins;
     std::vector<std::vector<double>> truthBins;
     std::string method = "MatrixInversion";
-    int iterations = 4;
+    int iterations = 20;
     std::string dataFile;
     std::string mcFile;
     std::string weightBranch = "eventWeight";
@@ -82,13 +82,11 @@ struct UnfoldConfig {
             cfg.truthBins.push_back(parseBins(binStr));
         }
         
-        cfg.method = config->GetValue((prefix+"UnfoldingMethod").c_str(), "MatrixInversion");
-        cfg.iterations = config->GetValue((prefix+"UnfoldingIterations").c_str(), 4);
-        cfg.dataFile = config->GetValue((prefix+"DataInputFile").c_str(), 
-                                      config->GetValue("default.DataInputFile", ""));
-        cfg.mcFile = config->GetValue((prefix+"MCInputFile").c_str(),
-                                    config->GetValue("default.MCInputFile", ""));
-        cfg.weightBranch = config->GetValue((prefix+"eventWeightBranch").c_str(), "eventWeight");
+        cfg.method = config->GetValue((prefix+"UnfoldingMethod").c_str(), config->GetValue("default.UnfoldingMethod", "MatrixInversion"));
+        cfg.iterations = config->GetValue((prefix+"UnfoldingIterations").c_str(), config->GetValue("default.UnfoldingIterations", 20));
+        cfg.dataFile = config->GetValue((prefix+"DataInputFile").c_str(), config->GetValue("default.DataInputFile", ""));
+        cfg.mcFile = config->GetValue((prefix+"MCInputFile").c_str(), config->GetValue("default.MCInputFile", ""));
+        cfg.weightBranch = config->GetValue((prefix+"eventWeightBranch").c_str(), config->GetValue("default.eventWeightBranch", "eventWeight"));
         
         return cfg;
     }

@@ -41,15 +41,11 @@ struct UnfoldingBinning {
     }
 };
 
-// Helper functions for global bin index (for N-dim)
+// Helper functions for global bin index (for N-dim) - ROW-MAJOR ordering
 inline int getGlobalBin(const std::vector<int>& indices, const std::vector<int>& nBins) {
-    int global = 0;
-    int stride = 1;
-    for (int i = indices.size() - 1; i >= 0; --i) {
-        global += indices[i] * stride;
-        stride *= nBins[i];
-    }
-    return global;
+    // This function is deprecated - use flattenIndices() from UnfoldUtils.h instead
+    log(LOG_WARNING, "getGlobalBin() is deprecated, use flattenIndices() from UnfoldUtils.h");
+    return flattenIndices(indices, nBins);
 }
 
 // Config parsing helpers
@@ -169,16 +165,6 @@ inline DimensionCycleInfo calculateCycleInfo(int dim, const std::vector<int>& nB
     info.nCycles = totalBins / (info.stride * info.binsPerCycle);
     
     return info;
-}
-
-// Helper function to get global bin index for 2D case
-inline int getGlobalBin2D(int iBinX, int iBinY, int nBinsX) {
-    return iBinY * nBinsX + iBinX;
-}
-
-// Helper function to get global bin index for 3D case
-inline int getGlobalBin3D(int iBinX, int iBinY, int iBinZ, int nBinsX, int nBinsY) {
-    return iBinZ * (nBinsX * nBinsY) + iBinY * nBinsX + iBinX;
 }
 
 // Helper: Parse int vector from string

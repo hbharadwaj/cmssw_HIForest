@@ -4,8 +4,15 @@
 # Ensures proper RooUnfold library loading
 #
 # Usage:
+#   ./run_optimized.sh [config_file]
 #   Optionally set ROOUNFOLD_VERSION to 2_0_0 or 3_0_0 (default: 2_0_0)
-#   Example: ROOUNFOLD_VERSION=3_0_0 ./run_optimized.sh
+#   Example: ROOUNFOLD_VERSION=3_0_0 ./run_optimized.sh ../configs/UnfoldJetSub_xj_test.config
+
+CONFIG_FILE="${1:-../configs/UnfoldJetSub_xj_test.config}"
+if [ ! -f "$CONFIG_FILE" ]; then
+    echo "❌ Config file '$CONFIG_FILE' not found. Please provide a valid config file as the first argument."
+    exit 1
+fi
 
 ROOUNFOLD_VERSION="${ROOUNFOLD_VERSION:-2_0_0}"
 ROOUNFOLD_DIR="RooUnfold_${ROOUNFOLD_VERSION}"
@@ -25,11 +32,12 @@ export LD_LIBRARY_PATH=$PWD/$ROOUNFOLD_DIR:$LD_LIBRARY_PATH
 echo "=== Testing Optimized RooUnfold Implementation (version: $ROOUNFOLD_VERSION) ==="
 
 echo "Using RooUnfold library: $PWD/$ROOUNFOLD_DIR/$ROOUNFOLD_SO"
+echo "Using config file: $CONFIG_FILE"
 
 # Run ROOT with the optimized macro
 root -l << EOF
 gSystem->Load("./$ROOUNFOLD_DIR/$ROOUNFOLD_SO");
-.x RooUnfoldOptimized.C("../configs/UnfoldJetSub_xj_test.config")
+.x RooUnfoldOptimized.C("$CONFIG_FILE")
 .q
 EOF
 ROOT_EXIT_CODE=$?
@@ -43,8 +51,8 @@ echo "=== Optimized RooUnfold test completed ==="
 
 # Check if output file was created in the correct output directory
 # Extract output directory and filename from config (handle space-separated format)
-OUTPUT_DIR=$(grep "^default.OutputDir" ../configs/UnfoldJetSub_xj_test.config | awk '{for(i=2;i<=NF;i++) printf "%s ", $i; print ""}' | sed 's/[[:space:]]*$//')
-OUTPUT_PREFIX=$(grep "^default.OutputPrefix" ../configs/UnfoldJetSub_xj_test.config | awk '{for(i=2;i<=NF;i++) printf "%s ", $i; print ""}' | sed 's/[[:space:]]*$//')
+OUTPUT_DIR=$(grep "^default.OutputDir" "$CONFIG_FILE" | awk '{for(i=2;i<=NF;i++) printf "%s ", $i; print ""}' | sed 's/[[:space:]]*$//')
+OUTPUT_PREFIX=$(grep "^default.OutputPrefix" "$CONFIG_FILE" | awk '{for(i=2;i<=NF;i++) printf "%s ", $i; print ""}' | sed 's/[[:space:]]*$//')
 
 # Set defaults if not found
 if [ -z "$OUTPUT_DIR" ]; then

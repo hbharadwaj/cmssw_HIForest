@@ -13,11 +13,81 @@
 #include <TLatex.h>
 
 // ============================================================================
-// SOPHISTICATED RESPONSE MATRIX PLOTTING WITH MULTI-DIMENSIONAL AXES
+// SOPHISTICATED MATRIX PLOTTING WITH MULTI-DIMENSIONAL AXES
 // ============================================================================
+
+enum class AxisType {
+    Measured,
+    Truth
+};
+
+struct AxisInfo {
+    AxisType type;
+    std::vector<std::string> varNames;
+    std::vector<std::vector<double>> binEdges;
+    std::vector<int> nBins;
+    
+    AxisInfo(AxisType t, const std::vector<std::string>& names, 
+             const std::vector<std::vector<double>>& edges) 
+        : type(t), varNames(names), binEdges(edges) {
+        for (const auto& e : edges) nBins.push_back(e.size() - 1);
+    }
+};
 
 class ResponseMatrixPlotter {
 public:
+    // Generic matrix plotting function
+    static void plotGeneralizedMatrix(const std::string& setName,
+                                    TH2D* h_matrix,
+                                    const AxisInfo& xAxisInfo,
+                                    const AxisInfo& yAxisInfo,
+                                    const std::string& title = "Matrix",
+                                    const std::string& outputDir = "./",
+                                    TDirectory* outDir = nullptr) {
+        if (!h_matrix || xAxisInfo.varNames.empty() || xAxisInfo.binEdges.empty() || 
+            yAxisInfo.varNames.empty() || yAxisInfo.binEdges.empty()) {
+            log(LOG_WARNING, "Invalid parameters for matrix plot: " + setName);
+            return;
+        }
+        
+        int ndim_x = xAxisInfo.varNames.size();
+        int ndim_y = yAxisInfo.varNames.size();
+        int nGlobalBinsX = h_matrix->GetNbinsX();
+        int nGlobalBinsY = h_matrix->GetNbinsY();
+        
+        logDebugInfo(setName, xAxisInfo, yAxisInfo, nGlobalBinsX, nGlobalBinsY);
+        
+        // Create canvas with appropriate margins
+        auto canvasSize = calculateCanvasSize(ndim_x, ndim_y);
+        auto canvas = std::make_unique<TCanvas>((setName+"_matrix_detailed").c_str(), 
+                                              (setName+" " + title).c_str(), 
+                                              canvasSize.width, canvasSize.height);
+        
+        setupCanvasMargins(canvas.get(), ndim_x, ndim_y);
+        
+        // Draw main matrix
+        setupMatrix(h_matrix, title, setName, xAxisInfo, yAxisInfo);
+        
+        // Get canvas coordinates for additional axes
+        double x1 = h_matrix->GetXaxis()->GetXmin();
+        double x2 = h_matrix->GetXaxis()->GetXmax(); 
+        double y1 = h_matrix->GetYaxis()->GetXmin();
+        double y2 = h_matrix->GetYaxis()->GetXmax();
+        
+        // Draw additional axes for multi-dimensional cases
+        if (ndim_x > 1 || ndim_y > 1) {
+            drawAdditionalAxes(xAxisInfo, nGlobalBinsX, x1, x2, y1, y2, true);  // X-axis (horizontal)
+            drawAdditionalAxes(yAxisInfo, nGlobalBinsY, x1, x2, y1, y2, false); // Y-axis (vertical)
+        }
+        
+        // Save output
+        if (outDir) {
+            outDir->cd();
+            canvas->Write((setName+"_"+title+"_canvas").c_str());
+        }
+    }
+    
+    // Convenience function for response matrices (measured vs truth)
     static void plotGeneralizedResponseMatrix(const std::string& setName,
                                            TH2D* h_response,
                                            const std::vector<std::string>& measuredVarNames,
@@ -27,61 +97,37 @@ public:
                                            const std::string& title = "Response Matrix",
                                            const std::string& outputDir = "./",
                                            TDirectory* outDir = nullptr) {
-        if (!h_response || measuredVarNames.empty() || measuredBinEdges.empty() || 
-            truthVarNames.empty() || truthBinEdges.empty()) {
-            log(LOG_WARNING, "Invalid parameters for response matrix plot: " + setName);
-            return;
-        }
-        
-        int ndim_meas = measuredVarNames.size();
-        int ndim_truth = truthVarNames.size();
-        int nGlobalBinsX = h_response->GetNbinsX(); // truth (X axis)
-        int nGlobalBinsY = h_response->GetNbinsY(); // measured (Y axis)
-        
-        // Calculate bin counts for each dimension
-        std::vector<int> nBinsMeasured, nBinsTruth;
-        for (const auto& edges : measuredBinEdges) nBinsMeasured.push_back(edges.size() - 1);
-        for (const auto& edges : truthBinEdges) nBinsTruth.push_back(edges.size() - 1);
-        
-        logDebugInfo(setName, ndim_truth, ndim_meas, nGlobalBinsX, nGlobalBinsY, 
-                    truthVarNames, measuredVarNames, nBinsTruth, nBinsMeasured);
-        
-        // Create canvas with appropriate margins
-        auto canvasSize = calculateCanvasSize(ndim_truth, ndim_meas);
-        auto canvas = std::make_unique<TCanvas>((setName+"_response_detailed").c_str(), 
-                                              (setName+" " + title).c_str(), 
-                                              canvasSize.width, canvasSize.height);
-        
-        setupCanvasMargins(canvas.get(), ndim_truth, ndim_meas);
-        
-        // Draw main response matrix
-        setupResponseMatrix(h_response, title, setName, ndim_truth, ndim_meas);
-        
-        // Get canvas coordinates for additional axes
-        double x1 = h_response->GetXaxis()->GetXmin();
-        double x2 = h_response->GetXaxis()->GetXmax(); 
-        double y1 = h_response->GetYaxis()->GetXmin();
-        double y2 = h_response->GetYaxis()->GetXmax();
-        
-        // Draw additional axes for multi-dimensional cases
-        if (ndim_truth > 1 || ndim_meas > 1) {
-            drawAdditionalTruthAxes(truthVarNames, truthBinEdges, nBinsTruth, 
-                                  nGlobalBinsX, x1, x2, y1, y2);
-            drawAdditionalMeasuredAxes(measuredVarNames, measuredBinEdges, nBinsMeasured, 
-                                     nGlobalBinsY, x1, x2, y1, y2);
-        }
-        
-        // Save output to specified directory (handle path separator properly)
-        std::string outputPath = outputDir;
-        if (!outputPath.empty() && outputPath.back() != '/') outputPath += "/";
-        std::string outputName = outputPath + setName + "_response_matrix.png";
-        // canvas->SaveAs(outputName.c_str());
-        // Write canvas to output ROOT file if directory is provided
-        if (outDir) {
-            outDir->cd();
-            canvas->Write((setName+"_response_matrix_canvas").c_str());
-        }
-        // log(LOG_DEBUG, "Enhanced response matrix plot saved as: " + outputName);
+        AxisInfo xAxis(AxisType::Measured, measuredVarNames, measuredBinEdges);
+        AxisInfo yAxis(AxisType::Truth, truthVarNames, truthBinEdges);
+        plotGeneralizedMatrix(setName, h_response, xAxis, yAxis, title, outputDir, outDir);
+    }
+    
+    // Convenience function for covariance matrices (truth vs truth)
+    static void plotCovarianceMatrix(const std::string& setName,
+                                   TH2D* h_covariance,
+                                   const std::vector<std::string>& truthVarNames,
+                                   const std::vector<std::vector<double>>& truthBinEdges,
+                                   const std::string& title = "Covariance Matrix",
+                                   const std::string& outputDir = "./",
+                                   TDirectory* outDir = nullptr) {
+        AxisInfo xAxis(AxisType::Truth, truthVarNames, truthBinEdges);
+        AxisInfo yAxis(AxisType::Truth, truthVarNames, truthBinEdges);
+        plotGeneralizedMatrix(setName, h_covariance, xAxis, yAxis, title, outputDir, outDir);
+    }
+    
+    // Convenience function for probability matrices (truth vs measured)
+    static void plotProbabilityMatrix(const std::string& setName,
+                                    TH2D* h_probability,
+                                    const std::vector<std::string>& truthVarNames,
+                                    const std::vector<std::vector<double>>& truthBinEdges,
+                                    const std::vector<std::string>& measuredVarNames,
+                                    const std::vector<std::vector<double>>& measuredBinEdges,
+                                    const std::string& title = "Probability Matrix",
+                                    const std::string& outputDir = "./",
+                                    TDirectory* outDir = nullptr) {
+        AxisInfo xAxis(AxisType::Truth, truthVarNames, truthBinEdges);
+        AxisInfo yAxis(AxisType::Measured, measuredVarNames, measuredBinEdges);
+        plotGeneralizedMatrix(setName, h_probability, xAxis, yAxis, title, outputDir, outDir);
     }
 
 private:
@@ -89,21 +135,21 @@ private:
         int width, height;
     };
     
-    static CanvasSize calculateCanvasSize(int ndim_truth, int ndim_meas) {
+    static CanvasSize calculateCanvasSize(int ndim_x, int ndim_y) {
         CanvasSize size;
-        if (ndim_truth <= 1 && ndim_meas <= 1) {
+        if (ndim_x <= 1 && ndim_y <= 1) {
             size.width = 800;
             size.height = 600;
         } else {
-            size.width = 1200 + 400 * std::max(ndim_truth, ndim_meas);
-            size.height = 900 + 300 * std::max(ndim_truth, ndim_meas);
+            size.width = 1200 + 400 * std::max(ndim_x, ndim_y);
+            size.height = 900 + 300 * std::max(ndim_x, ndim_y);
         }
         return size;
     }
     
-    static void setupCanvasMargins(TCanvas* canvas, int ndim_truth, int ndim_meas) {
-        double bottomMargin = (ndim_truth <= 1) ? 0.15 : 0.08 + 0.06 * ndim_truth;
-        double leftMargin = (ndim_meas <= 1) ? 0.15 : 0.08 + 0.06 * ndim_meas;
+    static void setupCanvasMargins(TCanvas* canvas, int ndim_x, int ndim_y) {
+        double bottomMargin = (ndim_x <= 1) ? 0.15 : 0.08 + 0.06 * ndim_x;
+        double leftMargin = (ndim_y <= 1) ? 0.15 : 0.08 + 0.06 * ndim_y;
         
         canvas->SetBottomMargin(bottomMargin);
         canvas->SetLeftMargin(leftMargin);
@@ -111,74 +157,70 @@ private:
         canvas->SetTopMargin(0.1);
     }
     
-    static void setupResponseMatrix(TH2D* h_response, const std::string& title, 
-                                   const std::string& setName, int ndim_truth, int ndim_meas) {
+    static void setupMatrix(TH2D* h_matrix, const std::string& title, 
+                           const std::string& setName, const AxisInfo& xAxisInfo, const AxisInfo& yAxisInfo) {
         gStyle->SetPaintTextFormat("3.1f");
-        h_response->SetMarkerSize(0.6);
-        h_response->Draw("text_COLZ");
-        h_response->SetStats(0);
-        h_response->SetTitle((title + " for " + setName).c_str());
+        h_matrix->SetMarkerSize(0.6);
+        h_matrix->Draw("text_COLZ");
+        h_matrix->SetStats(0);
+        h_matrix->SetTitle((title + " for " + setName).c_str());
         
-        if (ndim_truth > 1 || ndim_meas > 1) {
-            h_response->GetXaxis()->SetTitle("");
-            h_response->GetYaxis()->SetTitle("");
-            h_response->GetXaxis()->SetLabelSize(0);
-            h_response->GetYaxis()->SetLabelSize(0);
+        if (xAxisInfo.varNames.size() > 1 || yAxisInfo.varNames.size() > 1) {
+            h_matrix->GetXaxis()->SetTitle("");
+            h_matrix->GetYaxis()->SetTitle("");
+            h_matrix->GetXaxis()->SetLabelSize(0);
+            h_matrix->GetYaxis()->SetLabelSize(0);
         } else {
-            h_response->GetXaxis()->SetTitle("Truth Bin Index");
-            h_response->GetYaxis()->SetTitle("Measured Bin Index");
+            // 1D case: use actual variable names for axis titles, fallback to type if empty
+            std::string xTitle = (!xAxisInfo.varNames.empty() && !xAxisInfo.varNames[0].empty())
+                ? xAxisInfo.varNames[0]
+                : (xAxisInfo.type == AxisType::Measured ? "Measured" : "Truth");
+            std::string yTitle = (!yAxisInfo.varNames.empty() && !yAxisInfo.varNames[0].empty())
+                ? yAxisInfo.varNames[0]
+                : (yAxisInfo.type == AxisType::Measured ? "Measured" : "Truth");
+            h_matrix->GetXaxis()->SetTitle(xTitle.c_str());
+            h_matrix->GetYaxis()->SetTitle(yTitle.c_str());
         }
     }
     
-    static void logDebugInfo(const std::string& setName, int ndim_truth, int ndim_meas,
-                           int nGlobalBinsX, int nGlobalBinsY,
-                           const std::vector<std::string>& truthVarNames,
-                           const std::vector<std::string>& measuredVarNames,
-                           const std::vector<int>& nBinsTruth,
-                           const std::vector<int>& nBinsMeasured) {
-        log(LOG_DEBUG, "======= Response Matrix Debug Info for Set: " + setName + " =======");
+    static void logDebugInfo(const std::string& setName, const AxisInfo& xAxisInfo, const AxisInfo& yAxisInfo,
+                           int nGlobalBinsX, int nGlobalBinsY) {
+        log(LOG_DEBUG, "======= Matrix Debug Info for Set: " + setName + " =======");
         
-        std::string truthVarsStr = "Truth dimensions (" + std::to_string(ndim_truth) + "): ";
-        for (int i = 0; i < ndim_truth; ++i) {
-            truthVarsStr += truthVarNames[i] + (i < ndim_truth-1 ? ", " : "");
-        }
-        log(LOG_DEBUG, truthVarsStr);
+        std::string xAxisTypeStr = (xAxisInfo.type == AxisType::Measured) ? "Measured" : "Truth";
+        std::string yAxisTypeStr = (yAxisInfo.type == AxisType::Measured) ? "Measured" : "Truth";
         
-        std::string measVarsStr = "Measured dimensions (" + std::to_string(ndim_meas) + "): ";
-        for (int i = 0; i < ndim_meas; ++i) {
-            measVarsStr += measuredVarNames[i] + (i < ndim_meas-1 ? ", " : "");
+        std::string xVarsStr = "X-axis (" + xAxisTypeStr + ", " + std::to_string(xAxisInfo.varNames.size()) + "D): ";
+        for (size_t i = 0; i < xAxisInfo.varNames.size(); ++i) {
+            xVarsStr += xAxisInfo.varNames[i] + (i < xAxisInfo.varNames.size()-1 ? ", " : "");
         }
-        log(LOG_DEBUG, measVarsStr);
+        log(LOG_DEBUG, xVarsStr);
+        
+        std::string yVarsStr = "Y-axis (" + yAxisTypeStr + ", " + std::to_string(yAxisInfo.varNames.size()) + "D): ";
+        for (size_t i = 0; i < yAxisInfo.varNames.size(); ++i) {
+            yVarsStr += yAxisInfo.varNames[i] + (i < yAxisInfo.varNames.size()-1 ? ", " : "");
+        }
+        log(LOG_DEBUG, yVarsStr);
         
         log(LOG_DEBUG, "Global bins: X=" + std::to_string(nGlobalBinsX) + ", Y=" + std::to_string(nGlobalBinsY));
         log(LOG_DEBUG, "==================================================");
     }
     
-    static void drawAdditionalTruthAxes(const std::vector<std::string>& truthVarNames,
-                                       const std::vector<std::vector<double>>& truthBinEdges,
-                                       const std::vector<int>& nBinsTruth,
-                                       int nGlobalBinsX, double x1, double x2, double y1, double y2) {
-        double axisYOffset = 0.1;
-        for (int dim = 0; dim < truthVarNames.size(); ++dim) {
-            DimensionCycleInfo cycleInfo = calculateCycleInfo(dim, nBinsTruth);
-            double axisY = y1 - axisYOffset * (y2-y1) * (dim+1);
+    static void drawAdditionalAxes(const AxisInfo& axisInfo, int nGlobalBins,
+                                 double x1, double x2, double y1, double y2, bool isHorizontal) {
+        double axisOffset = 0.1;
+        for (size_t dim = 0; dim < axisInfo.varNames.size(); ++dim) {
+            DimensionCycleInfo cycleInfo = calculateCycleInfo(dim, axisInfo.nBins);
             
-            drawDimensionCycles(cycleInfo, truthBinEdges[dim], truthVarNames[dim],
-                              axisY, x1, x2, y1, y2, nGlobalBinsX, true);
-        }
-    }
-    
-    static void drawAdditionalMeasuredAxes(const std::vector<std::string>& measuredVarNames,
-                                         const std::vector<std::vector<double>>& measuredBinEdges,
-                                         const std::vector<int>& nBinsMeasured,
-                                         int nGlobalBinsY, double x1, double x2, double y1, double y2) {
-        double axisXOffset = 0.1;
-        for (int dim = 0; dim < measuredVarNames.size(); ++dim) {
-            DimensionCycleInfo cycleInfo = calculateCycleInfo(dim, nBinsMeasured);
-            double axisX = x1 - axisXOffset * (x2-x1) * (dim+1);
+            double axisPos;
+            if (isHorizontal) {
+                axisPos = y1 - axisOffset * (y2-y1) * (dim+1);
+            } else {
+                axisPos = x1 - axisOffset * (x2-x1) * (dim+1);
+            }
             
-            drawDimensionCycles(cycleInfo, measuredBinEdges[dim], measuredVarNames[dim],
-                              axisX, x1, x2, y1, y2, nGlobalBinsY, false);
+            drawDimensionCycles(cycleInfo, axisInfo.binEdges[dim], axisInfo.varNames[dim],
+                              axisPos, x1, x2, y1, y2, nGlobalBins, isHorizontal);
         }
     }
     

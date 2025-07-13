@@ -167,18 +167,6 @@ void RooUnfoldOptimized(const char* configFile = "../configs/UnfoldJetSub_xj_tes
                     unfolder.performUnfolding();
                     log(LOG_TRACE, "Calling saveResults");
                     unfolder.saveResults(testDir, testLabel, details, effHist, covMatrix);
-                    // Draw and store the response matrix canvas in the output ROOT file
-                    ResponseMatrixPlotter::plotGeneralizedResponseMatrix(
-                        setName,
-                        unfolder.getHistograms().getResponse(),
-                        cfg.measuredVars,
-                        cfg.measuredBins,
-                        cfg.truthVars,
-                        cfg.truthBins,
-                        "Response Matrix",
-                        outputDir, // for PNG output
-                        testDir    // for ROOT file output
-                    );
                     log(LOG_DEBUG, "Finished saveResults");
                     // Prevent use-after-free: null pointers after use
                     dataTree = nullptr;
@@ -222,8 +210,13 @@ void RooUnfoldOptimized(const char* configFile = "../configs/UnfoldJetSub_xj_tes
                     log(LOG_DEBUG, "MC tree entries: " + std::to_string(mcTree->GetEntries()));
                     Long64_t nEntries = mcTree->GetEntries();
                     log(LOG_TRACE, "Cloning trees for split test");
+                    
+                    // Clone trees in memory, not in the output file!
                     auto* pseudoDataTree = mcTree->CloneTree(0);
+                    pseudoDataTree->SetDirectory(0);
                     auto* responseTree = mcTree->CloneTree(0);
+                    responseTree->SetDirectory(0);
+                    
                     std::mt19937 rng(42);
                     std::uniform_real_distribution<> dist(0.0, 1.0);
                     for (Long64_t i = 0; i < nEntries; ++i) {
@@ -243,6 +236,11 @@ void RooUnfoldOptimized(const char* configFile = "../configs/UnfoldJetSub_xj_tes
                     log(LOG_TRACE, "Calling saveResults");
                     unfolder.saveResults(testDir, testLabel, details, effHist, covMatrix);
                     log(LOG_DEBUG, "Finished saveResults");
+                    
+                    // Clean up: Just delete the trees (not associated with output file)
+                    delete pseudoDataTree;
+                    delete responseTree;
+                    
                     mcTree = nullptr;
                     pseudoDataTree = nullptr;
                     responseTree = nullptr;
