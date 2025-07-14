@@ -140,7 +140,44 @@ void RooUnfoldOptimized(const char* configFile = "../configs/UnfoldJetSub_xj_tes
                 log(LOG_DEBUG, "Created/entered directory: " + std::string(testDir->GetPath()));
                 OptimizedUnfolder unfolder(cfg);
                 log(LOG_DEBUG, "Instantiated OptimizedUnfolder for test: " + testLabel);
-                if (test == UnfoldTestType::Nominal) {
+                
+                // For Bottomline test, ensure bottomline test is enabled regardless of config
+                if (test == UnfoldTestType::Bottomline) {
+                    double pValueThreshold = std::stod(parser.getConfigValue("default.BottomlinePValueThreshold", "0.95"));
+                    unfolder.enableBottomlineTest(true, pValueThreshold);
+                    
+                    log(LOG_DEBUG, "Opening data file: " + cfg.dataFile);
+                    TFile dataFile(cfg.dataFile.c_str());
+                    log(LOG_DEBUG, "Opening MC file: " + cfg.mcFile);
+                    TFile mcFile(cfg.mcFile.c_str());
+                    std::string treeName = parser.getConfigValue("default.TreeName", "gammaJetTree");
+                    log(LOG_DEBUG, "Getting data tree: " + treeName);
+                    TTree* dataTree = (TTree*)dataFile.Get(treeName.c_str());
+                    log(LOG_DEBUG, "Getting MC tree: " + treeName);
+                    TTree* mcTree = (TTree*)mcFile.Get(treeName.c_str());
+                    if (!dataTree || !mcTree) {
+                        log(LOG_ERROR, "Could not find TTree '" + treeName + "' in data or MC file for set " + setName);
+                        continue;
+                    }
+                    log(LOG_DEBUG, "Data tree entries: " + std::to_string(dataTree->GetEntries()));
+                    log(LOG_DEBUG, "MC tree entries: " + std::to_string(mcTree->GetEntries()));
+                    log(LOG_DEBUG, "Calling fillFromTrees");
+                    unfolder.fillFromTrees(dataTree, mcTree);
+                    log(LOG_DEBUG, "Calling performUnfolding (with bottomline test enabled)");
+                    unfolder.performUnfolding();
+                    std::string details;
+                    TH1D* effHist = nullptr;
+                    TMatrixD* covMatrix = nullptr;
+                    log(LOG_TRACE, "Calling checkUnfoldability");
+                    checkUnfoldability(unfolder.getHistograms(), cfg, details, effHist, covMatrix, testDir);
+                    log(LOG_TRACE, "Calling saveResults");
+                    unfolder.saveResults(testDir, testLabel, details, effHist, covMatrix);
+                    log(LOG_DEBUG, "Finished saveResults");
+                    dataTree = nullptr;
+                    mcTree = nullptr;
+                    // dataFile and mcFile will go out of scope and close here
+                
+                } else if (test == UnfoldTestType::Nominal) {
                     log(LOG_DEBUG, "Opening data file: " + cfg.dataFile);
                     TFile dataFile(cfg.dataFile.c_str());
                     log(LOG_DEBUG, "Opening MC file: " + cfg.mcFile);
@@ -245,37 +282,6 @@ void RooUnfoldOptimized(const char* configFile = "../configs/UnfoldJetSub_xj_tes
                     pseudoDataTree = nullptr;
                     responseTree = nullptr;
                     // mcFile will go out of scope and close here
-                } else if (test == UnfoldTestType::Bottomline) {
-                    log(LOG_DEBUG, "Opening data file: " + cfg.dataFile);
-                    TFile dataFile(cfg.dataFile.c_str());
-                    log(LOG_DEBUG, "Opening MC file: " + cfg.mcFile);
-                    TFile mcFile(cfg.mcFile.c_str());
-                    std::string treeName = parser.getConfigValue("default.TreeName", "gammaJetTree");
-                    log(LOG_DEBUG, "Getting data tree: " + treeName);
-                    TTree* dataTree = (TTree*)dataFile.Get(treeName.c_str());
-                    log(LOG_DEBUG, "Getting MC tree: " + treeName);
-                    TTree* mcTree = (TTree*)mcFile.Get(treeName.c_str());
-                    if (!dataTree || !mcTree) {
-                        log(LOG_ERROR, "Could not find TTree '" + treeName + "' in data or MC file for set " + setName);
-                        continue;
-                    }
-                    log(LOG_DEBUG, "Data tree entries: " + std::to_string(dataTree->GetEntries()));
-                    log(LOG_DEBUG, "MC tree entries: " + std::to_string(mcTree->GetEntries()));
-                    log(LOG_DEBUG, "Calling fillFromTrees");
-                    unfolder.fillFromTrees(dataTree, mcTree);
-                    log(LOG_DEBUG, "Calling performUnfolding");
-                    unfolder.performUnfolding();
-                    std::string details;
-                    TH1D* effHist = nullptr;
-                    TMatrixD* covMatrix = nullptr;
-                    log(LOG_TRACE, "Calling checkUnfoldability");
-                    checkUnfoldability(unfolder.getHistograms(), cfg, details, effHist, covMatrix, testDir);
-                    log(LOG_TRACE, "Calling saveResults");
-                    unfolder.saveResults(testDir, testLabel, details, effHist, covMatrix);
-                    log(LOG_DEBUG, "Finished saveResults");
-                    dataTree = nullptr;
-                    mcTree = nullptr;
-                    // dataFile and mcFile will go out of scope and close here
                 } else {
                     log(LOG_WARNING, "Unknown test type encountered for " + setName);
                 }

@@ -15,6 +15,17 @@
 #include <RooUnfoldSvd.h>
 #include <RooUnfoldBinByBin.h>
 #include <RooUnfoldInvert.h>
+#include <TMath.h>
+#include <TCanvas.h>
+#include <TGraph.h>
+#include <TLegend.h>
+#include <TLine.h>
+#include <TLatex.h>
+#include <TVectorD.h>
+#include <TObjString.h>
+#include <numeric>
+#include <algorithm>
+#include <iomanip>
 
 // ============================================================================
 // STREAMLINED UNFOLDER CLASS
@@ -27,21 +38,47 @@ private:
     std::unique_ptr<RooUnfoldResponse> response;
     std::unique_ptr<RooUnfold> unfoldAlgorithm;
     std::unique_ptr<TH1> unfoldedHist;
-    std::unique_ptr<TMatrixD> covMatrix; // Store covariance matrix after unfolding
+    std::unique_ptr<TMatrixD> covMatrix; // Unfolded covariance matrix (Ereco)
+    std::unique_ptr<TMatrixD> measuredCovMatrix; // Measured covariance matrix (GetMeasuredCov)
     std::unique_ptr<TMatrixD> probMatrix; // Store probability matrix from response
     std::unique_ptr<TH1> purityHist; // Store purity histogram after unfolding
     std::unique_ptr<TH1> efficiencyHist; // Store efficiency histogram after unfolding
     std::unique_ptr<TH1> purityCorrectedDataHist; // Store purity-corrected data histogram
     std::string unfoldingLog; // Store captured RooUnfold output
     
+    // Storage for Bayesian iterations
+    std::vector<std::unique_ptr<TH1>> bayesianIterations; // Store all iterations for Bayes method
+    int maxIterations; // Maximum number of iterations to store
+    
     // Numerator/denominator histograms for purity and efficiency (template logic)
     std::unique_ptr<TH1> purityNum, purityDen, effNum, effDen;
     std::unique_ptr<TH2> probabilityMatrixHist2D; // For saving the probability matrix as TH2D
+    
+    // Bottomline test results storage
+    struct BottomlineResults {
+        double chi2Smeared = -1.0;
+        double pValueSmeared = -1.0;
+        int ndfSmeared = 0;
+        double chi2Unfolded = -1.0;
+        double pValueUnfolded = -1.0;
+        int ndfUnfolded = 0;
+        int optimalIteration = -1;
+        std::string summary = "";
+        std::unique_ptr<TH1> forwardFoldedModel = nullptr;
+        
+        // Per-iteration results for Bayesian unfolding
+        std::vector<double> chi2SmearedPerIteration;
+        std::vector<double> pValueSmearedPerIteration;
+        std::vector<double> chi2UnfoldedPerIteration;
+        std::vector<double> pValueUnfoldedPerIteration;
+    } bottomlineResults;
 
 public:
-    OptimizedUnfolder(const UnfoldConfig& cfg) : config(cfg), histManager(cfg) {
+    OptimizedUnfolder(const UnfoldConfig& cfg) : config(cfg), histManager(cfg), maxIterations(cfg.maxIterationsToStore) {
         log(LOG_DEBUG, "Created unfolder for " + std::to_string(cfg.dimension) + "D case");
+        log(LOG_DEBUG, "Will store up to " + std::to_string(maxIterations) + " Bayesian iterations");
         initializePurityEfficiencyHistograms();
+        bayesianIterations.clear(); // Initialize empty
     }
     
     void fillFromTrees(TTree* dataTree, TTree* mcTree) {
@@ -108,7 +145,49 @@ public:
         
         // Choose unfolding algorithm (use purity-corrected data)
         if (config.method == "Bayes") {
+            // For Bayesian unfolding, we need to run multiple iterations and store each one
+            bayesianIterations.clear();
+            
+            // Create RooUnfoldBayes with final iteration count
             unfoldAlgorithm = std::make_unique<RooUnfoldBayes>(response.get(), h_data_purity_corrected, config.iterations);
+            
+            // Store iterations from 1 to maxIterations or config.iterations, whichever is smaller
+            int iterationsToStore = std::min(maxIterations, config.iterations);
+            
+            for (int iter = 1; iter <= iterationsToStore; ++iter) {
+                // Create a temporary unfolder for this iteration
+                RooUnfoldBayes tempBayes(response.get(), h_data_purity_corrected, iter);
+                TH1* h_iter = tempBayes.Hreco();
+                if (h_iter) {
+                    if (config.dimension > 1) {
+                        // Convert to multi-dimensional first
+                        auto* flattened = dynamic_cast<TH1D*>(h_iter);
+                        if (flattened) {
+                            auto unfoldedMultiDim = convertFlattenedToMultiDim(flattened, ("h_unfolded_iter" + std::to_string(iter)).c_str(), false);
+                            if (efficiencyHist.get()) {
+                                unfoldedMultiDim->Divide(efficiencyHist.get());
+                            }
+                            bayesianIterations.push_back(std::move(unfoldedMultiDim));
+                        } else {
+                            log(LOG_ERROR, "Expected TH1D for multi-dimensional unfolded result at iteration " + std::to_string(iter));
+                            bayesianIterations.emplace_back((TH1*)h_iter->Clone(("h_unfolded_iter" + std::to_string(iter)).c_str()));
+                        }
+                    } else {
+                        // 1D case: apply efficiency correction directly
+                        TH1* h_eff_corr = nullptr;
+                        if (efficiencyHist.get()) {
+                            h_eff_corr = (TH1*)h_iter->Clone(("h_unfolded_iter" + std::to_string(iter) + "_effcorr").c_str());
+                            h_eff_corr->SetDirectory(0);
+                            h_eff_corr->Divide(efficiencyHist.get());
+                        } else {
+                            h_eff_corr = (TH1*)h_iter->Clone(("h_unfolded_iter" + std::to_string(iter)).c_str());
+                            h_eff_corr->SetDirectory(0);
+                        }
+                        bayesianIterations.emplace_back(h_eff_corr);
+                    }
+                    log(LOG_DEBUG, "Stored Bayesian iteration (efficiency corrected) " + std::to_string(iter));
+                }
+            }
         } else if (config.method == "SVD") {
             unfoldAlgorithm = std::make_unique<RooUnfoldSvd>(response.get(), h_data_purity_corrected, config.iterations);
         } else if (config.method == "BinByBin") {
@@ -128,7 +207,7 @@ public:
                     // RooUnfold always returns TH1D for flattened results
                     auto* flattened = dynamic_cast<TH1D*>(cloned);
                     if (flattened) {
-                        unfoldedHist = convertFlattenedToMultiDim(flattened, "h_unfolded_" + config.method);
+                        unfoldedHist = convertFlattenedToMultiDim(flattened, "h_unfolded_" + config.method, false);
                         delete cloned; // Clean up the flattened version
                     } else {
                         log(LOG_ERROR, "Expected TH1D for multi-dimensional unfolded result");
@@ -145,8 +224,8 @@ public:
         // Store the purity-corrected data histogram for later saving
         if (h_data_purity_corrected) {
             if (config.dimension > 1) {
-                // Convert flattened back to multi-dimensional for storage
-                purityCorrectedDataHist = convertFlattenedToMultiDim(h_data_purity_corrected, "h_data_purity_corrected");
+                // Convert flattened back to multi-dimensional for storage using measured binning
+                purityCorrectedDataHist = convertFlattenedToMultiDim(h_data_purity_corrected, "h_data_purity_corrected", true);
                 delete h_data_purity_corrected;
             } else {
                 purityCorrectedDataHist.reset((TH1*)h_data_purity_corrected->Clone("h_data_purity_corrected"));
@@ -155,13 +234,20 @@ public:
             }
         }
         
-        // Get covariance matrix from unfolding algorithm
+        // Get covariance matrices from unfolding algorithm
         if (unfoldAlgorithm) {
+            // Unfolded covariance matrix (truth space)
             const TMatrixD& cov = unfoldAlgorithm->Ereco();
             covMatrix = std::make_unique<TMatrixD>(cov);
+            // Measured covariance matrix (measured space)
+            const TMatrixD& measuredCov = unfoldAlgorithm->GetMeasuredCov();
+            measuredCovMatrix = std::make_unique<TMatrixD>(measuredCov);
         }
         
         log(LOG_INFO, "Unfolding with " + config.method + " method completed");
+        
+        // Perform bottomline test if enabled
+        performBottomlineTest();
     }
     
     void saveResults(TDirectory* testDir, const std::string& testLabel, const std::string& details, TH1D* effHist, TMatrixD* externalCovMatrix) {
@@ -316,6 +402,52 @@ public:
         TObjString checkInfo(details.c_str());
         checkInfo.Write(("unfoldability_check_" + testLabel).c_str());
         log(LOG_DEBUG, "Wrote unfoldability_check_" + testLabel + " to " + testDir->GetPath());
+        
+        // Save Bayesian iterations if available (for all tests)
+        if (!bayesianIterations.empty() && config.method == "Bayes") {
+            saveBayesianIterations(testDir, testLabel);
+        }
+        
+        // Save bottomline test results if available
+        saveBottomlineResults(testDir, testLabel);
+    }
+    
+    void saveBayesianIterations(TDirectory* testDir, const std::string& testLabel) {
+        // Create subdirectory for Bayesian iterations
+        TDirectory* iterDir = testDir->GetDirectory("BayesianIterations");
+        if (!iterDir) iterDir = testDir->mkdir("BayesianIterations");
+        iterDir->cd();
+        
+        log(LOG_INFO, "Saving " + std::to_string(bayesianIterations.size()) + " Bayesian iterations");
+        
+        for (size_t i = 0; i < bayesianIterations.size(); ++i) {
+            if (bayesianIterations[i]) {
+                int iterNumber = i + 1; // iterations start from 1
+                std::string iterName = "h_unfolded_iter" + std::to_string(iterNumber);
+                
+                auto* clone = (TH1*)bayesianIterations[i]->Clone(iterName.c_str());
+                clone->SetDirectory(iterDir);
+                clone->SetTitle(("Unfolded Distribution - Iteration " + std::to_string(iterNumber)).c_str());
+                clone->Write();
+                delete clone;
+                
+                log(LOG_DEBUG, "Wrote " + iterName + " to BayesianIterations subdirectory");
+            }
+        }
+        
+        // Return to parent directory
+        testDir->cd();
+    }
+    
+    // Bottomline test methods
+    void performBottomlineTest();
+    void saveBottomlineResults(TDirectory* testDir, const std::string& testLabel);
+    const BottomlineResults& getBottomlineResults() const { return bottomlineResults; }
+    void enableBottomlineTest(bool enable = true, double pValueThreshold = 0.95) {
+        config.enableBottomlineTest = enable;
+        config.pValueThreshold = pValueThreshold;
+        log(LOG_DEBUG, "Bottomline test " + std::string(enable ? "enabled" : "disabled") + 
+            " with p-value threshold: " + std::to_string(pValueThreshold));
     }
     
     HistogramManager& getHistograms() { return histManager; }
@@ -590,17 +722,23 @@ private:
         return flattened;
     }
     
-    std::unique_ptr<TH1> convertFlattenedToMultiDim(TH1D* flattened, const std::string& name) {
+    std::unique_ptr<TH1> convertFlattenedToMultiDim(TH1D* flattened, const std::string& name, bool useMeasuredBinning = false) {
         if (config.dimension == 2) {
-            // Create 2D histogram with truth binning
-            auto hist2D = std::make_unique<TH2D>(name.c_str(), "Unfolded 2D Histogram",
-                                               config.truthBins[0].size()-1, config.truthBins[0].data(),
-                                               config.truthBins[1].size()-1, config.truthBins[1].data());
+            // Choose binning based on parameter
+            const auto& binning0 = useMeasuredBinning ? config.measuredBins[0] : config.truthBins[0];
+            const auto& binning1 = useMeasuredBinning ? config.measuredBins[1] : config.truthBins[1];
+            
+            // Create 2D histogram with selected binning
+            std::string title = (useMeasuredBinning ? "Measured" : "Unfolded") + std::string(" 2D Histogram");
+            auto hist2D = std::make_unique<TH2D>(name.c_str(), title.c_str(),
+                                               binning0.size()-1, binning0.data(),
+                                               binning1.size()-1, binning1.data());
             hist2D->SetDirectory(0);
             
             std::vector<int> nBins = {hist2D->GetNbinsX(), hist2D->GetNbinsY()};
             log(LOG_DEBUG, "convertFlattenedToMultiDim: " + name + " - 1D -> 2D (" + 
-                std::to_string(nBins[0]) + "x" + std::to_string(nBins[1]) + ")");
+                std::to_string(nBins[0]) + "x" + std::to_string(nBins[1]) + ") using " + 
+                (useMeasuredBinning ? "measured" : "truth") + " binning");
             
             // Validate flattening consistency
             if (!validateFlattening(nBins)) {
@@ -630,16 +768,23 @@ private:
             return std::move(hist2D);
             
         } else if (config.dimension == 3) {
-            // Create 3D histogram with truth binning
-            auto hist3D = std::make_unique<TH3D>(name.c_str(), "Unfolded 3D Histogram",
-                                               config.truthBins[0].size()-1, config.truthBins[0].data(),
-                                               config.truthBins[1].size()-1, config.truthBins[1].data(),
-                                               config.truthBins[2].size()-1, config.truthBins[2].data());
+            // Choose binning based on parameter
+            const auto& binning0 = useMeasuredBinning ? config.measuredBins[0] : config.truthBins[0];
+            const auto& binning1 = useMeasuredBinning ? config.measuredBins[1] : config.truthBins[1];
+            const auto& binning2 = useMeasuredBinning ? config.measuredBins[2] : config.truthBins[2];
+            
+            // Create 3D histogram with selected binning
+            std::string title = (useMeasuredBinning ? "Measured" : "Unfolded") + std::string(" 3D Histogram");
+            auto hist3D = std::make_unique<TH3D>(name.c_str(), title.c_str(),
+                                               binning0.size()-1, binning0.data(),
+                                               binning1.size()-1, binning1.data(),
+                                               binning2.size()-1, binning2.data());
             hist3D->SetDirectory(0);
             
             std::vector<int> nBins = {hist3D->GetNbinsX(), hist3D->GetNbinsY(), hist3D->GetNbinsZ()};
             log(LOG_DEBUG, "convertFlattenedToMultiDim: " + name + " - 1D -> 3D (" + 
-                std::to_string(nBins[0]) + "x" + std::to_string(nBins[1]) + "x" + std::to_string(nBins[2]) + ")");
+                std::to_string(nBins[0]) + "x" + std::to_string(nBins[1]) + "x" + std::to_string(nBins[2]) + ") using " + 
+                (useMeasuredBinning ? "measured" : "truth") + " binning");
             
             // Validate flattening consistency
             if (!validateFlattening(nBins)) {
@@ -779,14 +924,17 @@ private:
         // Create a test histogram with known pattern
         std::unique_ptr<TH1> testHist;
         if (config.dimension == 2) {
+            // Create test histogram with EXACT same binning as measured data
             testHist = std::make_unique<TH2D>("test", "Test", 
-                nBinsMeas[0], 0, nBinsMeas[0], nBinsMeas[1], 0, nBinsMeas[1]);
+                config.measuredBins[0].size()-1, config.measuredBins[0].data(),
+                config.measuredBins[1].size()-1, config.measuredBins[1].data());
             TH2D* h2 = (TH2D*)testHist.get();
             
-            // Fill with a pattern: bin content = flat index
+            // Fill with pattern where bin content = flattenIndices result
+            // This tests if flattenIndices returns the correct flat index for each (i,j) position
             for (int i = 1; i <= nBinsMeas[0]; ++i) {
                 for (int j = 1; j <= nBinsMeas[1]; ++j) {
-                    std::vector<int> indices = {i-1, j-1};
+                    std::vector<int> indices = {i-1, j-1}; // Convert to 0-based for flattenIndices
                     int expectedValue = flattenIndices(indices, nBinsMeas);
                     h2->SetBinContent(i, j, expectedValue);
                 }
@@ -796,7 +944,37 @@ private:
         if (testHist) {
             // Test conversion: ND -> 1D -> ND
             auto flattened = std::unique_ptr<TH1D>(createFlattenedHistogram(testHist.get(), "test_flat"));
-            auto recovered = convertFlattenedToMultiDim(flattened.get(), "test_recovered");
+            // CRITICAL FIX: Use measured binning to match the test histogram binning
+            auto recovered = convertFlattenedToMultiDim(flattened.get(), "test_recovered", true);
+            
+            // Debug: Print dimensions and first few values
+            if (config.dimension == 2) {
+                TH2D* orig = (TH2D*)testHist.get();
+                TH2D* rec = (TH2D*)recovered.get();
+                
+                log(LOG_DEBUG, "Original dimensions: " + std::to_string(orig->GetNbinsX()) + "x" + std::to_string(orig->GetNbinsY()));
+                log(LOG_DEBUG, "Recovered dimensions: " + std::to_string(rec->GetNbinsX()) + "x" + std::to_string(rec->GetNbinsY()));
+                log(LOG_DEBUG, "Flattened bins: " + std::to_string(flattened->GetNbinsX()));
+                log(LOG_DEBUG, "nBinsMeas: [" + std::to_string(nBinsMeas[0]) + "," + std::to_string(nBinsMeas[1]) + "]");
+                
+                // Debug first few bins
+                for (int i = 1; i <= std::min(3, nBinsMeas[0]); ++i) {
+                    for (int j = 1; j <= std::min(2, nBinsMeas[1]); ++j) {
+                        std::vector<int> indices = {i-1, j-1};
+                        int expectedFlat = flattenIndices(indices, nBinsMeas);
+                        double origValue = orig->GetBinContent(i, j);
+                        double flatValue = flattened->GetBinContent(expectedFlat + 1); // +1 for ROOT indexing
+                        double recValue = rec->GetBinContent(i, j);
+                        
+                        log(LOG_DEBUG, "Bin (" + std::to_string(i) + "," + std::to_string(j) + 
+                            "): indices=" + std::to_string(indices[0]) + "," + std::to_string(indices[1]) +
+                            ", expectedFlat=" + std::to_string(expectedFlat) + 
+                            ", orig=" + std::to_string(origValue) + 
+                            ", flat[" + std::to_string(expectedFlat+1) + "]=" + std::to_string(flatValue) +
+                            ", recovered=" + std::to_string(recValue));
+                    }
+                }
+            }
             
             // Compare original and recovered
             bool conversionValid = true;
@@ -826,6 +1004,562 @@ private:
         
         log(LOG_INFO, "=== FLATTENING VALIDATION COMPLETE ===");
     }
+    
+    // Bottomline test helper methods
+    void scanBayesianIterations();
+    void saveBottomlineIterationPlots(TDirectory* testDir, const std::string& testLabel);
 };
+
+// ============================================================================
+// BOTTOMLINE TEST INLINE IMPLEMENTATIONS
+// ============================================================================
+
+void OptimizedUnfolder::performBottomlineTest() {
+    if (!config.enableBottomlineTest) return;
+    if (!histManager.getData() || !histManager.getTruthMC() || !response) return;
+    
+    log(LOG_INFO, "=== PERFORMING BOTTOMLINE TEST ===");
+    bottomlineResults = BottomlineResults();
+    
+    // Get and flatten histograms if needed
+    TH1* dataHist = histManager.getData();
+    TH1* truthHist = histManager.getTruthMC();
+    std::unique_ptr<TH1D> dataFlat, truthFlat;
+    if (config.dimension > 1) {
+        dataFlat.reset(createFlattenedHistogram(dataHist, "data_flat_bottomline"));
+        truthFlat.reset(createFlattenedHistogram(truthHist, "truth_flat_bottomline"));
+        dataHist = dataFlat.get();
+        truthHist = truthFlat.get();
+    }
+    
+    // Normalize histograms using Scale("width")
+    std::unique_ptr<TH1> normData(static_cast<TH1*>(dataHist->Clone("dataNorm")));
+    std::unique_ptr<TH1> normTruth(static_cast<TH1*>(truthHist->Clone("truthNorm")));
+    normData->SetDirectory(0);
+    normTruth->SetDirectory(0);
+    
+    double dataIntegral = normData->Integral();
+    double truthIntegral = normTruth->Integral();
+    if (dataIntegral > 0) normData->Scale(1.0 / dataIntegral, "width");
+    if (truthIntegral > 0) normTruth->Scale(1.0 / truthIntegral, "width");
+    
+    // Forward fold normalized truth
+    std::unique_ptr<TH1> forwardFolded(response->ApplyToTruth(normTruth.get()));
+    if (!forwardFolded) {
+        log(LOG_ERROR, "Forward folding failed");
+        return;
+    }
+    forwardFolded->SetDirectory(0);
+    double ffIntegral = forwardFolded->Integral();
+    if (ffIntegral > 0) forwardFolded->Scale(1.0 / ffIntegral, "width");
+    
+    // Measured space chi2 - use measuredCovMatrix only
+    double chi2Smeared = 0.0;
+    int ndfSmeared = 0;
+    if (!measuredCovMatrix || measuredCovMatrix->GetNrows() != normData->GetNbinsX()) {
+        log(LOG_ERROR, "Measured covariance matrix missing or wrong size for measured space chi2 calculation. Aborting chi2 calculation.");
+        return;
+    }
+    log(LOG_DEBUG, "Using measured covariance matrix for measured space chi2 calculation");
+    // Create residual vector
+    std::vector<double> residuals(normData->GetNbinsX());
+    for (int i = 1; i <= normData->GetNbinsX(); ++i) {
+        residuals[i-1] = normData->GetBinContent(i) - forwardFolded->GetBinContent(i);
+    }
+    // Calculate chi2 using measured covariance matrix: chi2 = r^T * C^-1 * r
+    TMatrixD covInverse(*measuredCovMatrix);
+    if (covInverse.Determinant() == 0) {
+        log(LOG_ERROR, "Measured covariance matrix is singular for measured space chi2 calculation. Aborting chi2 calculation.");
+        return;
+    }
+    covInverse.Invert();
+    for (int i = 0; i < normData->GetNbinsX(); ++i) {
+        for (int j = 0; j < normData->GetNbinsX(); ++j) {
+            chi2Smeared += residuals[i] * covInverse[i][j] * residuals[j];
+        }
+    }
+    ndfSmeared = normData->GetNbinsX() - 1;
+    
+    // Store raw chi2 and reduced chi2
+    double rawChi2Smeared = chi2Smeared;
+    double reducedChi2Smeared = chi2Smeared / ndfSmeared;
+    
+    bottomlineResults.chi2Smeared = rawChi2Smeared;  // Store raw chi2 for consistency with reference
+    bottomlineResults.ndfSmeared = ndfSmeared;
+    bottomlineResults.pValueSmeared = TMath::Prob(rawChi2Smeared, ndfSmeared);
+    
+    log(LOG_INFO, "Measured space: χ² = " + std::to_string(rawChi2Smeared) + 
+        ", χ²/NDF = " + std::to_string(reducedChi2Smeared) +
+        ", NDF = " + std::to_string(ndfSmeared) + 
+        ", p-value = " + std::to_string(bottomlineResults.pValueSmeared));
+    
+    // Unfolded space chi2
+    if (unfoldedHist) {
+        TH1* unfoldedForComparison = unfoldedHist.get();
+        std::unique_ptr<TH1D> unfoldedFlat;
+        if (config.dimension > 1) {
+            unfoldedFlat.reset(createFlattenedHistogram(unfoldedForComparison, "unfolded_flat_bottomline"));
+            unfoldedForComparison = unfoldedFlat.get();
+        }
+        
+        std::unique_ptr<TH1> normUnfolded(static_cast<TH1*>(unfoldedForComparison->Clone("unfoldedNorm")));
+        normUnfolded->SetDirectory(0);
+        double unfoldedIntegral = normUnfolded->Integral();
+        if (unfoldedIntegral > 0) normUnfolded->Scale(1.0 / unfoldedIntegral, "width");
+        
+        // Ensure binning matches
+        int nBinsTruth = normTruth->GetNbinsX();
+        int nBinsUnfolded = normUnfolded->GetNbinsX();
+        if (nBinsTruth == nBinsUnfolded) {
+            double chi2Unfolded = 0.0;
+            int ndfUnfolded = 0;
+            
+            // Try to use full covariance matrix for unfolded space
+            if (covMatrix && covMatrix->GetNrows() == nBinsTruth) {
+                log(LOG_DEBUG, "Using full covariance matrix for unfolded space chi2 calculation");
+                
+                // Create residual vector for truth vs unfolded
+                std::vector<double> residuals(nBinsTruth);
+                for (int i = 1; i <= nBinsTruth; ++i) {
+                    residuals[i-1] = normTruth->GetBinContent(i) - normUnfolded->GetBinContent(i);
+                }
+                
+                // Calculate chi2 using full covariance matrix: chi2 = r^T * C^-1 * r
+                TMatrixD covInverse(*covMatrix);
+                if (covInverse.Determinant() != 0) {
+                    covInverse.Invert();
+                    
+                    for (int i = 0; i < nBinsTruth; ++i) {
+                        for (int j = 0; j < nBinsTruth; ++j) {
+                            chi2Unfolded += residuals[i] * covInverse[i][j] * residuals[j];
+                        }
+                    }
+                    ndfUnfolded = nBinsTruth - 1;
+                    
+                    log(LOG_DEBUG, "Full covariance matrix chi2 calculation completed");
+                } else {
+                    log(LOG_WARNING, "Covariance matrix is singular, falling back to diagonal approximation");
+                    // Fall back to diagonal method
+                    for (int i = 1; i <= nBinsTruth; ++i) {
+                        double truthVal = normTruth->GetBinContent(i);
+                        double unfoldedVal = normUnfolded->GetBinContent(i);
+                        double truthError = normTruth->GetBinError(i);
+                        double unfoldedError = normUnfolded->GetBinError(i);
+                        
+                        // CRITICAL: Use combined error from both distributions
+                        double combinedError = std::sqrt(truthError * truthError + unfoldedError * unfoldedError);
+                        
+                        // Check if combined error is too small and use a minimum error
+                        if (combinedError < 1e-10) {
+                            combinedError = std::max(1e-10, std::max(truthVal, unfoldedVal) * 0.01);
+                        }
+                        
+                        if (truthVal > 0 && combinedError > 0) {
+                            double residual = truthVal - unfoldedVal;
+                            chi2Unfolded += (residual * residual) / (combinedError * combinedError);
+                            ndfUnfolded++;
+                        }
+                    }
+                    ndfUnfolded = std::max(1, ndfUnfolded - 1);
+                }
+            } else {
+                log(LOG_DEBUG, "Using diagonal approximation for unfolded space chi2 calculation");
+                // Standard diagonal method with combined errors
+                for (int i = 1; i <= nBinsTruth; ++i) {
+                    double truthVal = normTruth->GetBinContent(i);
+                    double unfoldedVal = normUnfolded->GetBinContent(i);
+                    double truthError = normTruth->GetBinError(i);
+                    double unfoldedError = normUnfolded->GetBinError(i);
+                    
+                    // CRITICAL: Use combined error from both distributions
+                    double combinedError = std::sqrt(truthError * truthError + unfoldedError * unfoldedError);
+                    
+                    // Check if combined error is too small and use a minimum error
+                    if (combinedError < 1e-10) {
+                        combinedError = std::max(1e-10, std::max(truthVal, unfoldedVal) * 0.01);
+                    }
+                    
+                    if (truthVal > 0 && combinedError > 0) {
+                        double residual = truthVal - unfoldedVal;
+                        chi2Unfolded += (residual * residual) / (combinedError * combinedError);
+                        ndfUnfolded++;
+                    }
+                }
+                ndfUnfolded = std::max(1, ndfUnfolded - 1);
+            }
+            
+            // Store raw chi2 and reduced chi2
+            double rawChi2Unfolded = chi2Unfolded;
+            double reducedChi2Unfolded = chi2Unfolded / ndfUnfolded;
+            
+            bottomlineResults.chi2Unfolded = rawChi2Unfolded;  // Store raw chi2 for consistency with reference
+            bottomlineResults.ndfUnfolded = ndfUnfolded;
+            bottomlineResults.pValueUnfolded = TMath::Prob(rawChi2Unfolded, ndfUnfolded);
+            
+            log(LOG_INFO, "Unfolded space: χ² = " + std::to_string(rawChi2Unfolded) + 
+                ", χ²/NDF = " + std::to_string(reducedChi2Unfolded) +
+                ", NDF = " + std::to_string(ndfUnfolded) + 
+                ", p-value = " + std::to_string(bottomlineResults.pValueUnfolded));
+        }
+    }
+    
+    // Bayesian iteration scanning for optimal regularization
+    if (config.method == "Bayes" && !bayesianIterations.empty()) {
+        log(LOG_DEBUG, "Found " + std::to_string(bayesianIterations.size()) + " Bayesian iterations to scan");
+        scanBayesianIterations();
+    } else {
+        log(LOG_WARNING, "Bayesian iteration scanning skipped - method: " + config.method + 
+            ", iterations available: " + std::to_string(bayesianIterations.size()));
+    }
+    
+    // Format results
+    std::ostringstream oss;
+    oss << "=== BOTTOMLINE TEST RESULTS ===\n";
+    oss << "Measured Space (constant): Chi^2 = " << std::fixed << std::setprecision(5) << bottomlineResults.chi2Smeared;
+    oss << ", Chi^2/NDF = " << std::setprecision(5) << (bottomlineResults.chi2Smeared / bottomlineResults.ndfSmeared);
+    oss << ", NDF = " << bottomlineResults.ndfSmeared;
+    oss << ", p-value = " << std::setprecision(5) << bottomlineResults.pValueSmeared << "\n";
+
+    // Unfolded space for optimal iteration
+    if (config.method == "Bayes" && bottomlineResults.optimalIteration > 0 &&
+        bottomlineResults.optimalIteration <= (int)bottomlineResults.chi2UnfoldedPerIteration.size()) {
+        int opt = bottomlineResults.optimalIteration - 1;
+        oss << "Unfolded Space (optimal iteration): Chi^2 = " << std::setprecision(5) << bottomlineResults.chi2UnfoldedPerIteration[opt];
+        oss << ", Chi^2/NDF = " << std::setprecision(5) << (bottomlineResults.chi2UnfoldedPerIteration[opt] / (bottomlineResults.ndfUnfolded > 0 ? bottomlineResults.ndfUnfolded : 1));
+        oss << ", NDF = " << bottomlineResults.ndfUnfolded;
+        oss << ", p-value = " << std::setprecision(5) << bottomlineResults.pValueUnfoldedPerIteration[opt] << "\n";
+    } else if (bottomlineResults.chi2Unfolded >= 0) {
+        oss << "Unfolded Space: Chi^2 = " << std::setprecision(5) << bottomlineResults.chi2Unfolded;
+        oss << ", Chi^2/NDF = " << std::setprecision(5) << (bottomlineResults.chi2Unfolded / bottomlineResults.ndfUnfolded);
+        oss << ", NDF = " << bottomlineResults.ndfUnfolded;
+        oss << ", p-value = " << std::setprecision(5) << bottomlineResults.pValueUnfolded << "\n";
+    }
+
+    if (config.method == "Bayes" && bottomlineResults.optimalIteration > 0) {
+        oss << "Bayesian Optimization:\n";
+        oss << "  Optimal iteration: " << bottomlineResults.optimalIteration;
+        oss << " (p-value threshold: " << std::fixed << std::setprecision(2) << config.pValueThreshold << ")\n";
+        oss << "  Scanned " << bottomlineResults.pValueSmearedPerIteration.size() << " iterations\n";
+    }
+
+    bottomlineResults.summary = oss.str();
+    log(LOG_INFO, "=== BOTTOMLINE TEST COMPLETED ===");
+    log(LOG_INFO, bottomlineResults.summary);
+}
+
+void OptimizedUnfolder::scanBayesianIterations() {
+    log(LOG_INFO, "Scanning " + std::to_string(bayesianIterations.size()) + " Bayesian iterations");
+    
+    bottomlineResults.chi2SmearedPerIteration.clear();
+    bottomlineResults.pValueSmearedPerIteration.clear();
+    bottomlineResults.chi2UnfoldedPerIteration.clear();
+    bottomlineResults.pValueUnfoldedPerIteration.clear();
+    
+    TH1* dataHist = histManager.getData();
+    TH1* truthHist = histManager.getTruthMC();
+    
+    // Create flattened versions if needed
+    std::unique_ptr<TH1D> dataFlat, truthFlat;
+    if (config.dimension > 1) {
+        dataFlat.reset(createFlattenedHistogram(dataHist, "data_flat_iter_scan"));
+        truthFlat.reset(createFlattenedHistogram(truthHist, "truth_flat_iter_scan"));
+        dataHist = dataFlat.get();
+        truthHist = truthFlat.get();
+    }
+    
+    // Normalize truth histogram using Scale("width")
+    std::unique_ptr<TH1> normTruth(static_cast<TH1*>(truthHist->Clone("truthNormIter")));
+    normTruth->SetDirectory(0);
+    double truthIntegral = normTruth->Integral();
+    if (truthIntegral > 0) normTruth->Scale(1.0 / truthIntegral, "width");
+    
+    // Measured space chi2/p-value per iteration: always use the main result (constant)
+    double chi2SmearedConstant = bottomlineResults.chi2Smeared;
+    double pValueSmearedConstant = bottomlineResults.pValueSmeared;
+    
+    // Reset optimal iteration
+    bottomlineResults.optimalIteration = -1;
+    
+    for (size_t iter = 0; iter < bayesianIterations.size(); ++iter) {
+        int iterNumber = iter + 1;
+        log(LOG_DEBUG, "Processing iteration " + std::to_string(iterNumber) + " of " + std::to_string(bayesianIterations.size()));
+        
+        TH1* unfoldedIter = bayesianIterations[iter].get();
+        if (!unfoldedIter) {
+            log(LOG_WARNING, "Null histogram for iteration " + std::to_string(iterNumber));
+            continue;
+        }
+        
+        // Get unfolded histogram for this iteration (flatten if needed)
+        TH1* unfoldedForComparison = unfoldedIter;
+        std::unique_ptr<TH1D> unfoldedFlat;
+        if (config.dimension > 1) {
+            unfoldedFlat.reset(createFlattenedHistogram(unfoldedForComparison, "unfolded_flat_iter" + std::to_string(iterNumber)));
+            unfoldedForComparison = unfoldedFlat.get();
+        }
+        
+        // Normalize unfolded histogram
+        std::unique_ptr<TH1> normUnfolded(static_cast<TH1*>(unfoldedForComparison->Clone("unfoldedNormIter")));
+        normUnfolded->SetDirectory(0);
+        double unfoldedIntegral = normUnfolded->Integral();
+        if (unfoldedIntegral > 0) normUnfolded->Scale(1.0 / unfoldedIntegral, "width");
+        
+        // Measured space is constant (from measuredCovMatrix)
+        bottomlineResults.chi2SmearedPerIteration.push_back(chi2SmearedConstant);
+        bottomlineResults.pValueSmearedPerIteration.push_back(pValueSmearedConstant);
+        
+        // Calculate chi2 and p-value in unfolded space (varies per iteration)
+        int nBinsTruth = normTruth->GetNbinsX();
+        int nBinsUnfolded = normUnfolded->GetNbinsX();
+        
+        if (nBinsTruth == nBinsUnfolded) {
+            double chi2Unfolded = 0.0;
+            int ndfUnfolded = 0;
+            
+            // Debug: Print first few bins for diagnosis
+            if (iterNumber <= 3) {  // Only for first few iterations to avoid spam
+                log(LOG_DEBUG, "Unfolded space diagnosis for iteration " + std::to_string(iterNumber) + ":");
+                log(LOG_DEBUG, "  Truth integral: " + std::to_string(normTruth->Integral()));
+                log(LOG_DEBUG, "  Unfolded integral: " + std::to_string(normUnfolded->Integral()));
+                
+                for (int i = 1; i <= std::min(5, nBinsTruth); ++i) {
+                    double truthVal = normTruth->GetBinContent(i);
+                    double unfoldedVal = normUnfolded->GetBinContent(i);
+                    double truthError = normTruth->GetBinError(i);
+                    double unfoldedError = normUnfolded->GetBinError(i);
+                    double combinedError = std::sqrt(truthError * truthError + unfoldedError * unfoldedError);
+                    
+                    log(LOG_DEBUG, "  Bin " + std::to_string(i) + ": truth=" + std::to_string(truthVal) + 
+                        ", unfolded=" + std::to_string(unfoldedVal) + 
+                        ", truthErr=" + std::to_string(truthError) + 
+                        ", unfoldedErr=" + std::to_string(unfoldedError) + 
+                        ", combinedErr=" + std::to_string(combinedError) + 
+                        ", ratio=" + std::to_string(truthVal/std::max(unfoldedVal, 1e-10)));
+                    
+                    if (truthVal > 0 && combinedError > 0) {
+                        double residual = truthVal - unfoldedVal;
+                        double chi2_contrib = (residual * residual) / (combinedError * combinedError);
+                        
+                        log(LOG_DEBUG, "    residual=" + std::to_string(residual) + 
+                            ", chi2_contrib=" + std::to_string(chi2_contrib));
+                    }
+                }
+            }
+            
+            // Calculate chi2 for all bins
+            // Try to use full covariance matrix for unfolded space (consistent with performBottomlineTest)
+            if (covMatrix && covMatrix->GetNrows() == nBinsTruth) {
+                log(LOG_DEBUG, "Using full covariance matrix for unfolded space chi2 calculation (iteration " + std::to_string(iterNumber) + ")");
+                
+                // Create residual vector for truth vs unfolded
+                std::vector<double> residuals(nBinsTruth);
+                for (int i = 1; i <= nBinsTruth; ++i) {
+                    residuals[i-1] = normTruth->GetBinContent(i) - normUnfolded->GetBinContent(i);
+                }
+                
+                // Calculate chi2 using full covariance matrix: chi2 = r^T * C^-1 * r
+                TMatrixD covInverse(*covMatrix);
+                if (covInverse.Determinant() != 0) {
+                    covInverse.Invert();
+                    
+                    for (int i = 0; i < nBinsTruth; ++i) {
+                        for (int j = 0; j < nBinsTruth; ++j) {
+                            chi2Unfolded += residuals[i] * covInverse[i][j] * residuals[j];
+                        }
+                    }
+                    ndfUnfolded = nBinsTruth - 1;
+                    
+                    log(LOG_DEBUG, "Full covariance matrix chi2 calculation completed for iteration " + std::to_string(iterNumber));
+                } else {
+                    log(LOG_WARNING, "Covariance matrix is singular, falling back to diagonal approximation for iteration " + std::to_string(iterNumber));
+                    // Fall back to diagonal method
+                    for (int i = 1; i <= nBinsTruth; ++i) {
+                        double truthVal = normTruth->GetBinContent(i);
+                        double unfoldedVal = normUnfolded->GetBinContent(i);
+                        double truthError = normTruth->GetBinError(i);
+                        double unfoldedError = normUnfolded->GetBinError(i);
+                        
+                        // CRITICAL: Use combined error from both distributions
+                        double combinedError = std::sqrt(truthError * truthError + unfoldedError * unfoldedError);
+                        
+                        // Check if combined error is too small and use a minimum error
+                        if (combinedError < 1e-10) {
+                            combinedError = std::max(1e-10, std::max(truthVal, unfoldedVal) * 0.01);
+                        }
+                        
+                        if (truthVal > 0 && combinedError > 0) {
+                            double residual = truthVal - unfoldedVal;
+                            chi2Unfolded += (residual * residual) / (combinedError * combinedError);
+                            ndfUnfolded++;
+                        }
+                    }
+                    ndfUnfolded = std::max(1, ndfUnfolded - 1);
+                }
+            } else {
+                log(LOG_DEBUG, "Using diagonal approximation for unfolded space chi2 calculation (iteration " + std::to_string(iterNumber) + ")");
+                // Standard diagonal method with combined errors
+                for (int i = 1; i <= nBinsTruth; ++i) {
+                    double truthVal = normTruth->GetBinContent(i);
+                    double unfoldedVal = normUnfolded->GetBinContent(i);
+                    double truthError = normTruth->GetBinError(i);
+                    double unfoldedError = normUnfolded->GetBinError(i);
+                    
+                    // CRITICAL: Use combined error from both distributions
+                    double combinedError = std::sqrt(truthError * truthError + unfoldedError * unfoldedError);
+                    
+                    // Check if combined error is too small and use a minimum error
+                    if (combinedError < 1e-10) {
+                        combinedError = std::max(1e-10, std::max(truthVal, unfoldedVal) * 0.01);  // Use 1% of larger value as minimum error
+                    }
+                    
+                    if (truthVal > 0 && combinedError > 0) {
+                        double residual = truthVal - unfoldedVal;
+                        chi2Unfolded += (residual * residual) / (combinedError * combinedError);
+                        ndfUnfolded++;
+                    }
+                }
+                ndfUnfolded = std::max(1, ndfUnfolded - 1);
+            }
+            
+            // Store raw chi2 and reduced chi2
+            double rawChi2Unfolded = chi2Unfolded;
+            double reducedChi2Unfolded = chi2Unfolded / ndfUnfolded;
+            double pValueUnfolded = TMath::Prob(rawChi2Unfolded, ndfUnfolded);
+            
+            bottomlineResults.chi2UnfoldedPerIteration.push_back(rawChi2Unfolded);  // Store raw chi2
+            bottomlineResults.pValueUnfoldedPerIteration.push_back(pValueUnfolded);
+            
+            log(LOG_INFO, "Iteration " + std::to_string(iterNumber) + 
+                ": χ² = " + std::to_string(rawChi2Unfolded) + 
+                ", χ²/NDF = " + std::to_string(reducedChi2Unfolded) +
+                ", p-value(smeared) = " + std::to_string(pValueSmearedConstant) + " [constant]" +
+                ", p-value(unfolded) = " + std::to_string(pValueUnfolded));
+            
+            // Check for optimal iteration based on unfolded space p-value
+            if (bottomlineResults.optimalIteration == -1 && pValueUnfolded >= config.pValueThreshold) {
+                bottomlineResults.optimalIteration = iterNumber;
+                log(LOG_INFO, "✅ Found optimal iteration: " + std::to_string(iterNumber) + 
+                    " (unfolded p-value = " + std::to_string(pValueUnfolded) + " >= " + std::to_string(config.pValueThreshold) + ")");
+            }
+        } else {
+            log(LOG_ERROR, "Binning mismatch for iteration " + std::to_string(iterNumber) + 
+                ": truth=" + std::to_string(nBinsTruth) + ", unfolded=" + std::to_string(nBinsUnfolded));
+        }
+    }
+    
+    // If no iteration meets the threshold, use the last one
+    if (bottomlineResults.optimalIteration == -1 && !bottomlineResults.pValueUnfoldedPerIteration.empty()) {
+        bottomlineResults.optimalIteration = bottomlineResults.pValueUnfoldedPerIteration.size();
+        log(LOG_WARNING, "No iteration met p-value threshold " + std::to_string(config.pValueThreshold) + 
+            ", using final iteration " + std::to_string(bottomlineResults.optimalIteration));
+    }
+    
+    log(LOG_INFO, "Bayesian iteration scan completed. Processed " + std::to_string(bottomlineResults.pValueUnfoldedPerIteration.size()) + " iterations.");
+}
+
+void OptimizedUnfolder::saveBottomlineResults(TDirectory* testDir, const std::string& testLabel) {
+    if (!config.enableBottomlineTest || bottomlineResults.summary.empty()) {
+        return;
+    }
+    
+    testDir->cd();
+    
+    // Append numerical results to summary and save as a single string
+    std::ostringstream results;
+    results << bottomlineResults.summary;
+    results << "chi2_smeared " << bottomlineResults.chi2Smeared << "\n";
+    results << "pvalue_smeared " << bottomlineResults.pValueSmeared << "\n";
+    results << "ndf_smeared " << bottomlineResults.ndfSmeared << "\n";
+    results << "chi2_unfolded " << bottomlineResults.chi2Unfolded << "\n";
+    results << "pvalue_unfolded " << bottomlineResults.pValueUnfolded << "\n";
+    results << "ndf_unfolded " << bottomlineResults.ndfUnfolded << "\n";
+    TObjString summary(results.str().c_str());
+    summary.Write(("bottomline_summary_" + testLabel).c_str());
+    // Save iteration scan results if available
+    if (!bottomlineResults.pValueSmearedPerIteration.empty()) {
+        saveBottomlineIterationPlots(testDir, testLabel);
+    }
+}
+
+void OptimizedUnfolder::saveBottomlineIterationPlots(TDirectory* testDir, const std::string& testLabel) {
+    testDir->cd();
+    
+    int nIterations = bottomlineResults.pValueSmearedPerIteration.size();
+    if (nIterations == 0) return;
+    
+    log(LOG_DEBUG, "Saving bottomline iteration plots for " + testLabel);
+    
+    // Create p-value vs iteration plot
+    auto c1 = std::make_unique<TCanvas>("c_pvalue_unfolded_smeared_vs_iterations", 
+        "Bottomline Test: p-value vs Iteration", 800, 600);
+    c1->SetGridx();
+    c1->SetGridy();
+    
+    // Create graphs
+    std::vector<double> iterations(nIterations);
+    std::iota(iterations.begin(), iterations.end(), 1.0);
+    
+    TGraph grSmearedPValue(nIterations, iterations.data(), bottomlineResults.pValueSmearedPerIteration.data());
+    grSmearedPValue.SetName(("gr_pvalue_smeared_" + testLabel).c_str());
+    grSmearedPValue.SetTitle("p-value vs Iteration;Iteration;p-value");
+    grSmearedPValue.SetMarkerStyle(20);
+    grSmearedPValue.SetMarkerColor(kBlue);
+    grSmearedPValue.SetLineColor(kBlue);
+    grSmearedPValue.SetLineWidth(2);
+    
+    TGraph grUnfoldedPValue(nIterations, iterations.data(), bottomlineResults.pValueUnfoldedPerIteration.data());
+    grUnfoldedPValue.SetName(("gr_pvalue_unfolded_" + testLabel).c_str());
+    grUnfoldedPValue.SetMarkerStyle(24);
+    grUnfoldedPValue.SetMarkerColor(kRed);
+    grUnfoldedPValue.SetLineColor(kRed);
+    grUnfoldedPValue.SetLineWidth(2);
+    
+    // Set axis ranges
+    double maxPValue = std::max(*std::max_element(bottomlineResults.pValueSmearedPerIteration.begin(), 
+                                                  bottomlineResults.pValueSmearedPerIteration.end()),
+                               *std::max_element(bottomlineResults.pValueUnfoldedPerIteration.begin(),
+                                                 bottomlineResults.pValueUnfoldedPerIteration.end()));
+    grSmearedPValue.SetMaximum(std::min(1.0, maxPValue * 1.1));
+    grSmearedPValue.SetMinimum(0.0);
+    
+    grSmearedPValue.Draw("ALP");
+    grUnfoldedPValue.Draw("LP SAME");
+    
+    // Add threshold line
+    TLine thresholdLine(1, config.pValueThreshold, nIterations, config.pValueThreshold);
+    thresholdLine.SetLineColor(kGreen);
+    thresholdLine.SetLineStyle(2);
+    thresholdLine.SetLineWidth(2);
+    thresholdLine.Draw("SAME");
+    
+    // Add optimal iteration line
+    TLine* optimalLine = nullptr;
+    if (bottomlineResults.optimalIteration > 0) {
+        optimalLine = new TLine(bottomlineResults.optimalIteration, 0, bottomlineResults.optimalIteration, maxPValue * 1.1);
+        optimalLine->SetLineColor(kMagenta);
+        optimalLine->SetLineStyle(3);
+        optimalLine->SetLineWidth(2);
+        optimalLine->Draw("SAME");
+    }
+    
+    // Add legend
+    auto legend = std::make_unique<TLegend>(0.65, 0.15, 0.9, 0.4);
+    legend->AddEntry(&grSmearedPValue, "Measured space", "lp");
+    legend->AddEntry(&grUnfoldedPValue, "Unfolded space", "lp");
+    legend->AddEntry(&thresholdLine, ("Threshold (" + std::to_string(config.pValueThreshold) + ")").c_str(), "l");
+    if (optimalLine) {
+        legend->AddEntry(optimalLine, ("Optimal (iter " + std::to_string(bottomlineResults.optimalIteration) + ")").c_str(), "l");
+    }
+    legend->Draw();
+    
+    c1->Write();
+    
+    // Do not save individual graphs
+    
+    // Clean up
+    if (optimalLine) delete optimalLine;
+    
+    log(LOG_DEBUG, "Saved bottomline iteration plots for " + testLabel);
+}
 
 #endif // OPTIMIZED_UNFOLDER_H

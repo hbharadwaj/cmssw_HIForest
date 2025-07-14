@@ -59,9 +59,15 @@ struct UnfoldConfig {
     std::vector<std::vector<double>> truthBins;
     std::string method = "MatrixInversion";
     int iterations = 20;
+    int maxIterationsToStore = 50; // Maximum Bayesian iterations to store
     std::string dataFile;
     std::string mcFile;
     std::string weightBranch = "eventWeight";
+    
+    // Bottomline test configuration
+    bool enableBottomlineTest = false;
+    double pValueThreshold = 0.95; // p-value threshold for optimal iteration selection
+    bool saveBottomlinePlots = true;
     
     static UnfoldConfig fromTEnv(TEnv* config, const std::string& setName) {
         UnfoldConfig cfg;
@@ -84,9 +90,15 @@ struct UnfoldConfig {
         
         cfg.method = config->GetValue((prefix+"UnfoldingMethod").c_str(), config->GetValue("default.UnfoldingMethod", "MatrixInversion"));
         cfg.iterations = config->GetValue((prefix+"UnfoldingIterations").c_str(), config->GetValue("default.UnfoldingIterations", 20));
+        cfg.maxIterationsToStore = config->GetValue((prefix+"MaxIterationsToStore").c_str(), config->GetValue("default.MaxIterationsToStore", 50));
         cfg.dataFile = config->GetValue((prefix+"DataInputFile").c_str(), config->GetValue("default.DataInputFile", ""));
         cfg.mcFile = config->GetValue((prefix+"MCInputFile").c_str(), config->GetValue("default.MCInputFile", ""));
         cfg.weightBranch = config->GetValue((prefix+"eventWeightBranch").c_str(), config->GetValue("default.eventWeightBranch", "eventWeight"));
+        
+        // Bottomline test configuration
+        cfg.enableBottomlineTest = config->GetValue((prefix+"EnableBottomlineTest").c_str(), config->GetValue("default.EnableBottomlineTest", 0));
+        cfg.pValueThreshold = config->GetValue((prefix+"BottomlinePValueThreshold").c_str(), config->GetValue("default.BottomlinePValueThreshold", 0.95));
+        cfg.saveBottomlinePlots = config->GetValue((prefix+"SaveBottomlinePlots").c_str(), config->GetValue("default.SaveBottomlinePlots", 1));
         
         return cfg;
     }
