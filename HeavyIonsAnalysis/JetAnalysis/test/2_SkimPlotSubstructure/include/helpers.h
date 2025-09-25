@@ -1567,4 +1567,35 @@ inline std::set<std::string> parseStringSet(const std::string& str) {
     return result;
 }
 
+// Class to apply MC matching to Data weights from input text files. 
+struct WeightBin {
+    double low, high, weight;
+};
+
+class WeightHelper {
+public:
+    WeightHelper(const std::string& fname, int underflowMode=0) : underflowWeight_(underflowMode==0?0.0:1.0) {
+        std::ifstream fin(fname);
+        if (!fin) throw std::runtime_error("Cannot open weight file: " + fname);
+        std::string line;
+        while (std::getline(fin, line)) {
+            if (line.empty() || line[0]=='#') continue;
+            std::istringstream iss(line);
+            double l, h, w;
+            if (!(iss >> l >> h >> w)) continue;
+            bins_.push_back({l, h, w});
+        }
+        fin.close();
+    }
+    double getWeight(double x) const {
+        for (const auto& b : bins_) {
+            if (x >= b.low && x < b.high) return b.weight;
+        }
+        return underflowWeight_;
+    }
+private:
+    std::vector<WeightBin> bins_;
+    double underflowWeight_;
+};
+
 #endif
