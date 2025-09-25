@@ -193,6 +193,10 @@ def get_color_scheme(scheme_name, color_blind=False):
             ROOT.TColor.GetColor("#5790fc"),  # Blue
             ROOT.TColor.GetColor("#e42536"),  # Red
         ],
+        'PbPb_pp_default': [
+            ROOT.kBlue,
+            ROOT.kRed,
+        ],
         'default': [
             ROOT.kBlack, ROOT.kBlue, ROOT.kRed, ROOT.kMagenta, 
             ROOT.kGreen+2, ROOT.kOrange, ROOT.kCyan, ROOT.kYellow+2, ROOT.kGray+2
@@ -757,8 +761,44 @@ def create_overlay_plot(hists, hist_labels, overlay_name, config_data, out_subdi
             pad1.cd()
         
         # Apply log scale if configured
-        use_logx = bool(int(config_data.get("LogX", "0")))
-        use_logy = bool(int(config_data.get("LogY", "0")))
+        # Check individual histogram log scale settings first
+        individual_logx = None
+        individual_logy = None
+        
+        if hist_names:
+            # For overlays, check if all histograms have consistent log scale settings
+            logx_settings = []
+            logy_settings = []
+            
+            for hist_name in hist_names:
+                # Check individual histogram log scale settings
+                hist_logx = config_data.get(f"Histogram.{hist_name}.LogX")
+                hist_logy = config_data.get(f"Histogram.{hist_name}.LogY")
+                
+                if hist_logx is not None:
+                    logx_settings.append(bool(int(hist_logx)))
+                if hist_logy is not None:
+                    logy_settings.append(bool(int(hist_logy)))
+            
+            # Use individual settings if all histograms have the same setting
+            if logx_settings and all(x == logx_settings[0] for x in logx_settings):
+                individual_logx = logx_settings[0]
+                logger.debug(f"Using consistent individual LogX setting: {individual_logx}")
+            elif logx_settings:
+                logger.warning(f"Inconsistent LogX settings among histograms: {logx_settings}. Using global setting.")
+            
+            if logy_settings and all(y == logy_settings[0] for y in logy_settings):
+                individual_logy = logy_settings[0]
+                logger.debug(f"Using consistent individual LogY setting: {individual_logy}")
+            elif logy_settings:
+                logger.warning(f"Inconsistent LogY settings among histograms: {logy_settings}. Using global setting.")
+        
+        # Use individual settings if available, otherwise use global settings
+        use_logx = individual_logx if individual_logx is not None else bool(int(config_data.get("LogX", "0")))
+        use_logy = individual_logy if individual_logy is not None else bool(int(config_data.get("LogY", "0")))
+        
+        logger.debug(f"Final log scale settings: LogX={use_logx}, LogY={use_logy}")
+        
         if create_ratio:
             pad1.SetLogx(use_logx)
             pad1.SetLogy(use_logy)
@@ -821,6 +861,25 @@ def create_overlay_plot(hists, hist_labels, overlay_name, config_data, out_subdi
             y_range = global_ymax - global_ymin
             global_ymin = max(0, global_ymin - 0.1 * y_range)
             global_ymax = global_ymax + 0.1 * y_range
+            
+            # Special handling for log scale: ensure minimum is positive
+            if use_logy and global_ymin <= 0:
+                # Find the smallest positive value in all histograms
+                min_positive = float('inf')
+                for hist in hists:
+                    for bin_i in range(1, hist.GetNbinsX() + 1):
+                        bin_content = hist.GetBinContent(bin_i)
+                        if bin_content > 0:
+                            min_positive = min(min_positive, bin_content)
+                
+                if min_positive != float('inf'):
+                    # Set minimum to half the smallest positive value, or 1e-6 if very small
+                    global_ymin = max(min_positive * 0.5, 1e-6)
+                else:
+                    # Fallback if no positive values found
+                    global_ymin = 1e-6
+                
+                logger.debug(f"Adjusted Y-axis minimum for log scale: {global_ymin} (was <= 0)")
         
         # Determine which histogram to use as ratio denominator
         ratio_divide_by = config_data.get("Ratio.DivideBy", "first").lower()
@@ -855,7 +914,8 @@ def create_overlay_plot(hists, hist_labels, overlay_name, config_data, out_subdi
             # Set marker properties
             hist.SetMarkerColor(colors[i % len(colors)])
             hist.SetMarkerStyle(markers[i % len(markers)])
-            hist.SetMarkerSize(0.8)
+            base_marker_size = float(config_data.get("Marker.Size", "0.8"))
+            hist.SetMarkerSize(base_marker_size)
             
             hist.SetStats(0)
             
@@ -870,6 +930,12 @@ def create_overlay_plot(hists, hist_labels, overlay_name, config_data, out_subdi
                 if "YMin" in config_data and "YMax" in config_data:
                     ymin = float(config_data.get("YMin"))
                     ymax = float(config_data.get("YMax"))
+                    
+                    # Check for log scale compatibility
+                    if use_logy and ymin <= 0:
+                        logger.warning(f"YMin={ymin} is incompatible with LogY=1. Setting YMin to 1e-6")
+                        ymin = 1e-6
+                    
                     hist.GetYaxis().SetRangeUser(ymin, ymax)
                 elif global_ymin != float('inf') and global_ymax != float('-inf'):
                     hist.GetYaxis().SetRangeUser(global_ymin, global_ymax)
@@ -1196,6 +1262,24 @@ def create_ratio_histogram(num_hist, den_hist, config_data):
 def create_explicit_overlay(overlay_name, hist_paths, root_files, file_cfgs, outdir, plot_formats, config_data):
     """
     Create an overlay plot for explicitly specified histogram paths (multi-file).
+    
+    Args:
+        overlay_name: Name of the overlay
+        hist_paths: List of histogram paths in ROOT files
+        root_files: List of ROOT file objects
+        file_cfgs: List of file configuration dictionaries
+        outdir: Output directory
+        plot_formats: List of output formats (e.g., ['png', 'root'])
+        config_data: Main configuration dictionary
+    
+    Supported config options:
+        ExplicitOverlay.<name>.Title: "Histogram Title;X Title;Y Title" (semicolon-separated)
+        ExplicitOverlay.<name>.XTitle: "X-axis Title" (alternative to Title format)
+        ExplicitOverlay.<name>.YTitle: "Y-axis Title" (alternative to Title format)
+        ExplicitOverlay.<name>.Path: "custom/output/path"
+    
+    Returns:
+        int: 1 if overlay was created, 0 otherwise
     """
     # Extract display labels from config_data InputFile entries
     input_labels = []
@@ -1214,12 +1298,89 @@ def create_explicit_overlay(overlay_name, hist_paths, root_files, file_cfgs, out
     for i, (path, rf, cfg) in enumerate(zip(hist_paths, root_files, file_cfgs)):
         hist = get_histogram_recursive(rf, path)
         if hist:
-            hists.append(hist)
             # Use display label from InputFile entry if available
             label = input_labels[i] if i < len(input_labels) else f"File{i+1}"
             labels.append(label)
+            # Check for explicit overlay title configuration
+            title_config_key = f"ExplicitOverlay.{overlay_name}.Title"
+            title_config = config_data.get(title_config_key, "")
+            if title_config:
+                # Parse title configuration: "Histogram Title;X Title;Y Title"
+                title_parts = [part.strip() for part in title_config.split(';')]
+                
+                if len(title_parts) >= 1 and title_parts[0]:
+                    # Set histogram title
+                    hist.SetTitle(title_parts[0])
+                
+                if len(title_parts) >= 2 and title_parts[1]:
+                    # Set X-axis title
+                    hist.GetXaxis().SetTitle(title_parts[1])
+                    logger.debug(f"ExplicitOverlay {overlay_name}: Set X-axis title to '{title_parts[1]}'")
+                
+                if len(title_parts) >= 3 and title_parts[2]:
+                    # Set Y-axis title
+                    hist.GetYaxis().SetTitle(title_parts[2])
+                    logger.debug(f"ExplicitOverlay {overlay_name}: Set Y-axis title to '{title_parts[2]}'")
+            
+            # Also check for separate X and Y title configurations for more flexibility
+            x_title_key = f"ExplicitOverlay.{overlay_name}.XTitle"
+            y_title_key = f"ExplicitOverlay.{overlay_name}.YTitle"
+            
+            x_title = config_data.get(x_title_key, "")
+            y_title = config_data.get(y_title_key, "")
+            
+            if x_title:
+                hist.GetXaxis().SetTitle(x_title)
+                logger.debug(f"ExplicitOverlay {overlay_name}: Set X-axis title to '{x_title}' (from XTitle config)")
+            
+            if y_title:
+                hist.GetYaxis().SetTitle(y_title)
+                logger.debug(f"ExplicitOverlay {overlay_name}: Set Y-axis title to '{y_title}' (from YTitle config)")
+            
+            hists.append(hist)       
+
         else:
             logger.warning(f"ExplicitOverlay {overlay_name}: Histogram not found at {path} in file {i+1}")
+    
+    # Apply axis titles if configured
+    if len(hists) >= 1:
+        # Check for explicit overlay title configuration
+        title_config_key = f"ExplicitOverlay.{overlay_name}.Title"
+        title_config = config_data.get(title_config_key, "")
+        
+        if title_config:
+            # Parse title configuration: "Histogram Title;X Title;Y Title"
+            title_parts = [part.strip() for part in title_config.split(';')]
+            
+            if len(title_parts) >= 1 and title_parts[0]:
+                # Set histogram title
+                hists[0].SetTitle(title_parts[0])
+            
+            if len(title_parts) >= 2 and title_parts[1]:
+                # Set X-axis title
+                hists[0].GetXaxis().SetTitle(title_parts[1])
+                logger.debug(f"ExplicitOverlay {overlay_name}: Set X-axis title to '{title_parts[1]}'")
+            
+            if len(title_parts) >= 3 and title_parts[2]:
+                # Set Y-axis title
+                hists[0].GetYaxis().SetTitle(title_parts[2])
+                logger.debug(f"ExplicitOverlay {overlay_name}: Set Y-axis title to '{title_parts[2]}'")
+        
+        # Also check for separate X and Y title configurations for more flexibility
+        x_title_key = f"ExplicitOverlay.{overlay_name}.XTitle"
+        y_title_key = f"ExplicitOverlay.{overlay_name}.YTitle"
+        
+        x_title = config_data.get(x_title_key, "")
+        y_title = config_data.get(y_title_key, "")
+        
+        if x_title:
+            hists[0].GetXaxis().SetTitle(x_title)
+            logger.debug(f"ExplicitOverlay {overlay_name}: Set X-axis title to '{x_title}' (from XTitle config)")
+        
+        if y_title:
+            hists[0].GetYaxis().SetTitle(y_title)
+            logger.debug(f"ExplicitOverlay {overlay_name}: Set Y-axis title to '{y_title}' (from YTitle config)")
+    
     if len(hists) >= 2:
         create_overlay_plot(hists, labels, overlay_name, config_data, outdir, plot_formats, "explicit")
         return 1

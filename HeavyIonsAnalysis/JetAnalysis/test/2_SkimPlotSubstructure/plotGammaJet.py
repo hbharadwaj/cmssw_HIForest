@@ -193,7 +193,7 @@ def main():
         # --- Process ExplicitOverlay keys ---
         explicit_overlay_count = 0
         for key, value in config_data.items():
-            if key.startswith("ExplicitOverlay.") and not key.endswith(".Path"):
+            if key.startswith("ExplicitOverlay.") and not key.endswith((".Path", ".Title", ".XTitle", ".YTitle")):
                 overlay_name = key[len("ExplicitOverlay."):]
 
                 # Parse histogram paths (colon-separated)
