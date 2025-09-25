@@ -277,7 +277,7 @@ log 1 "Will submit $num_jobs jobs"
 config_name=$(basename "$ANALYSIS_CONFIG" .config)
 timestamp=$(date '+%Y%m%d_%H%M%S')
 if [ -n "$CUSTOM_JOB_NAME" ]; then
-    job_name="$CUSTOM_JOB_NAME"
+    job_name="${timestamp}_${config_name}_$CUSTOM_JOB_NAME"
 else
     job_name="${timestamp}_${config_name}"
 fi

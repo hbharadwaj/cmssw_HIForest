@@ -422,6 +422,21 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
             log(LOG_WARNING, "Unknown system type '" + systemType + "', defaulting to PbPb behavior");
         }
     }
+
+    // Declare pointers for each weight helper you want to use
+    std::unique_ptr<WeightHelper> vzWeightHelper;
+    std::unique_ptr<WeightHelper> jetxjWeightHelper;
+    std::unique_ptr<WeightHelper> jetpTWeightHelper;
+
+    // After loading config:
+    std::string vzWeightFile = config->GetValue("WeightFile_Vz", "");
+    if (!vzWeightFile.empty()) vzWeightHelper = std::make_unique<WeightHelper>(vzWeightFile);
+
+    std::string jetxjWeightFile = config->GetValue("WeightFile_JetxJ", "");
+    if (!jetxjWeightFile.empty()) jetxjWeightHelper = std::make_unique<WeightHelper>(jetxjWeightFile);
+
+    std::string jetpTWeightFile = config->GetValue("WeightFile_JetPt", "");
+    if (!jetpTWeightFile.empty()) jetpTWeightHelper = std::make_unique<WeightHelper>(jetpTWeightFile);
     
     log(LOG_DEBUG, "Configuration loaded:");
     log(LOG_DEBUG, "  System: " + systemType + " (" + (isPbPb ? "PbPb" : "pp") + ")");
@@ -771,6 +786,8 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
             eventWeight = weight * weight_pthat;
             if(isPbPb){
                 eventWeight *= findNcoll(hiBin);
+                // Apply Vz weight if available
+                if (vzWeightHelper) eventWeight *= vzWeightHelper->getWeight(vz);
             }
         }
         else{
@@ -1002,7 +1019,7 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
         nWithPhoton++;
         
         // Store selected photon information
-        selectedEventWeight = eventWeight;
+        selectedEventWeight = eventWeight; //! Does not store xJ weight if stored here
         selectedHiBin = hiBin;
         selectedVz = vz;
         selectedHiHF = hiHF;
@@ -1103,9 +1120,21 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
                     cutFlowTracker.applyCut("DeltaPhi", passDeltaPhi, centBin, collection);
                     if (!passDeltaPhi) { selectedJetIndexes[collection] = -1; continue; }
                 }
-                
+
                 selectedJetXjs[collection] = getXj(jetManager.getJetPt(collection, bestJetIndex), selectedPhotonEt);
                 selectedRefJetXjs[collection] = getXj(jetManager.getRefJetPt(collection, bestJetIndex),selectedMCPhotonEt);
+
+                if(isMC && isPbPb && collection=="AK2Z2"){
+                    // Apply Jet xJ weight if available (example: use selectedJetXj for AK2Z2)
+                    if (jetxjWeightHelper && selectedJetXjs.count("AK2Z2") && selectedJetXjs["AK2Z2"] > -900)
+                        eventWeight *= jetxjWeightHelper->getWeight(selectedJetXjs["AK2Z2"]); //TODO: Create a new JetWeight instead and use 
+                }
+                if(isMC && isPbPb && collection=="AK2Z2"){
+                    // Apply Jet pT weight if available (example: use selectedJetPts for AK2Z2)
+                    float temp_jetpT = jetManager.getJetPt(collection, bestJetIndex);
+                    if (jetpTWeightHelper)
+                        eventWeight *= jetpTWeightHelper->getWeight(temp_jetpT); //TODO: Create a new JetWeight instead and use 
+                }
 
                 // Check and apply XJ cut if configured
                 float xjMin = config->GetValue("XjMin", -1.0);
@@ -1114,6 +1143,7 @@ void processEvents(TChain* chain, TEnv* config, JetCollectionManager& jetManager
                     cutFlowTracker.applyCut("XjCut", passXj, centBin, collection);
                     if (!passXj) { selectedJetIndexes[collection] = -1; continue; }
                 }
+                selectedEventWeight = eventWeight; //! Updated here temporarily to store the xJ weight. To modify with a different JetWeight later
                 selectedJetIndexes[collection] = bestJetIndex;
                 selectedJetPts[collection] = jetManager.getJetPt(collection, bestJetIndex);
                 selectedJetEtas[collection] = jetManager.getJetEta(collection, bestJetIndex);
