@@ -120,6 +120,32 @@ def parse_config(config_path):
                 config[key.strip()] = val.strip()
     return config
 
+def get_clean_filename(label_or_path):
+    """Create a clean directory name from label or file path"""
+    # If it looks like a file path, extract the basename
+    if '/' in label_or_path:
+        # Get parent directory name and basename for file paths
+        parent_dir = os.path.basename(os.path.dirname(label_or_path))
+        basename = os.path.splitext(os.path.basename(label_or_path))[0]
+        
+        # Combine parent directory with basename for uniqueness
+        if parent_dir and parent_dir != '/' and parent_dir != '.':
+            combined_name = f"{parent_dir}_{basename}"
+        else:
+            combined_name = basename
+    else:
+        # It's already a label, use it directly
+        combined_name = label_or_path
+    
+    # Replace problematic characters with underscores
+    import re
+    clean_name = re.sub(r'[^\w\-_]', '_', combined_name)
+    # Remove multiple consecutive underscores
+    clean_name = re.sub(r'_+', '_', clean_name)
+    # Remove leading/trailing underscores
+    clean_name = clean_name.strip('_')
+    return clean_name
+
 # ========== Variable Label Mapping ==========
 def get_variable_label(var_name):
     """Get proper axis labels for variables based on core variable name"""
@@ -1547,8 +1573,10 @@ def main():
         description="Plot unfolding results from ROOT files with CMS style.")
     parser.add_argument('-c', '--config', required=True, 
                        help='Plotting config file')
-    parser.add_argument('-i', '--inputs', nargs='+', required=True, 
-                       help='Input ROOT files from unfolding')
+    parser.add_argument('-i', '--inputs', nargs='+', 
+                       help='Input ROOT files from unfolding (alternatively can be specified in config)')
+    parser.add_argument('-l', '--labels', nargs='+',
+                       help='Labels for input files (required if using -i). If using config, specify InputFile labels to process.')
     parser.add_argument('-o', '--output', default='./UnfoldingPlots', 
                        help='Output directory for plots')
     parser.add_argument('--test', action='store_true',
@@ -1581,15 +1609,86 @@ def main():
     # Create output directory
     os.makedirs(args.output, exist_ok=True)
     
-    logger.info(f"Processing {len(args.inputs)} input file(s)...")
-    logger.info(f"Output directory: {args.output}")
-    
     # Store all objects from all files for method comparisons
     all_files_objects = {}
+
+    # Determine input files and labels: from command line or from config
+    file_label_pairs = []
     
+    if args.inputs:
+        # Command line mode: require labels for each input file
+        if not args.labels or len(args.inputs) != len(args.labels):
+            logger.error("When using -i, you must provide matching labels with -l (same number of files and labels)")
+            logger.error(f"Got {len(args.inputs)} files but {len(args.labels) if args.labels else 0} labels")
+            sys.exit(1)
+        
+        # Pair files with labels
+        file_label_pairs = [(file_path, label) for file_path, label in zip(args.inputs, args.labels)]
+        logger.info("Using input files from command line")
+        
+    else:
+        # Config mode: extract from InputFile.* entries
+        config_files = {}
+        for k, v in config.items():
+            if k.startswith("InputFile.") and ":" in v:
+                label = k[len("InputFile."):]  # Extract label from key
+                parts = v.split(":")
+                if len(parts) >= 1:
+                    config_files[label] = parts[0]  # First part is the ROOT file path
+        
+        if not config_files:
+            logger.error("No input files found. Use -i/-l arguments or InputFile.* entries in config.")
+            sys.exit(1)
+        
+        # If specific labels requested, filter to those
+        if args.labels:
+            requested_labels = set(args.labels)
+            available_labels = set(config_files.keys())
+            missing_labels = requested_labels - available_labels
+            if missing_labels:
+                logger.error(f"Requested labels not found in config: {missing_labels}")
+                logger.error(f"Available labels: {list(available_labels)}")
+                sys.exit(1)
+            # Filter to requested labels only
+            file_label_pairs = [(config_files[label], label) for label in args.labels if label in config_files]
+        else:
+            # Use all available files from config
+            file_label_pairs = [(file_path, label) for label, file_path in config_files.items()]
+        
+        logger.info("Using input files from config")
+    
+    # Check for output directory conflicts
+    output_dirs = []
+    for file_path, label in file_label_pairs:
+        clean_label = get_clean_filename(label)  # Use label as the directory name directly
+        output_dirs.append(clean_label)
+    
+    # Check for duplicates
+    seen_dirs = set()
+    duplicates = set()
+    for dir_name in output_dirs:
+        if dir_name in seen_dirs:
+            duplicates.add(dir_name)
+        seen_dirs.add(dir_name)
+    
+    if duplicates:
+        logger.error(f"Output directory name conflicts detected: {duplicates}")
+        logger.error("Please use unique labels for each input file")
+        sys.exit(1)
+
+    logger.info(f"Processing {len(file_label_pairs)} input file(s)...")
+    logger.info(f"Base output directory: {args.output}")
+    logger.info(f"File labels: {[label for _, label in file_label_pairs]}")
+
     # Process each input file
-    for input_file in args.inputs:
-        logger.info(f"\nProcessing: {input_file}")
+    for input_file, label in file_label_pairs:
+        logger.info(f"\nProcessing: {input_file} (label: {label})")
+        
+        # Create subdirectory for this input file using the label
+        clean_label = get_clean_filename(label)
+        file_output_dir = os.path.join(args.output, clean_label)
+        os.makedirs(file_output_dir, exist_ok=True)
+        logger.info(f"Output directory for this file: {file_output_dir}")
         
         f = ROOT.TFile.Open(input_file)
         if not f or f.IsZombie():
@@ -1638,8 +1737,8 @@ def main():
                 logger.debug(f"      Found {len(objects['histograms'])} histograms, "
                           f"{len(objects['canvases'])} canvases")
                 
-                # Analyze this set and test
-                analyze_unfolding_set(objects, unfold_set, test, config, args.output)
+                # Analyze this set and test using file-specific output directory
+                analyze_unfolding_set(objects, unfold_set, test, config, file_output_dir)
                 
                 if args.test:
                     break  # Test mode: only process first test
@@ -1656,6 +1755,10 @@ def main():
     if args.compare_methods and len(all_files_objects) > 1:
         logger.info("\nCreating method comparison plots...")
         
+        # Create dedicated directory for method comparisons
+        method_comparison_dir = os.path.join(args.output, "method_comparisons")
+        os.makedirs(method_comparison_dir, exist_ok=True)
+        
         # Find common unfolding sets and tests across files
         common_sets = set.intersection(*[set(file_obj.keys()) for file_obj in all_files_objects.values()])
         
@@ -1664,7 +1767,7 @@ def main():
                                             for file_obj in all_files_objects.values()])
             
             for test in common_tests:
-                create_method_overlays(all_files_objects, unfold_set, test, config, args.output)
+                create_method_overlays(all_files_objects, unfold_set, test, config, method_comparison_dir)
     
     logger.info(f"\nPlotting completed. Results saved to: {args.output}")
 
