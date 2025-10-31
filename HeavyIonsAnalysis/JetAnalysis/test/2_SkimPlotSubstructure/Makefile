@@ -18,9 +18,9 @@ TARGETS = gammaJetAnalyzer
 
 # Source files
 SOURCES = include/BranchManager.cpp include/DataFrameAnalyzer.cpp
-HEADERS = include/BranchManager.h include/DataFrameAnalyzer.h include/JetCollectionManager.h
-GAMMA_JET_SOURCES = 
-GAMMA_JET_HEADERS = include/JetCollectionManager.h
+HEADERS = include/BranchManager.h include/DataFrameAnalyzer.h
+GAMMA_JET_SOURCES = UnifiedDataReader.cpp
+GAMMA_JET_HEADERS = include/FormatDetector.h include/BranchMapper.h include/UnifiedDataReader.h
 
 # Default target
 all: $(TARGETS)

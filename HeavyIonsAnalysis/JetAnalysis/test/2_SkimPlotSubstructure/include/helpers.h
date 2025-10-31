@@ -87,6 +87,9 @@ void printConfig(TEnv* config);
 // Parses a comma- or space-separated list of floats from a config parameter.
 std::vector<float> getFloatVector(TEnv* config, const std::string& param);
 
+// Parses a comma- or space-separated list of ints from a config parameter.
+std::vector<int> getIntVector(TEnv* config, const std::string& param);
+
 // Parses a comma-separated list of strings from a config parameter.
 std::vector<std::string> getStringVector(TEnv* config, const std::string& param);
 
@@ -700,6 +703,54 @@ std::vector<float> getFloatVector(TEnv* config, const std::string& param) {
             } 
             catch (const std::exception& e) {
                 std::cerr << "Warning: Failed to parse float value '" << item << "' in parameter " << param << std::endl;
+            }
+        }
+    }
+    
+    return result;
+}
+
+/**
+ * Parse comma-separated int values from config
+*/
+std::vector<int> getIntVector(TEnv* config, const std::string& param) {
+    std::vector<int> result;
+    std::string valueStr = config->GetValue(param.c_str(), "");
+    
+    if (valueStr.empty()) {
+        return result;
+    }
+    
+    // Handle both space and comma separated values
+    std::stringstream ss(valueStr);
+    std::string item;
+    
+    // First try comma-separated parsing
+    if (valueStr.find(',') != std::string::npos) {
+        while (std::getline(ss, item, ',')) {
+            // Trim whitespace
+            item.erase(0, item.find_first_not_of(" \t\n\r\f\v"));
+            item.erase(item.find_last_not_of(" \t\n\r\f\v") + 1);
+            if (!item.empty()) {
+                try {
+                    int value = std::stoi(item);
+                    result.push_back(value);
+                } 
+                catch (const std::exception& e) {
+                    std::cerr << "Warning: Failed to parse int value '" << item << "' in parameter " << param << std::endl;
+                }
+            }
+        }
+    } 
+    else {
+        // Space-separated parsing
+        while (ss >> item) {
+            try {
+                int value = std::stoi(item);
+                result.push_back(value);
+            } 
+            catch (const std::exception& e) {
+                std::cerr << "Warning: Failed to parse int value '" << item << "' in parameter " << param << std::endl;
             }
         }
     }
