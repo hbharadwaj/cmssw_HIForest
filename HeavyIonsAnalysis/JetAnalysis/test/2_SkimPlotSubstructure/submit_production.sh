@@ -313,7 +313,7 @@ if [ "$DRY_RUN" = false ]; then
     # Copy necessary files
     log 1 "Copying files to batch directory..."
     cp $SCRIPT_DIR/gammaJetAnalyzer.cpp "$batch_dir/" 2>/dev/null || log 0 "Warning: gammaJetAnalyzer.cpp not found"
-    cp $SCRIPT_DIR/include/helpers.h include/JetCollectionManager.h "$INCLUDE_DIR" 2>/dev/null || log 0 "Warning: include directory not found"
+    cp $SCRIPT_DIR/include/helpers.h "$INCLUDE_DIR" 2>/dev/null || log 0 "Warning: include directory not found"
     cp $SCRIPT_DIR/Makefile "$batch_dir/" 2>/dev/null || log 0 "Warning: Makefile not found"
     cp "$ANALYSIS_CONFIG" "$batch_dir/" 2>/dev/null || log 0 "Warning: analysis config not found"
     cp "$PLOT_CONFIG" "$batch_dir/" 2>/dev/null || log 0 "Warning: plot config not found"
@@ -387,8 +387,6 @@ echo ""
 echo "=== Job Completion ==="
 echo "Analysis exit code: \$exit_code"
 echo "Job completed: \$(date)"
-echo "Output files:"
-ls -la *.root 2>/dev/null || echo "No ROOT files produced"
 exit \$exit_code
 EOF
     chmod +x "$job_script_path"
@@ -481,7 +479,7 @@ arguments = \$(Process)
 transfer_input_files = $TRANSFER_FILES
 output = $LOGS_DIR/gammaJetAnalyzer_\$(ClusterId).\$(ProcId).out
 error = $LOGS_DIR/gammaJetAnalyzer_\$(ClusterId).\$(ProcId).err
-log = $LOGS_DIR//gammaJetAnalyzer_\$(ClusterId).\$(ProcId).log
+log = $LOGS_DIR//gammaJetAnalyzer_\$(ClusterId).log
 
 # File transfer settings
 should_transfer_files = YES
