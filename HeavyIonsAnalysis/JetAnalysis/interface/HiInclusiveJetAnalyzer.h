@@ -72,7 +72,8 @@ private:
 
   int TaggedJet(pat::Jet patjet, edm::Handle<reco::JetTagCollection > jetTags );
 
-  void IterativeDeclustering(int flagGen,const reco::Jet& jet,fastjet::PseudoJet *sub1, fastjet::PseudoJet *sub2);
+  template<typename T> void IterativeDeclustering(int flagGen,const T& jet,fastjet::PseudoJet *sub1, fastjet::PseudoJet *sub2);
+  void countJetSplits(const fastjet::PseudoJet& node, bool primaryOnly, int& nSD, std::vector<int>& nKT);
 
   edm::InputTag jetTagLabel_;
   edm::EDGetTokenT<pat::JetCollection> jetTag_;
@@ -130,6 +131,7 @@ private:
   double groomType_;
   double groomCombine_;
   bool doChargedConstOnly_;
+  std::vector<double> ktThresholds_;
 
   bool doLegacyBtagging_;
   bool doCandidateBtagging_;
@@ -152,9 +154,15 @@ private:
   edm::EDGetTokenT<reco::JetTagCollection> particleTransformerJetTagsTkn_,particleTransformerJetTagsBBTkn_,particleTransformerJetTagsLepBTkn_;
   std::map<std::string, std::map<std::string, edm::EDGetTokenT<reco::JetTagCollection>>> jetTaggers_;
 
-  static const int MAXJETS = 1000;
-  static const int MAXTRACKS = 5000;
-  static const int MAXCALO = 1000;
+  // Grooming type enum for readability (config still uses double for backward compatibility)
+  enum GroomType { kLateSD = 0, kStandardSD = 1 };
+  enum GroomCombine { kNoRequirement = 0, kRequireSDandKT = 1 };
+
+  // Use constexpr to avoid linker issues with static const in templates
+  static constexpr int MAXNKT = 15;
+  static constexpr int MAXJETS = 500;
+  static constexpr int MAXTRACKS = 5000;
+  static constexpr int MAXCALO = 100;
 
   struct JRA {
     int nref = 0;
@@ -164,6 +172,7 @@ private:
     int ncalo = 0;
 
     float rawpt[MAXJETS] = {0};
+    float rawE[MAXJETS] = {0};
     float jtpt[MAXJETS] = {0};
     float jteta[MAXJETS] = {0};
     float jtphi[MAXJETS] = {0};
@@ -195,18 +204,26 @@ private:
     float jttau2[MAXJETS] = {0};
     float jttau3[MAXJETS] = {0};
 
-    int   jtdyn_split[MAXJETS] = {0};
-    float jtdyn_eta[MAXJETS] = {0};
-    float jtdyn_phi[MAXJETS] = {0};
-    float jtdyn_deltaR[MAXJETS] = {0};
-    float jtdyn_kt[MAXJETS] = {0};
-    float jtdyn_z[MAXJETS] = {0};
-    int   jt_intjet_multi[MAXJETS] = {0};
-    float jt_girth[MAXJETS] = {0};
-    float jt_thrust[MAXJETS] = {0};
-    float jt_LHA[MAXJETS] = {0};
-    float jt_pTD[MAXJETS] = {0};
-    float jt_tau_form[MAXJETS] = {0};
+    int   jtdynsplit[MAXJETS] = {0};
+    float jtdyneta[MAXJETS] = {0};
+    float jtdynphi[MAXJETS] = {0};
+    float jtdyndeltaR[MAXJETS] = {0};
+    float jtdynkt[MAXJETS] = {0};
+    float jtdynz[MAXJETS] = {0};
+    int   jtNPrimarySD[MAXJETS] = {0};
+    int   jtNTotalSD[MAXJETS] = {0};
+    int   jtNPrimaryKT[MAXJETS][MAXNKT] = {{0}};
+    int   jtNTotalKT[MAXJETS][MAXNKT] = {{0}};
+    int   jtintjetmulti[MAXJETS] = {0};
+    float jtgirth[MAXJETS] = {0};
+    float jtthrust[MAXJETS] = {0};
+    float jtLHA[MAXJETS] = {0};
+    float jtpTD[MAXJETS] = {0};
+    float jtdyntauform[MAXJETS] = {0};
+    std::vector<std::vector<float>> jtPLJPkT = {};
+    std::vector<std::vector<float>> jtPLJPdR = {};
+    std::vector<std::vector<float>> jtPLJPeta = {};
+    std::vector<std::vector<float>> jtPLJPphi = {};
 
     float jtsym[MAXJETS] = {0};
     int jtdroppedBranches[MAXJETS] = {0};
@@ -297,6 +314,7 @@ private:
 
     float matchedPt[MAXJETS] = {0};
     float matchedRawPt[MAXJETS] = {0};
+    float matchedRawE[MAXJETS] = {0};
     float matchedR[MAXJETS] = {0};
     float matchedPu[MAXJETS] = {0};
     int matchedHadronFlavor[MAXJETS] = {0};
@@ -370,18 +388,26 @@ private:
     int refparton_flavor[MAXJETS] = {0};
     int refparton_flavorForB[MAXJETS] = {0};
 
-    int   refdyn_split[MAXJETS] = {0};
-    float refdyn_eta[MAXJETS] = {0};
-    float refdyn_phi[MAXJETS] = {0};
-    float refdyn_deltaR[MAXJETS] = {0};
-    float refdyn_kt[MAXJETS] = {0};
-    float refdyn_z[MAXJETS] = {0};
-    int   ref_intjet_multi[MAXJETS] = {0};
-    float ref_girth[MAXJETS] = {0};
-    float ref_thrust[MAXJETS] = {0};
-    float ref_LHA[MAXJETS] = {0};
-    float ref_pTD[MAXJETS] = {0};
-    float ref_tau_form[MAXJETS] = {0};
+    int   refdynsplit[MAXJETS] = {0};
+    float refdyneta[MAXJETS] = {0};
+    float refdynphi[MAXJETS] = {0};
+    float refdyndeltaR[MAXJETS] = {0};
+    float refdynkt[MAXJETS] = {0};
+    float refdynz[MAXJETS] = {0};
+    int   refNPrimarySD[MAXJETS] = {0};
+    int   refNTotalSD[MAXJETS] = {0};
+    int   refNPrimaryKT[MAXJETS][MAXNKT] = {{0}};
+    int   refNTotalKT[MAXJETS][MAXNKT] = {{0}};
+    int   refintjetmulti[MAXJETS] = {0};
+    float refgirth[MAXJETS] = {0};
+    float refthrust[MAXJETS] = {0};
+    float refLHA[MAXJETS] = {0};
+    float refpTD[MAXJETS] = {0};
+    float refdyntauform[MAXJETS] = {0};
+    std::vector<std::vector<float>> refPLJPkT = {};
+    std::vector<std::vector<float>> refPLJPdR = {};
+    std::vector<std::vector<float>> refPLJPeta = {};
+    std::vector<std::vector<float>> refPLJPphi = {};
 
     float refptG[MAXJETS] = {0};
     float refetaG[MAXJETS] = {0};
@@ -422,18 +448,26 @@ private:
     float gendrjt[MAXJETS] = {0};
     int gensubid[MAXJETS] = {0};
 
-    int   gendyn_split[MAXJETS] = {0};
-    float gendyn_eta[MAXJETS] = {0};
-    float gendyn_phi[MAXJETS] = {0};
-    float gendyn_deltaR[MAXJETS] = {0};
-    float gendyn_kt[MAXJETS] = {0};
-    float gendyn_z[MAXJETS] = {0};
-    int   gen_intjet_multi[MAXJETS] = {0};
-    float gen_girth[MAXJETS] = {0};
-    float gen_thrust[MAXJETS] = {0};
-    float gen_LHA[MAXJETS] = {0};
-    float gen_pTD[MAXJETS] = {0};
-    float gen_tau_form[MAXJETS] = {0};
+    int   gendynsplit[MAXJETS] = {0};
+    float gendyneta[MAXJETS] = {0};
+    float gendynphi[MAXJETS] = {0};
+    float gendyndeltaR[MAXJETS] = {0};
+    float gendynkt[MAXJETS] = {0};
+    float gendynz[MAXJETS] = {0};
+    int   genNPrimarySD[MAXJETS] = {0};
+    int   genNTotalSD[MAXJETS] = {0};
+    int   genNPrimaryKT[MAXJETS][MAXNKT] = {{0}};
+    int   genNTotalKT[MAXJETS][MAXNKT] = {{0}};
+    int   genintjetmulti[MAXJETS] = {0};
+    float gengirth[MAXJETS] = {0};
+    float genthrust[MAXJETS] = {0};
+    float genLHA[MAXJETS] = {0};
+    float genpTD[MAXJETS] = {0};
+    float gendyntauform[MAXJETS] = {0};
+    std::vector<std::vector<float>> genPLJPkT = {};
+    std::vector<std::vector<float>> genPLJPdR = {};
+    std::vector<std::vector<float>> genPLJPeta = {};
+    std::vector<std::vector<float>> genPLJPphi = {};
 
     float genptG[MAXJETS] = {0};
     float genetaG[MAXJETS] = {0};

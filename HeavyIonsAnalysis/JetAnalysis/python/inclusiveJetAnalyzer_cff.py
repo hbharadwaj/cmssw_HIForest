@@ -32,7 +32,6 @@ inclusiveJetAnalyzer = cms.EDAnalyzer("HiInclusiveJetAnalyzer",
     doCandidateBtagging = cms.untracked.bool(False),
     doBtagging = cms.untracked.bool(False),
 
-    fillDetailBranches = cms.untracked.bool(False),
     doCaloJets = cms.untracked.bool(False),
 
     doSubstructure = cms.untracked.bool(False),
