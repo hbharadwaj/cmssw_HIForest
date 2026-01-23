@@ -47,9 +47,9 @@ public:
   void beginJob() override;
 
   enum JetType {
-    kAllGen   = 0,      // All gen jets
-    kMatchGen = 1,      // Only matched gen jets
-    kReco     = 2       // Reco jets
+    kAllGen = 0,    // All gen jets
+    kMatchGen = 1,  // Only matched gen jets
+    kReco = 2       // Reco jets
   };
 
 private:
@@ -70,9 +70,10 @@ private:
   void analyzeRefSubjets(const reco::GenJet& jet);
   void analyzeGenSubjets(const reco::GenJet& jet);
 
-  int TaggedJet(pat::Jet patjet, edm::Handle<reco::JetTagCollection > jetTags );
+  int TaggedJet(pat::Jet patjet, edm::Handle<reco::JetTagCollection> jetTags);
 
-  template<typename T> void IterativeDeclustering(int flagGen,const T& jet,fastjet::PseudoJet *sub1, fastjet::PseudoJet *sub2);
+  template <typename T>
+  void IterativeDeclustering(int flagGen, const T& jet, fastjet::PseudoJet* sub1, fastjet::PseudoJet* sub2);
   void countJetSplits(const fastjet::PseudoJet& node, bool primaryOnly, int& nSD, std::vector<int>& nKT);
 
   edm::InputTag jetTagLabel_;
@@ -84,7 +85,7 @@ private:
   edm::EDGetTokenT<edm::View<reco::GenJet>> genjetTag_;
   edm::EDGetTokenT<edm::HepMCProduct> eventInfoTag_;
   edm::EDGetTokenT<GenEventInfoProduct> eventGenInfoTag_;
-  // b and c hadrons                                                                                                                                                     
+  // b and c hadrons
   edm::EDGetTokenT<reco::JetFlavourInfoMatchingCollection> jetFlavourInfosToken_;
 
   std::string jetName_;  //used as prefix for jet structures
@@ -144,14 +145,14 @@ private:
   double pfNeutralCandidateEnergyScale_;
   double pfGammaCandidateEnergyScale_;
 
-
   TTree* t;
   edm::Service<TFileService> fs1;
 
   std::string bTagJetName_;
   std::string particleTransformerJetTags_;
 
-  edm::EDGetTokenT<reco::JetTagCollection> particleTransformerJetTagsTkn_,particleTransformerJetTagsBBTkn_,particleTransformerJetTagsLepBTkn_;
+  edm::EDGetTokenT<reco::JetTagCollection> particleTransformerJetTagsTkn_, particleTransformerJetTagsBBTkn_,
+      particleTransformerJetTagsLepBTkn_;
   std::map<std::string, std::map<std::string, edm::EDGetTokenT<reco::JetTagCollection>>> jetTaggers_;
 
   // Grooming type enum for readability (config still uses double for backward compatibility)
@@ -204,17 +205,17 @@ private:
     float jttau2[MAXJETS] = {0};
     float jttau3[MAXJETS] = {0};
 
-    int   jtdynsplit[MAXJETS] = {0};
+    int jtdynsplit[MAXJETS] = {0};
     float jtdyneta[MAXJETS] = {0};
     float jtdynphi[MAXJETS] = {0};
     float jtdyndeltaR[MAXJETS] = {0};
     float jtdynkt[MAXJETS] = {0};
     float jtdynz[MAXJETS] = {0};
-    int   jtNPrimarySD[MAXJETS] = {0};
-    int   jtNTotalSD[MAXJETS] = {0};
-    int   jtNPrimaryKT[MAXJETS][MAXNKT] = {{0}};
-    int   jtNTotalKT[MAXJETS][MAXNKT] = {{0}};
-    int   jtintjetmulti[MAXJETS] = {0};
+    int jtNPrimarySD[MAXJETS] = {0};
+    int jtNTotalSD[MAXJETS] = {0};
+    int jtNPrimaryKT[MAXJETS][MAXNKT] = {{0}};
+    int jtNTotalKT[MAXJETS][MAXNKT] = {{0}};
+    int jtintjetmulti[MAXJETS] = {0};
     float jtgirth[MAXJETS] = {0};
     float jtthrust[MAXJETS] = {0};
     float jtLHA[MAXJETS] = {0};
@@ -388,17 +389,17 @@ private:
     int refparton_flavor[MAXJETS] = {0};
     int refparton_flavorForB[MAXJETS] = {0};
 
-    int   refdynsplit[MAXJETS] = {0};
+    int refdynsplit[MAXJETS] = {0};
     float refdyneta[MAXJETS] = {0};
     float refdynphi[MAXJETS] = {0};
     float refdyndeltaR[MAXJETS] = {0};
     float refdynkt[MAXJETS] = {0};
     float refdynz[MAXJETS] = {0};
-    int   refNPrimarySD[MAXJETS] = {0};
-    int   refNTotalSD[MAXJETS] = {0};
-    int   refNPrimaryKT[MAXJETS][MAXNKT] = {{0}};
-    int   refNTotalKT[MAXJETS][MAXNKT] = {{0}};
-    int   refintjetmulti[MAXJETS] = {0};
+    int refNPrimarySD[MAXJETS] = {0};
+    int refNTotalSD[MAXJETS] = {0};
+    int refNPrimaryKT[MAXJETS][MAXNKT] = {{0}};
+    int refNTotalKT[MAXJETS][MAXNKT] = {{0}};
+    int refintjetmulti[MAXJETS] = {0};
     float refgirth[MAXJETS] = {0};
     float refthrust[MAXJETS] = {0};
     float refLHA[MAXJETS] = {0};
@@ -448,17 +449,17 @@ private:
     float gendrjt[MAXJETS] = {0};
     int gensubid[MAXJETS] = {0};
 
-    int   gendynsplit[MAXJETS] = {0};
+    int gendynsplit[MAXJETS] = {0};
     float gendyneta[MAXJETS] = {0};
     float gendynphi[MAXJETS] = {0};
     float gendyndeltaR[MAXJETS] = {0};
     float gendynkt[MAXJETS] = {0};
     float gendynz[MAXJETS] = {0};
-    int   genNPrimarySD[MAXJETS] = {0};
-    int   genNTotalSD[MAXJETS] = {0};
-    int   genNPrimaryKT[MAXJETS][MAXNKT] = {{0}};
-    int   genNTotalKT[MAXJETS][MAXNKT] = {{0}};
-    int   genintjetmulti[MAXJETS] = {0};
+    int genNPrimarySD[MAXJETS] = {0};
+    int genNTotalSD[MAXJETS] = {0};
+    int genNPrimaryKT[MAXJETS][MAXNKT] = {{0}};
+    int genNTotalKT[MAXJETS][MAXNKT] = {{0}};
+    int genintjetmulti[MAXJETS] = {0};
     float gengirth[MAXJETS] = {0};
     float genthrust[MAXJETS] = {0};
     float genLHA[MAXJETS] = {0};
@@ -497,8 +498,6 @@ private:
     float calopt[MAXCALO] = {0};
     float caloeta[MAXCALO] = {0};
     float calophi[MAXCALO] = {0};
-
-
   };
 
   JRA jets_;
