@@ -74,7 +74,7 @@ private:
 
   template <typename T>
   void IterativeDeclustering(int flagGen, const T& jet, fastjet::PseudoJet* sub1, fastjet::PseudoJet* sub2);
-  void countJetSplits(const fastjet::PseudoJet& node, bool primaryOnly, int& nSD, std::vector<int>& nKT);
+  void countJetSplits(const fastjet::PseudoJet& node, bool primaryOnly, int& nSD, std::vector<int>& nKT, std::vector<float>* angles = nullptr);
 
   edm::InputTag jetTagLabel_;
   edm::EDGetTokenT<pat::JetCollection> jetTag_;
@@ -225,6 +225,16 @@ private:
     std::vector<std::vector<float>> jtPLJPdR = {};
     std::vector<std::vector<float>> jtPLJPeta = {};
     std::vector<std::vector<float>> jtPLJPphi = {};
+
+    std::vector<std::vector<float>> jtTotalSDAngles = {};
+    std::vector<std::vector<float>> jtTotalSDAnglesPljp = {};
+    std::vector<float> jtAvgTotalSDAngle = {};
+    std::vector<float> jtAvgPrimarySDAngle = {};
+
+    std::vector<std::vector<std::vector<float>>> jtTotalKTAngles = {};
+    std::vector<std::vector<std::vector<float>>> jtTotalKTAnglesPljp = {};
+    std::vector<std::vector<float>> jtAvgTotalKTAngle = {};
+    std::vector<std::vector<float>> jtAvgPrimaryKTAngle = {};
 
     float jtsym[MAXJETS] = {0};
     int jtdroppedBranches[MAXJETS] = {0};
@@ -410,6 +420,16 @@ private:
     std::vector<std::vector<float>> refPLJPeta = {};
     std::vector<std::vector<float>> refPLJPphi = {};
 
+    std::vector<std::vector<float>> refTotalSDAngles = {};
+    std::vector<std::vector<float>> refTotalSDAnglesPljp = {};
+    std::vector<float> refAvgTotalSDAngle = {};
+    std::vector<float> refAvgPrimarySDAngle = {};
+
+    std::vector<std::vector<std::vector<float>>> refTotalKTAngles = {};
+    std::vector<std::vector<std::vector<float>>> refTotalKTAnglesPljp = {};
+    std::vector<std::vector<float>> refAvgTotalKTAngle = {};
+    std::vector<std::vector<float>> refAvgPrimaryKTAngle = {};
+
     float refptG[MAXJETS] = {0};
     float refetaG[MAXJETS] = {0};
     float refphiG[MAXJETS] = {0};
@@ -469,6 +489,16 @@ private:
     std::vector<std::vector<float>> genPLJPdR = {};
     std::vector<std::vector<float>> genPLJPeta = {};
     std::vector<std::vector<float>> genPLJPphi = {};
+
+    std::vector<std::vector<float>> genTotalSDAngles = {};
+    std::vector<std::vector<float>> genTotalSDAnglesPljp = {};
+    std::vector<float> genAvgTotalSDAngle = {};
+    std::vector<float> genAvgPrimarySDAngle = {};
+
+    std::vector<std::vector<std::vector<float>>> genTotalKTAngles = {};
+    std::vector<std::vector<std::vector<float>>> genTotalKTAnglesPljp = {};
+    std::vector<std::vector<float>> genAvgTotalKTAngle = {};
+    std::vector<std::vector<float>> genAvgPrimaryKTAngle = {};
 
     float genptG[MAXJETS] = {0};
     float genetaG[MAXJETS] = {0};
