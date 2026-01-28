@@ -326,13 +326,8 @@ void HiInclusiveJetAnalyzer::beginJob() {
     t->Branch("jtPLJPeta", &jets_.jtPLJPeta);
     t->Branch("jtPLJPphi", &jets_.jtPLJPphi);
 
-    t->Branch("jtTotalSDAngles",&jets_.jtTotalSDAngles);
-    t->Branch("jtTotalSDAnglesPljp",&jets_.jtTotalSDAnglesPljp);
     t->Branch("jtAvgTotalSDAngle",&jets_.jtAvgTotalSDAngle);
     t->Branch("jtAvgPrimarySDAngle",&jets_.jtAvgPrimarySDAngle);
-
-    t->Branch("jtTotalKTAngles",&jets_.jtTotalKTAngles);
-    t->Branch("jtTotalKTAnglesPljp",&jets_.jtTotalKTAnglesPljp);
     t->Branch("jtAvgTotalKTAngle",&jets_.jtAvgTotalKTAngle);
     t->Branch("jtAvgPrimaryKTAngle",&jets_.jtAvgPrimaryKTAngle);
   }
@@ -409,13 +404,8 @@ void HiInclusiveJetAnalyzer::beginJob() {
       t->Branch("refPLJPeta", &jets_.refPLJPeta);
       t->Branch("refPLJPphi", &jets_.refPLJPphi);
 
-      t->Branch("refTotalSDAngles",&jets_.refTotalSDAngles);
-      t->Branch("refTotalSDAnglesPljp",&jets_.refTotalSDAnglesPljp);
       t->Branch("refAvgTotalSDAngle",&jets_.refAvgTotalSDAngle);
       t->Branch("refAvgPrimarySDAngle",&jets_.refAvgPrimarySDAngle);
-
-      t->Branch("refTotalKTAngles",&jets_.refTotalKTAngles);
-      t->Branch("refTotalKTAnglesPljp",&jets_.refTotalKTAnglesPljp);
       t->Branch("refAvgTotalKTAngle",&jets_.refAvgTotalKTAngle);
       t->Branch("refAvgPrimaryKTAngle",&jets_.refAvgPrimaryKTAngle);
     }
@@ -510,13 +500,8 @@ void HiInclusiveJetAnalyzer::beginJob() {
         t->Branch("genPLJPeta", &jets_.genPLJPeta);
         t->Branch("genPLJPphi", &jets_.genPLJPphi);
 
-        t->Branch("genTotalSDAngles",&jets_.genTotalSDAngles);
-        t->Branch("genTotalSDAnglesPljp",&jets_.genTotalSDAnglesPljp);
         t->Branch("genAvgTotalSDAngle",&jets_.genAvgTotalSDAngle);
         t->Branch("genAvgPrimarySDAngle",&jets_.genAvgPrimarySDAngle);
-
-        t->Branch("genTotalKTAngles",&jets_.genTotalKTAngles);
-        t->Branch("genTotalKTAnglesPljp",&jets_.genTotalKTAnglesPljp);
         t->Branch("genAvgTotalKTAngle",&jets_.genAvgTotalKTAngle);
         t->Branch("genAvgPrimaryKTAngle",&jets_.genAvgPrimaryKTAngle);
       }
@@ -958,14 +943,6 @@ void HiInclusiveJetAnalyzer::analyze(const Event& iEvent, const EventSetup& iSet
       jets_.jtPLJPdR.emplace_back();
       jets_.jtPLJPeta.emplace_back();
       jets_.jtPLJPphi.emplace_back();
-      jets_.jtTotalSDAnglesPljp.emplace_back();
-      jets_.jtTotalSDAngles.emplace_back();
-      jets_.jtAvgPrimarySDAngle.emplace_back();
-      jets_.jtAvgTotalSDAngle.emplace_back();
-      jets_.jtTotalKTAnglesPljp.emplace_back();
-      jets_.jtTotalKTAngles.emplace_back();
-      jets_.jtAvgPrimaryKTAngle.emplace_back();
-      jets_.jtAvgTotalKTAngle.emplace_back();
       fastjet::PseudoJet* sub1Reco = new fastjet::PseudoJet();
       fastjet::PseudoJet* sub2Reco = new fastjet::PseudoJet();
       IterativeDeclustering(kReco, jet, sub1Reco, sub2Reco);
@@ -1076,14 +1053,6 @@ void HiInclusiveJetAnalyzer::analyze(const Event& iEvent, const EventSetup& iSet
           jets_.refPLJPdR.emplace_back();
           jets_.refPLJPeta.emplace_back();
           jets_.refPLJPphi.emplace_back();
-          jets_.refTotalSDAnglesPljp.emplace_back();
-          jets_.refTotalSDAngles.emplace_back();
-          jets_.refAvgPrimarySDAngle.emplace_back();
-          jets_.refAvgTotalSDAngle.emplace_back();
-          jets_.refTotalKTAnglesPljp.emplace_back();
-          jets_.refTotalKTAngles.emplace_back();
-          jets_.refAvgPrimaryKTAngle.emplace_back();
-          jets_.refAvgTotalKTAngle.emplace_back();
           fastjet::PseudoJet* sub1MatchGen = new fastjet::PseudoJet();
           fastjet::PseudoJet* sub2MatchGen = new fastjet::PseudoJet();
           IterativeDeclustering(kMatchGen, *genjet, sub1MatchGen, sub2MatchGen);
@@ -1144,14 +1113,6 @@ void HiInclusiveJetAnalyzer::analyze(const Event& iEvent, const EventSetup& iSet
           jets_.refPLJPdR.emplace_back();
           jets_.refPLJPeta.emplace_back();
           jets_.refPLJPphi.emplace_back();
-          jets_.refTotalSDAnglesPljp.emplace_back();
-          jets_.refTotalSDAngles.emplace_back();
-          jets_.refAvgPrimarySDAngle.emplace_back();
-          jets_.refAvgTotalSDAngle.emplace_back();
-          jets_.refTotalKTAnglesPljp.emplace_back();
-          jets_.refTotalKTAngles.emplace_back();
-          jets_.refAvgPrimaryKTAngle.emplace_back();
-          jets_.refAvgTotalKTAngle.emplace_back();
         }
       }
       jets_.reftau1[jets_.nref] = -999.;
@@ -1276,14 +1237,6 @@ void HiInclusiveJetAnalyzer::analyze(const Event& iEvent, const EventSetup& iSet
           jets_.genPLJPdR.emplace_back();
           jets_.genPLJPeta.emplace_back();
           jets_.genPLJPphi.emplace_back();
-          jets_.genTotalSDAnglesPljp.emplace_back();
-          jets_.genTotalSDAngles.emplace_back();
-          jets_.genAvgPrimarySDAngle.emplace_back();
-          jets_.genAvgTotalSDAngle.emplace_back();
-          jets_.genTotalKTAnglesPljp.emplace_back();
-          jets_.genTotalKTAngles.emplace_back();
-          jets_.genAvgPrimaryKTAngle.emplace_back();
-          jets_.genAvgTotalKTAngle.emplace_back();
           fastjet::PseudoJet* sub1AllGen = new fastjet::PseudoJet();
           fastjet::PseudoJet* sub2AllGen = new fastjet::PseudoJet();
           IterativeDeclustering(kAllGen, genjet, sub1AllGen, sub2AllGen);
@@ -1506,10 +1459,10 @@ void HiInclusiveJetAnalyzer::IterativeDeclustering(int flagGen,
       jets_.genPLJPdR.back() = ljpDr;
       jets_.genPLJPeta.back() = ljpEta;
       jets_.genPLJPphi.back() = ljpPhi;
-      jets_.genAvgPrimarySDAngle.back() = avgPrimarySDAngle;
-      jets_.genAvgTotalSDAngle.back() = avgTotalSDAngle;
-      jets_.genAvgPrimaryKTAngle.back() = avgPrimaryKTAngle;
-      jets_.genAvgTotalKTAngle.back() = avgTotalKTAngle;
+      jets_.genAvgPrimarySDAngle.push_back(avgPrimarySDAngle);
+      jets_.genAvgTotalSDAngle.push_back(avgTotalSDAngle);
+      jets_.genAvgPrimaryKTAngle.push_back(avgPrimaryKTAngle);
+      jets_.genAvgTotalKTAngle.push_back(avgTotalKTAngle);
     } else if (flagGen == kMatchGen) {
       jets_.refNPrimarySD[jets_.nref] = nPrimarySDVal;
       jets_.refNTotalSD[jets_.nref] = nTotalSDVal;
@@ -1521,10 +1474,10 @@ void HiInclusiveJetAnalyzer::IterativeDeclustering(int flagGen,
       jets_.refPLJPdR.back() = ljpDr;
       jets_.refPLJPeta.back() = ljpEta;
       jets_.refPLJPphi.back() = ljpPhi;
-      jets_.refAvgPrimarySDAngle.back() = avgPrimarySDAngle;
-      jets_.refAvgTotalSDAngle.back() = avgTotalSDAngle;
-      jets_.refAvgPrimaryKTAngle.back() = avgPrimaryKTAngle;
-      jets_.refAvgTotalKTAngle.back() = avgTotalKTAngle;
+      jets_.refAvgPrimarySDAngle.push_back(avgPrimarySDAngle);
+      jets_.refAvgTotalSDAngle.push_back(avgTotalSDAngle);
+      jets_.refAvgPrimaryKTAngle.push_back(avgPrimaryKTAngle);
+      jets_.refAvgTotalKTAngle.push_back(avgTotalKTAngle);
     } else if (flagGen == kReco) {
       jets_.jtNPrimarySD[jets_.nref] = nPrimarySDVal;
       jets_.jtNTotalSD[jets_.nref] = nTotalSDVal;
@@ -1536,10 +1489,10 @@ void HiInclusiveJetAnalyzer::IterativeDeclustering(int flagGen,
       jets_.jtPLJPdR.back() = ljpDr;
       jets_.jtPLJPeta.back() = ljpEta;
       jets_.jtPLJPphi.back() = ljpPhi;
-      jets_.jtAvgPrimarySDAngle.back() = avgPrimarySDAngle;
-      jets_.jtAvgTotalSDAngle.back() = avgTotalSDAngle;
-      jets_.jtAvgPrimaryKTAngle.back() = avgPrimaryKTAngle;
-      jets_.jtAvgTotalKTAngle.back() = avgTotalKTAngle;
+      jets_.jtAvgPrimarySDAngle.push_back(avgPrimarySDAngle);
+      jets_.jtAvgTotalSDAngle.push_back(avgTotalSDAngle);
+      jets_.jtAvgPrimaryKTAngle.push_back(avgPrimaryKTAngle);
+      jets_.jtAvgTotalKTAngle.push_back(avgTotalKTAngle);
     }
     return;
   }
@@ -1552,7 +1505,8 @@ void HiInclusiveJetAnalyzer::IterativeDeclustering(int flagGen,
   countJetSplits(jj, true, nPrimarySDVal, nPrimaryKTVal, &totalSD_angles_pljp);
   countJetSplits(jj, false, nTotalSDVal, nTotalKTVal, &totalSD_angles);
 
-  // ===== DECLUSTERING LOOP =====
+  // ===== DECLUSTERING LOOP (track angles for all splits) =====
+  std::vector<std::vector<float>> tempAllKTAngles(ktThresholds_.size());
   while (jj.has_parents(j1, j2)) {
     if (j1.perp() < j2.perp())
       std::swap(j1, j2);
@@ -1582,6 +1536,13 @@ void HiInclusiveJetAnalyzer::IterativeDeclustering(int flagGen,
     ljpDr.push_back(delta_R);
     ljpEta.push_back(j2.eta());
     ljpPhi.push_back(j2.phi());
+
+    // Track KT angles for all splits (will be filtered into primary/total later)
+    for (size_t i = 0; i < ktThresholds_.size(); ++i) {
+      if (k_t_split > ktThresholds_[i]) {
+        tempAllKTAngles[i].push_back(static_cast<float>(delta_R));
+      }
+    }
 
     // lateSD: keeps updating to last passing split
     if ((static_cast<int>(groomType_) == kLateSD) && (var_z > sdZcut_ * pow(delta_R / rParam_, sdBeta_))) {
@@ -1619,6 +1580,24 @@ void HiInclusiveJetAnalyzer::IterativeDeclustering(int flagGen,
 
     jj = j1;
     nsplit = nsplit + 1;
+  }
+
+  // ===== POST-PROCESS KT ANGLES: separate primary vs total =====
+  // Primary angles only include the leading branch splits
+  for (size_t i = 0; i < ktThresholds_.size(); ++i) {
+    // Filter to only primary branch (first nPrimaryKTVal[i] splits)
+    if (!tempAllKTAngles[i].empty()) {
+      int primaryCount = 0;
+      for (size_t j = 0; j < tempAllKTAngles[i].size(); ++j) {
+        if (primaryCount < nPrimaryKTVal[i]) {
+          totalKT_angles_pljp[i].push_back(tempAllKTAngles[i][j]);
+          primaryCount++;
+        } else {
+          // Rest go to total
+          totalKT_angles[i].push_back(tempAllKTAngles[i][j]);
+        }
+      }
+    }
   }
 
   // Combination mode: require SD and kT to agree (use -997 if they don't)
@@ -1685,12 +1664,10 @@ void HiInclusiveJetAnalyzer::IterativeDeclustering(int flagGen,
     jets_.genPLJPeta.back() = ljpEta;
     jets_.genPLJPphi.back() = ljpPhi;
 
-    jets_.genTotalSDAnglesPljp.back() = totalSD_angles_pljp;
-    jets_.genAvgPrimarySDAngle.back() = avgPrimarySDAngle;
-    jets_.genTotalSDAngles.back() = totalSD_angles;
-    jets_.genAvgTotalSDAngle.back() = avgTotalSDAngle;
-    jets_.genAvgPrimaryKTAngle.back() = avgPrimaryKTAngle;
-    jets_.genAvgTotalKTAngle.back() = avgTotalKTAngle;
+    jets_.genAvgPrimarySDAngle.push_back(avgPrimarySDAngle);
+    jets_.genAvgTotalSDAngle.push_back(avgTotalSDAngle);
+    jets_.genAvgPrimaryKTAngle.push_back(avgPrimaryKTAngle);
+    jets_.genAvgTotalKTAngle.push_back(avgTotalKTAngle);
 
   } else if (flagGen == kMatchGen) {
     jets_.refdynsplit[jets_.nref] = dyn_split;
@@ -1717,12 +1694,10 @@ void HiInclusiveJetAnalyzer::IterativeDeclustering(int flagGen,
     jets_.refPLJPeta.back() = ljpEta;
     jets_.refPLJPphi.back() = ljpPhi;
 
-    jets_.refTotalSDAnglesPljp.back() = totalSD_angles_pljp;
-    jets_.refAvgPrimarySDAngle.back() = avgPrimarySDAngle;
-    jets_.refTotalSDAngles.back() = totalSD_angles;
-    jets_.refAvgTotalSDAngle.back() = avgTotalSDAngle;
-    jets_.refAvgPrimaryKTAngle.back() = avgPrimaryKTAngle;
-    jets_.refAvgTotalKTAngle.back() = avgTotalKTAngle;
+    jets_.refAvgPrimarySDAngle.push_back(avgPrimarySDAngle);
+    jets_.refAvgTotalSDAngle.push_back(avgTotalSDAngle);
+    jets_.refAvgPrimaryKTAngle.push_back(avgPrimaryKTAngle);
+    jets_.refAvgTotalKTAngle.push_back(avgTotalKTAngle);
   } else if (flagGen == kReco) {
     jets_.jtdynsplit[jets_.nref] = dyn_split;
     jets_.jtdyneta[jets_.nref] = dyn_eta;
@@ -1748,12 +1723,10 @@ void HiInclusiveJetAnalyzer::IterativeDeclustering(int flagGen,
     jets_.jtPLJPeta.back() = ljpEta;
     jets_.jtPLJPphi.back() = ljpPhi;
 
-    jets_.jtTotalSDAnglesPljp.back() = totalSD_angles_pljp;
-    jets_.jtAvgPrimarySDAngle.back() = avgPrimarySDAngle;
-    jets_.jtTotalSDAngles.back() = totalSD_angles;
-    jets_.jtAvgTotalSDAngle.back() = avgTotalSDAngle;
-    jets_.jtAvgPrimaryKTAngle.back() = avgPrimaryKTAngle;
-    jets_.jtAvgTotalKTAngle.back() = avgTotalKTAngle;
+    jets_.jtAvgPrimarySDAngle.push_back(avgPrimarySDAngle);
+    jets_.jtAvgTotalSDAngle.push_back(avgTotalSDAngle);
+    jets_.jtAvgPrimaryKTAngle.push_back(avgPrimaryKTAngle);
+    jets_.jtAvgTotalKTAngle.push_back(avgTotalKTAngle);
   } else {
     //TODO: Handle Exception
     std::cout << "\nNot Gen or Reco in Iterative Declustering\n";

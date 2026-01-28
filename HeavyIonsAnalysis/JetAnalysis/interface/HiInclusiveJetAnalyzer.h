@@ -226,13 +226,8 @@ private:
     std::vector<std::vector<float>> jtPLJPeta = {};
     std::vector<std::vector<float>> jtPLJPphi = {};
 
-    std::vector<std::vector<float>> jtTotalSDAngles = {};
-    std::vector<std::vector<float>> jtTotalSDAnglesPljp = {};
     std::vector<float> jtAvgTotalSDAngle = {};
     std::vector<float> jtAvgPrimarySDAngle = {};
-
-    std::vector<std::vector<std::vector<float>>> jtTotalKTAngles = {};
-    std::vector<std::vector<std::vector<float>>> jtTotalKTAnglesPljp = {};
     std::vector<std::vector<float>> jtAvgTotalKTAngle = {};
     std::vector<std::vector<float>> jtAvgPrimaryKTAngle = {};
 
@@ -420,13 +415,8 @@ private:
     std::vector<std::vector<float>> refPLJPeta = {};
     std::vector<std::vector<float>> refPLJPphi = {};
 
-    std::vector<std::vector<float>> refTotalSDAngles = {};
-    std::vector<std::vector<float>> refTotalSDAnglesPljp = {};
     std::vector<float> refAvgTotalSDAngle = {};
     std::vector<float> refAvgPrimarySDAngle = {};
-
-    std::vector<std::vector<std::vector<float>>> refTotalKTAngles = {};
-    std::vector<std::vector<std::vector<float>>> refTotalKTAnglesPljp = {};
     std::vector<std::vector<float>> refAvgTotalKTAngle = {};
     std::vector<std::vector<float>> refAvgPrimaryKTAngle = {};
 
@@ -490,13 +480,8 @@ private:
     std::vector<std::vector<float>> genPLJPeta = {};
     std::vector<std::vector<float>> genPLJPphi = {};
 
-    std::vector<std::vector<float>> genTotalSDAngles = {};
-    std::vector<std::vector<float>> genTotalSDAnglesPljp = {};
     std::vector<float> genAvgTotalSDAngle = {};
     std::vector<float> genAvgPrimarySDAngle = {};
-
-    std::vector<std::vector<std::vector<float>>> genTotalKTAngles = {};
-    std::vector<std::vector<std::vector<float>>> genTotalKTAnglesPljp = {};
     std::vector<std::vector<float>> genAvgTotalKTAngle = {};
     std::vector<std::vector<float>> genAvgPrimaryKTAngle = {};
 
