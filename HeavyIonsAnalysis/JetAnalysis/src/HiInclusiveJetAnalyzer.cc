@@ -1387,6 +1387,10 @@ void HiInclusiveJetAnalyzer::IterativeDeclustering(int flagGen,
   // Reclustering jet constituents with new algorithm
   myjet.reset(jet.p4().px(), jet.p4().py(), jet.p4().pz(), jet.p4().e());
 
+  // Guard: avoid division by zero in angularity calculations
+  const double jetPt = myjet.perp();
+  const bool validJetPt = (jetPt > 1e-10);
+
   std::vector<fastjet::PseudoJet> particles = {};
   auto daughters = jet.getJetConstituents();
 
@@ -1417,37 +1421,52 @@ void HiInclusiveJetAnalyzer::IterativeDeclustering(int flagGen,
 
     mypart.reset(temp_px, temp_py, temp_pz, temp_E);
 
-    double frac_dR = mypart.delta_R(myjet) / rParam_;
-    double frac_pt = mypart.perp() / myjet.perp();
+    double dR_part = mypart.delta_R(myjet);
+    double frac_dR = dR_part / rParam_;
+    double frac_pt = validJetPt ? mypart.perp() / jetPt : 0.0;
 
     intjet_multi++;
-    jet_girth += mypart.perp() * mypart.delta_R(myjet) / myjet.perp();
-    jet_thrust += frac_pt * frac_dR * frac_dR;
-    jet_LHA += frac_pt * sqrt(frac_dR);
-    jet_pTD += frac_pt * frac_pt;
+    if (validJetPt) {  // Skip angularities if jet pT ~0
+      jet_girth += mypart.perp() * dR_part / jetPt;
+      jet_thrust += frac_pt * frac_dR * frac_dR;
+      jet_LHA += frac_pt * sqrt(frac_dR);
+      jet_pTD += frac_pt * frac_pt;
+    }
 
     particles.push_back(fastjet::PseudoJet(temp_px, temp_py, temp_pz, temp_E));
   }
 
-  fastjet::ClusterSequence csiter(particles, jet_def);
-  std::vector<fastjet::PseudoJet> reclustered_CA_jets = csiter.inclusive_jets(0);
-  reclustered_CA_jets = sorted_by_pt(reclustered_CA_jets);
+  // ===== CLUSTERING AND EARLY-EXIT CHECK =====
+  // skipDeclustering covers: empty particles (e.g., only neutral constituents) or single-constituent jets
+  bool skipDeclustering = false;
+  fastjet::PseudoJet jj, j1, j2;
+  std::unique_ptr<fastjet::ClusterSequence> csiter;
 
-  fastjet::PseudoJet jj = reclustered_CA_jets[0];
-  fastjet::PseudoJet j1;
-  fastjet::PseudoJet j2;
+  if (particles.empty()) {
+    // No valid constituents (e.g., doChargedConstOnly with only neutral particles)
+    skipDeclustering = true;
+  } else {
+    csiter = std::make_unique<fastjet::ClusterSequence>(particles, jet_def);
+    std::vector<fastjet::PseudoJet> reclustered_CA_jets = csiter->inclusive_jets(0);
+    reclustered_CA_jets = sorted_by_pt(reclustered_CA_jets);
+    jj = reclustered_CA_jets[0];
 
-  // ===== HANDLE JETS WITHOUT PARENTS (use -998 guard) =====
-  fastjet::PseudoJet dummy1, dummy2;
-  if (!jj.has_parents(dummy1, dummy2)) {
-    // Use -998 to indicate jet has no parents (single constituent)
+    fastjet::PseudoJet dummy1, dummy2;
+    if (!jj.has_parents(dummy1, dummy2)) {
+      // Jet has no parents (single constituent after filtering)
+      skipDeclustering = true;
+    }
+  }
+
+  // ===== HANDLE JETS WITHOUT VALID SUBSTRUCTURE (use -998 guard) =====
+  if (skipDeclustering) {
     avgPrimarySDAngle = -998.0f;
     avgTotalSDAngle = -998.0f;
     for (size_t i = 0; i < ktThresholds_.size(); ++i) {
       avgPrimaryKTAngle[i] = -998.0f;
       avgTotalKTAngle[i] = -998.0f;
     }
-    
+
     if (flagGen == kAllGen) {
       jets_.genNPrimarySD[jets_.ngen] = nPrimarySDVal;
       jets_.genNTotalSD[jets_.ngen] = nTotalSDVal;
@@ -1549,11 +1568,12 @@ void HiInclusiveJetAnalyzer::IterativeDeclustering(int flagGen,
       dyn_split = nsplit;
       dyn_deltaR = delta_R;
       dyn_z = var_z;
-      jet_tau_form = 1 / (2 * myjet.E() * var_z * var_z1 * (1 - cos_theta));
+      double denom = 2 * myjet.E() * var_z * var_z1 * (1 - cos_theta);
+      jet_tau_form = (std::abs(denom) > 1e-20) ? 1.0 / denom : -999.0;  // Guard div/0
       dyn_eta = j2.eta();
       dyn_phi = j2.phi();
-      *sub1 = j1;
-      *sub2 = j2;
+      if (sub1) *sub1 = j1;
+      if (sub2) *sub2 = j2;
     }
 
     // standard SD: first passing split only
@@ -1562,11 +1582,12 @@ void HiInclusiveJetAnalyzer::IterativeDeclustering(int flagGen,
       dyn_split = nsplit;
       dyn_deltaR = delta_R;
       dyn_z = var_z;
-      jet_tau_form = 1 / (2 * myjet.E() * var_z * var_z1 * (1 - cos_theta));
+      double denom = 2 * myjet.E() * var_z * var_z1 * (1 - cos_theta);
+      jet_tau_form = (std::abs(denom) > 1e-20) ? 1.0 / denom : -999.0;  // Guard div/0
       dyn_eta = j2.eta();
       dyn_phi = j2.phi();
-      *sub1 = j1;
-      *sub2 = j2;
+      if (sub1) *sub1 = j1;
+      if (sub2) *sub2 = j2;
 
       flagSubjet = true;
     }
@@ -1603,8 +1624,8 @@ void HiInclusiveJetAnalyzer::IterativeDeclustering(int flagGen,
   // Combination mode: require SD and kT to agree (use -997 if they don't)
   if (static_cast<int>(groomCombine_) == kRequireSDandKT) {
     if (nsel != dyn_split) {
-      sub1->reset(0, 0, 0, 0);
-      sub2->reset(0, 0, 0, 0);
+      if (sub1) sub1->reset(0, 0, 0, 0);
+      if (sub2) sub2->reset(0, 0, 0, 0);
       dyn_split = -997;
       dyn_eta = -997.0;
       dyn_phi = -997.0;

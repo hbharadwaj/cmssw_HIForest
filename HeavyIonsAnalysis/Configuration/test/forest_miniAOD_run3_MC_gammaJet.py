@@ -28,6 +28,15 @@ process.maxEvents = cms.untracked.PSet(
     input = cms.untracked.int32(100)
     )
 
+process.Timing = cms.Service("Timing",
+  summaryOnly = cms.untracked.bool(False),
+  useJobReport = cms.untracked.bool(True)
+)
+
+process.SimpleMemoryCheck = cms.Service("SimpleMemoryCheck",
+    ignoreTotal = cms.untracked.int32(1)
+)
+
 ###############################################################################
 
 # load Global Tag, geometry, etc.
@@ -140,8 +149,8 @@ process.particleFlowAnalyser.ptMin = 0.0
 # Select the types of jets filled
 doCaloJets = False             # Fill jet ID and composition information branches
 matchJets = False             # Enables q/g and heavy flavor jet identification in MC
-jetPtMin = 15
-jetAbsEtaMax = 2.5
+jetPtMin = 10.0
+jetAbsEtaMax = 5.2
 
 doSubstructure = True
 sdZList = ["1", "2", "3"]
@@ -239,6 +248,7 @@ for jetLabel in allJetLabels:
             ana_sd.jetAbsEtaMax             = ana.jetAbsEtaMax
             ana_sd.rParam                   = ana.rParam
             ana_sd.jetFlavourInfos          = ana.jetFlavourInfos
+            ana_sd.doChargedConstOnly       = True
             if jetLabel != "0":
                 ana_sd.genjetTag = "ak{0}GenJetsReclusterNoNu".format(jetLabel)
             if doBtagging:
