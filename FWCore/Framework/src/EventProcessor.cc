@@ -635,8 +635,6 @@ namespace edm {
     beginJobCalled_ = true;
     bk::beginJob();
 
-    // StateSentry toerror(this); // should we add this ?
-    //make the services available
     ServiceRegistry::Operate operate(serviceToken_);
 
     service::SystemBounds bounds(preallocations_.numberOfStreams(),
@@ -718,7 +716,6 @@ namespace edm {
     //}
     espController_->finishConfiguration();
     actReg_->eventSetupConfigurationSignal_(esp_->recordsToResolverIndices(), processContext_);
-    actReg_->preBeginJobSignal_(pathsAndConsumesOfModules_, processContext_);
     try {
       convertException::wrap([&]() { input_->doBeginJob(); });
     } catch (cms::Exception& ex) {
@@ -726,104 +723,130 @@ namespace edm {
       throw;
     }
 
-    schedule_->beginJob(*preg_, esp_->recordsToResolverIndices(), *processBlockHelper_);
-    if (looper_) {
-      constexpr bool mustPrefetchMayGet = true;
-      auto const processBlockLookup = preg_->productLookup(InProcess);
-      auto const runLookup = preg_->productLookup(InRun);
-      auto const lumiLookup = preg_->productLookup(InLumi);
-      auto const eventLookup = preg_->productLookup(InEvent);
-      looper_->updateLookup(InProcess, *processBlockLookup, mustPrefetchMayGet);
-      looper_->updateLookup(InRun, *runLookup, mustPrefetchMayGet);
-      looper_->updateLookup(InLumi, *lumiLookup, mustPrefetchMayGet);
-      looper_->updateLookup(InEvent, *eventLookup, mustPrefetchMayGet);
-      looper_->updateLookup(esp_->recordsToResolverIndices());
-    }
-    // toerror.succeeded(); // should we add this?
-    for_all(subProcesses_, [](auto& subProcess) { subProcess.doBeginJob(); });
-    actReg_->postBeginJobSignal_();
+    beginJobStartedModules_ = true;
 
-    oneapi::tbb::task_group group;
-    FinalWaitingTask last{group};
-    using namespace edm::waiting_task::chain;
-    first([this](auto nextTask) {
-      for (unsigned int i = 0; i < preallocations_.numberOfStreams(); ++i) {
-        first([i, this](auto nextTask) {
-          ServiceRegistry::Operate operate(serviceToken_);
-          schedule_->beginStream(i);
-        }) | ifThen(not subProcesses_.empty(), [this, i](auto nextTask) {
-          ServiceRegistry::Operate operate(serviceToken_);
-          for_all(subProcesses_, [i](auto& subProcess) { subProcess.doBeginStream(i); });
-        }) | lastTask(nextTask);
+    // If we execute the beginJob transition for any module then we execute it
+    // for all of the modules. We save the first exception and rethrow that
+    // after they all complete.
+    std::exception_ptr firstException;
+    CMS_SA_ALLOW try {
+      schedule_->beginJob(
+          *preg_, esp_->recordsToResolverIndices(), *processBlockHelper_, pathsAndConsumesOfModules_, processContext_);
+    } catch (...) {
+      firstException = std::current_exception();
+    }
+    if (looper_ && !firstException) {
+      CMS_SA_ALLOW try {
+        constexpr bool mustPrefetchMayGet = true;
+        auto const processBlockLookup = preg_->productLookup(InProcess);
+        auto const runLookup = preg_->productLookup(InRun);
+        auto const lumiLookup = preg_->productLookup(InLumi);
+        auto const eventLookup = preg_->productLookup(InEvent);
+        looper_->updateLookup(InProcess, *processBlockLookup, mustPrefetchMayGet);
+        looper_->updateLookup(InRun, *runLookup, mustPrefetchMayGet);
+        looper_->updateLookup(InLumi, *lumiLookup, mustPrefetchMayGet);
+        looper_->updateLookup(InEvent, *eventLookup, mustPrefetchMayGet);
+        looper_->updateLookup(esp_->recordsToResolverIndices());
+      } catch (...) {
+        firstException = std::current_exception();
       }
-    }) | runLast(WaitingTaskHolder(group, &last));
-    last.wait();
+    }
+    for (auto& subProcess : subProcesses_) {
+      CMS_SA_ALLOW try { subProcess.doBeginJob(); } catch (...) {
+        if (!firstException) {
+          firstException = std::current_exception();
+        }
+      }
+    }
+    if (firstException) {
+      std::rethrow_exception(firstException);
+    }
+
+    beginJobSucceeded_ = true;
+    beginStreams();
+  }
+
+  void EventProcessor::beginStreams() {
+    // This will process streams concurrently, but not modules in the
+    // same stream or SubProcesses.
+    oneapi::tbb::task_group group;
+    FinalWaitingTask finalWaitingTask{group};
+    using namespace edm::waiting_task::chain;
+    {
+      WaitingTaskHolder taskHolder(group, &finalWaitingTask);
+      for (unsigned int i = 0; i < preallocations_.numberOfStreams(); ++i) {
+        first([this, i](auto nextTask) {
+          std::exception_ptr exceptionPtr;
+          {
+            ServiceRegistry::Operate operate(serviceToken_);
+            CMS_SA_ALLOW try { schedule_->beginStream(i); } catch (...) {
+              exceptionPtr = std::current_exception();
+            }
+            for (auto& subProcess : subProcesses_) {
+              CMS_SA_ALLOW try { subProcess.doBeginStream(i); } catch (...) {
+                if (!exceptionPtr) {
+                  exceptionPtr = std::current_exception();
+                }
+              }
+            }
+          }
+          nextTask.doneWaiting(exceptionPtr);
+        }) | lastTask(taskHolder);
+      }
+    }
+    finalWaitingTask.wait();
+  }
+
+  void EventProcessor::endStreams(ExceptionCollector& collector) noexcept {
+    std::mutex collectorMutex;
+
+    // This will process streams concurrently, but not modules in the
+    // same stream or SubProcesses.
+    oneapi::tbb::task_group group;
+    FinalWaitingTask finalWaitingTask{group};
+    using namespace edm::waiting_task::chain;
+    {
+      WaitingTaskHolder taskHolder(group, &finalWaitingTask);
+      for (unsigned int i = 0; i < preallocations_.numberOfStreams(); ++i) {
+        first([this, i, &collector, &collectorMutex](auto nextTask) {
+          {
+            ServiceRegistry::Operate operate(serviceToken_);
+            schedule_->endStream(i, collector, collectorMutex);
+            for (auto& subProcess : subProcesses_) {
+              subProcess.doEndStream(i, collector, collectorMutex);
+            }
+          }
+        }) | lastTask(taskHolder);
+      }
+    }
+    finalWaitingTask.waitNoThrow();
   }
 
   void EventProcessor::endJob() {
     // Collects exceptions, so we don't throw before all operations are performed.
     ExceptionCollector c(
-        "Multiple exceptions were thrown while executing endJob. An exception message follows for each.\n");
+        "Multiple exceptions were thrown while executing endStream and endJob. An exception message follows for "
+        "each.\n");
 
     //make the services available
     ServiceRegistry::Operate operate(serviceToken_);
 
-    using namespace edm::waiting_task::chain;
+    if (beginJobSucceeded_) {
+      endStreams(c);
+    }
 
-    oneapi::tbb::task_group group;
-    edm::FinalWaitingTask waitTask{group};
-
-    {
-      //handle endStream transitions
-      edm::WaitingTaskHolder taskHolder(group, &waitTask);
-      std::mutex collectorMutex;
-      for (unsigned int i = 0; i < preallocations_.numberOfStreams(); ++i) {
-        first([this, i, &c, &collectorMutex](auto nextTask) {
-          std::exception_ptr ep;
-          try {
-            ServiceRegistry::Operate operate(serviceToken_);
-            this->schedule_->endStream(i);
-          } catch (...) {
-            ep = std::current_exception();
-          }
-          if (ep) {
-            std::lock_guard<std::mutex> l(collectorMutex);
-            c.call([&ep]() { std::rethrow_exception(ep); });
-          }
-        }) | then([this, i, &c, &collectorMutex](auto nextTask) {
-          for (auto& subProcess : subProcesses_) {
-            first([this, i, &c, &collectorMutex, &subProcess](auto nextTask) {
-              std::exception_ptr ep;
-              try {
-                ServiceRegistry::Operate operate(serviceToken_);
-                subProcess.doEndStream(i);
-              } catch (...) {
-                ep = std::current_exception();
-              }
-              if (ep) {
-                std::lock_guard<std::mutex> l(collectorMutex);
-                c.call([&ep]() { std::rethrow_exception(ep); });
-              }
-            }) | lastTask(nextTask);
-          }
-        }) | lastTask(taskHolder);
+    if (beginJobStartedModules_) {
+      schedule_->endJob(c);
+      for (auto& subProcess : subProcesses_) {
+        subProcess.doEndJob(c);
       }
-    }
-    waitTask.waitNoThrow();
-
-    auto actReg = actReg_.get();
-    c.call([actReg]() { actReg->preEndJobSignal_(); });
-    schedule_->endJob(c);
-    for (auto& subProcess : subProcesses_) {
-      c.call(std::bind(&SubProcess::doEndJob, &subProcess));
-    }
-    c.call(std::bind(&InputSource::doEndJob, input_.get()));
-    if (looper_) {
-      c.call(std::bind(&EDLooperBase::endOfJob, looper()));
-    }
-    c.call([actReg]() { actReg->postEndJobSignal_(); });
-    if (c.hasThrown()) {
-      c.rethrow();
+      c.call(std::bind(&InputSource::doEndJob, input_.get()));
+      if (looper_) {
+        c.call(std::bind(&EDLooperBase::endOfJob, looper()));
+      }
+      if (c.hasThrown()) {
+        c.rethrow();
+      }
     }
   }
 
@@ -1305,11 +1328,6 @@ namespace edm {
                           using Traits = OccurrenceTraits<RunPrincipal, BranchActionGlobalBegin>;
                           beginGlobalTransitionAsync<Traits>(
                               nextTask, *schedule_, transitionInfo, serviceToken_, subProcesses_);
-                        }) | then([status](auto nextTask) mutable {
-                          if (status->stopBeforeProcessingRun()) {
-                            return;
-                          }
-                          status->globalBeginDidSucceed();
                         }) | ifThen(looper_, [this, status, &es](auto nextTask) {
                           if (status->stopBeforeProcessingRun()) {
                             return;
@@ -1323,11 +1341,11 @@ namespace edm {
                           ServiceRegistry::Operate operateLooper(serviceToken_);
                           looper_->doBeginRun(*status->runPrincipal(), es, &processContext_);
                         }) | then([this, status](std::exception_ptr const* iException, auto holder) mutable {
-                          bool precedingTasksSucceeded = true;
                           if (iException) {
-                            precedingTasksSucceeded = false;
                             WaitingTaskHolder copyHolder(holder);
                             copyHolder.doneWaiting(*iException);
+                          } else {
+                            status->globalBeginDidSucceed();
                           }
 
                           if (status->stopBeforeProcessingRun()) {
@@ -1365,27 +1383,23 @@ namespace edm {
                           PauseQueueSentry pauseQueueSentry(streamQueuesInserter_);
 
                           CMS_SA_ALLOW try {
-                            streamQueuesInserter_.push(
-                                *holder.group(), [this, status, precedingTasksSucceeded, holder]() mutable {
-                                  for (unsigned int i = 0; i < preallocations_.numberOfStreams(); ++i) {
-                                    CMS_SA_ALLOW try {
-                                      streamQueues_[i].push(
-                                          *holder.group(),
-                                          [this, i, status, precedingTasksSucceeded, holder]() mutable {
-                                            streamBeginRunAsync(
-                                                i, std::move(status), precedingTasksSucceeded, std::move(holder));
-                                          });
-                                    } catch (...) {
-                                      if (status->streamFinishedBeginRun()) {
-                                        WaitingTaskHolder copyHolder(holder);
-                                        copyHolder.doneWaiting(std::current_exception());
-                                        status->resetBeginResources();
-                                        queueWhichWaitsForIOVsToFinish_.resume();
-                                        exceptionRunStatus_ = status;
-                                      }
-                                    }
+                            streamQueuesInserter_.push(*holder.group(), [this, status, holder]() mutable {
+                              for (unsigned int i = 0; i < preallocations_.numberOfStreams(); ++i) {
+                                CMS_SA_ALLOW try {
+                                  streamQueues_[i].push(*holder.group(), [this, i, status, holder]() mutable {
+                                    streamBeginRunAsync(i, std::move(status), std::move(holder));
+                                  });
+                                } catch (...) {
+                                  if (status->streamFinishedBeginRun()) {
+                                    WaitingTaskHolder copyHolder(holder);
+                                    copyHolder.doneWaiting(std::current_exception());
+                                    status->resetBeginResources();
+                                    queueWhichWaitsForIOVsToFinish_.resume();
+                                    exceptionRunStatus_ = status;
                                   }
-                                });
+                                }
+                              }
+                            });
                           } catch (...) {
                             WaitingTaskHolder copyHolder(holder);
                             copyHolder.doneWaiting(std::current_exception());
@@ -1419,8 +1433,7 @@ namespace edm {
 
   void EventProcessor::streamBeginRunAsync(unsigned int iStream,
                                            std::shared_ptr<RunProcessingStatus> status,
-                                           bool precedingTasksSucceeded,
-                                           WaitingTaskHolder iHolder) {
+                                           WaitingTaskHolder iHolder) noexcept {
     // These shouldn't throw
     streamQueues_[iStream].pause();
     ++streamRunActive_;
@@ -1428,9 +1441,9 @@ namespace edm {
 
     CMS_SA_ALLOW try {
       using namespace edm::waiting_task::chain;
-      chain::first([this, iStream, precedingTasksSucceeded](auto nextTask) {
-        if (precedingTasksSucceeded) {
-          RunProcessingStatus& rs = *streamRunStatus_[iStream];
+      chain::first([this, iStream](auto nextTask) {
+        RunProcessingStatus& rs = *streamRunStatus_[iStream];
+        if (rs.didGlobalBeginSucceed()) {
           RunTransitionInfo transitionInfo(
               *rs.runPrincipal(), rs.eventSetupImpl(esp_->subProcessIndex()), &rs.eventSetupImpls());
           using Traits = OccurrenceTraits<RunPrincipal, BranchActionStreamBegin>;
@@ -1744,22 +1757,18 @@ namespace edm {
                           looper_->prefetchAsync(
                               nextTask, serviceToken_, Transition::BeginLuminosityBlock, *(status->lumiPrincipal()), es);
                         }) | ifThen(looper_, [this, status, &es](auto nextTask) {
-                          status->globalBeginDidSucceed();
                           ServiceRegistry::Operate operateLooper(serviceToken_);
                           looper_->doBeginLuminosityBlock(*(status->lumiPrincipal()), es, &processContext_);
                         }) | then([this, status, iRunStatus](std::exception_ptr const* iException, auto holder) mutable {
+                          status->setGlobalEndRunHolder(iRunStatus->globalEndRunHolder());
+
                           if (iException) {
-                            status->resetResources();
-                            queueWhichWaitsForIOVsToFinish_.resume();
                             WaitingTaskHolder copyHolder(holder);
                             copyHolder.doneWaiting(*iException);
+                            globalEndLumiAsync(holder, status);
                             endRunAsync(iRunStatus, holder);
                           } else {
-                            if (not looper_) {
-                              status->globalBeginDidSucceed();
-                            }
-
-                            status->setGlobalEndRunHolder(iRunStatus->globalEndRunHolder());
+                            status->globalBeginDidSucceed();
 
                             EventSetupImpl const& es = status->eventSetupImpl(esp_->subProcessIndex());
                             using Traits = OccurrenceTraits<LuminosityBlockPrincipal, BranchActionStreamBegin>;
@@ -1957,18 +1966,16 @@ namespace edm {
     auto eventSetupImpls = &lumiStatus->eventSetupImpls();
     bool cleaningUpAfterException = lumiStatus->cleaningUpAfterException() || iTask.taskHasFailed();
 
-    if (lumiStatus->didGlobalBeginSucceed()) {
-      auto& lumiPrincipal = *lumiStatus->lumiPrincipal();
-      using Traits = OccurrenceTraits<LuminosityBlockPrincipal, BranchActionStreamEnd>;
-      LumiTransitionInfo transitionInfo(lumiPrincipal, es, eventSetupImpls);
-      endStreamTransitionAsync<Traits>(std::move(lumiDoneTask),
-                                       *schedule_,
-                                       iStreamIndex,
-                                       transitionInfo,
-                                       serviceToken_,
-                                       subProcesses_,
-                                       cleaningUpAfterException);
-    }
+    auto& lumiPrincipal = *lumiStatus->lumiPrincipal();
+    using Traits = OccurrenceTraits<LuminosityBlockPrincipal, BranchActionStreamEnd>;
+    LumiTransitionInfo transitionInfo(lumiPrincipal, es, eventSetupImpls);
+    endStreamTransitionAsync<Traits>(std::move(lumiDoneTask),
+                                     *schedule_,
+                                     iStreamIndex,
+                                     transitionInfo,
+                                     serviceToken_,
+                                     subProcesses_,
+                                     cleaningUpAfterException);
   }
 
   void EventProcessor::endUnfinishedLumi(bool cleaningUpAfterException) {

@@ -8,6 +8,7 @@ from Configuration.Geometry.GeometryDD4hepExtended2026D106_cff import *
 # tracker
 from Geometry.CommonTopologies.globalTrackingGeometry_cfi import *
 from RecoTracker.GeometryESProducer.TrackerRecoGeometryESProducer_cfi import *
+from Geometry.TrackerGeometryBuilder.TrackerAdditionalParametersPerDet_cfi import *
 from Geometry.TrackerGeometryBuilder.trackerParameters_cff import *
 from Geometry.TrackerNumberingBuilder.trackerTopology_cfi import *
 from Geometry.TrackerGeometryBuilder.idealForDigiTrackerGeometry_cff import *
@@ -46,6 +47,7 @@ from Geometry.CSCGeometryBuilder.idealForDigiCscGeometry_cff import *
 from Geometry.DTGeometryBuilder.idealForDigiDtGeometry_cff import *
 
 # forward
+from Geometry.ForwardGeometry.zdcTopologyEP_cfi import *
 from Geometry.ForwardGeometry.ZdcGeometry_cfi import *
 
 # timing

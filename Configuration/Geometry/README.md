@@ -85,6 +85,10 @@ Tracker:
 * T33: Phase2 tilted tracker. Identical to T32 apart from a more realistic description of the 3D sensors in TBPX layer1.
 * T34: Same as T32 with the exception of modified Tracker volume so that it touches CALO on the outer side and BeamPipe on the inner side
 * T35: Same as T33 with the exception of modified Tracker volume so that it touches CALO on the outer side and BeamPipe on the inner side
+* T36: OT (v8.0.6): increased (smallDelta +300 micron) inter-ladder radial spacing TB2S. IT (v7.4.1): TBPX as in T35 with 0.4 mm gap between Z+ and Z-
+* T37: OT (v8.0.6): increased (smallDelta +300 micron) inter-ladder radial spacing TB2S. IT (v7.4.2): TBPX as in T35 with 0.7+0.4+0.7 mm gap between Z+ and Z-
+* T38: OT (v8.0.6): increased (smallDelta +300 micron) inter-ladder radial spacing TB2S. IT (v7.4.4): TBPX as in T35 with 1.3+0.4+1.3 mm gap between Z+ and Z-
+* T39: Same as T35 but introducing BigPixels in InnerTracker (1x2 planar and 2x2 planar modules)
 
 Calorimeters:
 * C9: HGCal (v11 post TDR HGCal Geometry w/ corner centering for HE part) + Phase2 HCAL and EB + Tracker cables (used in 2026D49)
@@ -139,16 +143,9 @@ The script also handles the common and forward elements of the geometry:
 * F8: same as F6 or F7 without BRM
 
 Several detector combinations have been generated:
-* D86 = T24+C17+M10+I14+O8+F8
-* D88 = T24+C17+M10+I15+O9+F8
-* D91 = T30+C17+M10+I15+O9+F8
-* D92 = T24+C18+M10+I15+O9+F8
-* D93 = T24+C19+M10+I15+O9+F8
-* D94 = T24+C20+M10+I15+O9+F8
 * D95 = T31+C17+M10+I16+O9+F8
 * D96 = T31+C18+M10+I16+O9+F8
-* D97 = T25+C17+M10+I15+O9+F8
-* D98 = T32+C17+M10+I16+O9+F8 (Current Phase-2 baseline from CMSSW_13_2_0_pre2)
+* D98 = T32+C17+M10+I16+O9+F8
 * D99 = T32+C18+M10+I16+O9+F8
 * D100 = T34+C17+M11+I16+O9+F8
 * D101 = T34+C18+M11+I16+O9+F8
@@ -160,7 +157,9 @@ Several detector combinations have been generated:
 * D107 = T32+C17+M11+I17+O9+F8
 * D108 = T35+C19+M11+I17+O9+F8
 * D109 = T35+C24+M11+I17+O9+F8
-* D110 = T35+C18+M11+I17+O9+F8
+* D110 = T35+C18+M11+I17+O9+F8 (Current Phase-2 baseline from CMSSW_14_1_0_pre2)
 * D111 = T36+C24+M11+I17+O9+F8
 * D112 = T37+C24+M11+I17+O9+F8
 * D113 = T38+C24+M11+I17+O9+F8
+* D114 = T39+C19+M11+I17+O9+F8
+

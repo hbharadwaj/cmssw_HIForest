@@ -55,8 +55,8 @@ process.dqmEnv.subSystemFolder    = "SiStripApproximateClusters"
 process.dqmSaver.tag = "SiStripApproximateClusters"
 process.dqmSaver.backupLumiCount = 30
 process.dqmSaver.runNumber = options.runNumber
-process.dqmSaverPB.tag = "SiStripApproximateClusters"
-process.dqmSaverPB.runNumber = options.runNumber
+# process.dqmSaverPB.tag = "SiStripApproximateClusters"
+# process.dqmSaverPB.runNumber = options.runNumber
 
 from DQMServices.Core.DQMEDAnalyzer import DQMEDAnalyzer
 process.dqmEnvTr = DQMEDAnalyzer('DQMEventInfo',
@@ -87,8 +87,7 @@ elif(offlineTesting):
     #you may need to set manually the GT in the line below
     process.GlobalTag = gtCustomise(process.GlobalTag, 'auto:run3_hlt', '')
 
-
-print("Will process with GlobalTag %s",process.GlobalTag.globaltag.value())
+print("Will process with GlobalTag: %s" % process.GlobalTag.globaltag.value())
 
 #--------------------------------------------
 # Patch to avoid using Run Info information in reconstruction
@@ -177,7 +176,7 @@ if (process.runType.getRunType() == process.runType.hi_run):
 else :
     process.RecoForDQM_LocalReco     = cms.Sequence(process.siPixelDigis*process.siStripDigis*process.gtDigis*process.trackerlocalreco)
 
-process.DQMCommon = cms.Sequence(process.dqmEnv*process.dqmEnvTr*process.dqmSaver*process.dqmSaverPB)
+process.DQMCommon = cms.Sequence(process.dqmEnv*process.dqmEnvTr*process.dqmSaver)#*process.dqmSaverPB)
 
 print("Running with run type = ", process.runType.getRunTypeName())
 
@@ -197,6 +196,7 @@ if process.runType.getRunType() == process.runType.hi_run:
     process.scalersRawToDigi.scalersInputTag = rawDataRepackerLabel
     process.siPixelDigis.cpu.InputLabel = rawDataRepackerLabel
     process.siStripDigis.ProductLabel = rawDataRepackerLabel
+    process.tcdsDigis.InputLabel = rawDataRepackerLabel
 
     if ((process.runType.getRunType() == process.runType.hi_run) and live):
         process.source.SelectEvents = [

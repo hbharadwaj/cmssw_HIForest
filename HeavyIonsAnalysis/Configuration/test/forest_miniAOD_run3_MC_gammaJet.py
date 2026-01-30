@@ -28,15 +28,6 @@ process.maxEvents = cms.untracked.PSet(
     input = cms.untracked.int32(100)
     )
 
-process.Timing = cms.Service("Timing",
-  summaryOnly = cms.untracked.bool(False),
-  useJobReport = cms.untracked.bool(True)
-)
-
-process.SimpleMemoryCheck = cms.Service("SimpleMemoryCheck",
-    ignoreTotal = cms.untracked.int32(1)
-)
-
 ###############################################################################
 
 # load Global Tag, geometry, etc.

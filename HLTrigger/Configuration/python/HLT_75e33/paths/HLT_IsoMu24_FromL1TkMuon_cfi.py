@@ -2,22 +2,23 @@ import FWCore.ParameterSet.Config as cms
 
 from ..sequences.HLTBeginSequence_cfi import *
 from ..sequences.HLTEndSequence_cfi import *
-from ..sequences.RawToDigiSequence_cfi import *
-from ..sequences.itLocalRecoSequence_cfi import *
-from ..sequences.otLocalRecoSequence_cfi import *
-from ..sequences.hgcalLocalRecoSequence_cfi import *
+from ..sequences.HLTRawToDigiSequence_cfi import *
+from ..sequences.HLTItLocalRecoSequence_cfi import *
+from ..sequences.HLTOtLocalRecoSequence_cfi import *
+from ..sequences.HLTHgcalLocalRecoSequence_cfi import *
 from ..sequences.HLTDoLocalHcalSequence_cfi import *
 from ..sequences.HLTDoFullUnpackingEgammaEcalSequence_cfi import *
 from ..sequences.HLTFastJetForEgammaSequence_cfi import *
 from ..sequences.HLTIter0Phase2L3FromL1TkSequence_cfi import *
 from ..sequences.HLTIter2Phase2L3FromL1TkSequence_cfi import *
-from ..sequences.pfClusteringHBHEHFSequence_cfi import *
+from ..sequences.HLTPfClusteringHBHEHFSequence_cfi import *
 from ..sequences.HLTPhase2L3FromL1TkSequence_cfi import *
 from ..sequences.HLTPhase2L3OISequence_cfi import *
 from ..sequences.HLTPhase2L3MuonsSequence_cfi import *
 from ..sequences.HLTL2MuonsFromL1TkSequence_cfi import *
 from ..sequences.HLTPFClusteringForEgammaUnseededSequence_cfi import *
 from ..sequences.HLTPhase2L3MuonGeneralTracksSequence_cfi import *
+from ..modules.hltSingleTkMuon22L1TkMuonFilter_cfi import *
 from ..modules.hltPhase2PixelFitterByHelixProjections_cfi import *
 from ..modules.hltPhase2PixelTrackFilterByKinematics_cfi import *
 from ..modules.hltL3crIsoL1TkSingleMu22L3f24QL3pfecalIsoFiltered0p41_cfi import *
@@ -33,9 +34,10 @@ from ..modules.hltPhase2L3MuonsTrkIsoRegionalNewdR0p3dRVeto0p005dz0p25dr0p20Chis
 
 
 HLT_IsoMu24_FromL1TkMuon = cms.Path(HLTBeginSequence
-    +RawToDigiSequence
-    +itLocalRecoSequence
-    +otLocalRecoSequence
+    +hltSingleTkMuon22L1TkMuonFilter
+    +HLTRawToDigiSequence
+    +HLTItLocalRecoSequence
+    +HLTOtLocalRecoSequence
     +HLTL2MuonsFromL1TkSequence
     +HLTPhase2L3OISequence
     +hltPhase2PixelFitterByHelixProjections
@@ -45,11 +47,11 @@ HLT_IsoMu24_FromL1TkMuon = cms.Path(HLTBeginSequence
     +HLTIter2Phase2L3FromL1TkSequence
     +HLTPhase2L3MuonsSequence
     +hltL3fL1TkSingleMu22L3Filtered24Q
-    +hgcalLocalRecoSequence
+    +HLTHgcalLocalRecoSequence
     +HLTDoLocalHcalSequence
     +HLTDoFullUnpackingEgammaEcalSequence
     +HLTFastJetForEgammaSequence
-    +pfClusteringHBHEHFSequence
+    +HLTPfClusteringHBHEHFSequence
     +HLTPFClusteringForEgammaUnseededSequence
     +hltPhase2L3MuonsEcalIsodR0p3dRVeto0p000
     +hltPhase2L3MuonsHcalIsodR0p3dRVeto0p000

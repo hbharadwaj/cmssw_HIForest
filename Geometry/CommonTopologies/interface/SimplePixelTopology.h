@@ -208,7 +208,7 @@ namespace phase2PixelTopology {
 
   constexpr uint32_t numberOfLayers = 28;
   constexpr int nPairs = 23 + 6 + 14 + 8 + 4;  // include far forward layer pairs
-  constexpr uint16_t numberOfModules = 3892;
+  constexpr uint16_t numberOfModules = 4000;
 
   constexpr uint32_t maxNumClustersPerModules = 1024;
 
@@ -378,10 +378,15 @@ namespace pixelTopology {
     static constexpr int maxDYsize = 10;
     static constexpr int maxDYPred = 20;
 
-    static constexpr uint16_t numberOfModules = 3892;
+    static constexpr uint16_t numberOfModules = phase2PixelTopology::numberOfModules;
 
-    // 1024 bins, 10 bits
-    static constexpr uint16_t clusterBinning = 1024;
+    // 1000 bins < 1024 bins (10 bits) must be:
+    // - < 32*32 (warpSize*warpSize for block prefix scan for CUDA)
+    // - > number of columns (y) in any module. This is due to the fact
+    //     that in pixel clustering we give for granted that in each
+    //     bin we only have the pixel belonging to the same column.
+    //     See RecoLocalTracker/SiPixelClusterizer/plugins/alpaka/PixelClustering.h#L325-L347
+    static constexpr uint16_t clusterBinning = 1000;
     static constexpr uint16_t clusterBits = 10;
 
     static constexpr uint16_t numberOfModulesInBarrel = 756;
@@ -470,7 +475,7 @@ namespace pixelTopology {
     static constexpr int maxDYsize = 20;
     static constexpr int maxDYPred = 20;
 
-    static constexpr uint16_t numberOfModules = 1856;
+    static constexpr uint16_t numberOfModules = phase1PixelTopology::numberOfModules;
 
     static constexpr uint16_t numRowsInRoc = 80;
     static constexpr uint16_t numColsInRoc = 52;

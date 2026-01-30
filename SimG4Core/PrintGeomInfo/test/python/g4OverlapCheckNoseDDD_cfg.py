@@ -1,8 +1,8 @@
 ###############################################################################
 # Way to use this:
-#   cmsRun g4OverlapCheckNoseDDD_cfg.py geometry=D94 tol=0.1
+#   cmsRun g4OverlapCheckNoseDDD_cfg.py geometry=D115 tol=0.1
 #
-#   Options for geometry D94
+#   Options for geometry D115
 #
 ###############################################################################
 import FWCore.ParameterSet.Config as cms
@@ -13,15 +13,15 @@ import FWCore.ParameterSet.VarParsing as VarParsing
 ### SETUP OPTIONS
 options = VarParsing.VarParsing('standard')
 options.register('geometry',
-                 "D94",
+                 "D115",
                   VarParsing.VarParsing.multiplicity.singleton,
                   VarParsing.VarParsing.varType.string,
-                  "geometry of operations: D94")
+                  "geometry of operations: D115")
 options.register('tol',
-                 0.1,
+                 0.01,
                  VarParsing.VarParsing.multiplicity.singleton,
                  VarParsing.VarParsing.varType.float,
-                 "Tolerance for checking overlaps: 0.01, 0.1, 1.0"
+                 "Tolerance for checking overlaps: 0.0, 0.01, 0.1, 1.0"
 )
 
 ### get and parse the command line arguments

@@ -63,7 +63,7 @@ defaultOptions.datatier = None
 defaultOptions.inlineEventContent = True
 defaultOptions.inlineObjects =''
 defaultOptions.hideGen=False
-from Configuration.StandardSequences.VtxSmeared import VtxSmearedDefaultKey,VtxSmearedHIDefaultKey
+from Configuration.StandardSequences.VtxSmeared import VtxSmearedDefaultKey
 defaultOptions.beamspot=None
 defaultOptions.outputDefinition =''
 defaultOptions.inputCommands = None
@@ -680,12 +680,15 @@ class ConfigBuilder(object):
             if streamType=='': continue
             if streamType == 'ALCARECO' and not 'ALCAPRODUCER' in self._options.step: continue
             if streamType=='DQMIO': streamType='DQM'
+            streamQualifier=''
+            if streamType[-1].isdigit():
+                ## a special case where --eventcontent MINIAODSIM1 is set to have more than one output in a chain of configuration
+                streamQualifier = str(streamType[-1])
+                streamType = streamType[:-1]
             eventContent=streamType
             ## override streamType to eventContent in case NANOEDM
-            if streamType == "NANOEDMAOD" :
-                eventContent = "NANOAOD"
-            elif streamType == "NANOEDMAODSIM" :
-                eventContent = "NANOAODSIM"
+            if streamType.startswith("NANOEDMAOD"):
+                eventContent = eventContent.replace("NANOEDM","NANO")
             theEventContent = getattr(self.process, eventContent+"EventContent")
             if i==0:
                 theFileName=self._options.outfile_name
@@ -714,10 +717,11 @@ class ConfigBuilder(object):
                 output.dataset.filterName = cms.untracked.string('StreamALCACombined')
 
             if "MINIAOD" in streamType:
+                ## we should definitely get rid of this customization by now
                 from PhysicsTools.PatAlgos.slimming.miniAOD_tools import miniAOD_customizeOutput
                 miniAOD_customizeOutput(output)
 
-            outputModuleName=streamType+'output'
+            outputModuleName=streamType+streamQualifier+'output'
             setattr(self.process,outputModuleName,output)
             outputModule=getattr(self.process,outputModuleName)
             setattr(self.process,outputModuleName+'_step',cms.EndPath(outputModule))
@@ -1007,7 +1011,6 @@ class ConfigBuilder(object):
         self.RECOSIMDefaultCFF="Configuration/StandardSequences/RecoSim_cff"
         self.PATDefaultCFF="Configuration/StandardSequences/PAT_cff"
         self.NANODefaultCFF="PhysicsTools/NanoAOD/nano_cff"
-        self.NANOGENDefaultCFF="PhysicsTools/NanoAOD/nanogen_cff"
         self.SKIMDefaultCFF="Configuration/StandardSequences/Skims_cff"
         self.POSTRECODefaultCFF="Configuration/StandardSequences/PostRecoGenerator_cff"
         self.VALIDATIONDefaultCFF="Configuration/StandardSequences/Validation_cff"
@@ -1057,14 +1060,18 @@ class ConfigBuilder(object):
         self.PATDefaultSeq='miniAOD'
         self.PATGENDefaultSeq='miniGEN'
         #TODO: Check based of file input
-        self.NANOGENDefaultSeq='nanogenSequence'
         self.NANODefaultSeq='nanoSequence'
         self.NANODefaultCustom='nanoAOD_customizeCommon'
 
         self.EVTCONTDefaultCFF="Configuration/EventContent/EventContent_cff"
 
         if not self._options.beamspot:
-            self._options.beamspot=VtxSmearedDefaultKey
+            # GEN step always requires to have a VtxSmearing scenario (--beamspot) defined
+            # ...unless it's a special gen-only request (GEN:pgen_genonly)
+            if 'GEN' in self.stepMap and not 'pgen_genonly' in self.stepMap['GEN']:
+                raise Exception("Missing \'--beamspot\' option in the GEN step of the cmsDriver command!")
+            else:
+                self._options.beamspot=VtxSmearedDefaultKey
 
         # if its MC then change the raw2digi
         if self._options.isMC==True:
@@ -1097,8 +1104,6 @@ class ConfigBuilder(object):
             self.DQMDefaultSeq='DQMOfflineCosmics'
 
         if self._options.scenario=='HeavyIons':
-            if not self._options.beamspot:
-                self._options.beamspot=VtxSmearedHIDefaultKey
             self.HLTDefaultSeq = 'HIon'
             self.VALIDATIONDefaultCFF="Configuration/StandardSequences/ValidationHeavyIons_cff"
             self.VALIDATIONDefaultSeq=''
@@ -1843,18 +1848,6 @@ class ConfigBuilder(object):
             if len(self._options.customise_commands) > 1:
                 self._options.customise_commands = self._options.customise_commands + " \n"
             self._options.customise_commands = self._options.customise_commands + "process.unpackedPatTrigger.triggerResults= cms.InputTag( 'TriggerResults::"+self._options.hltProcess+"' )\n"
-
-    def prepare_NANOGEN(self, stepSpec = "nanoAOD"):
-        ''' Enrich the schedule with NANOGEN '''
-        # TODO: Need to modify this based on the input file type
-        fromGen = any([x in self.stepMap for x in ['LHE', 'GEN', 'AOD']])
-        _,_nanogenSeq,_nanogenCff = self.loadDefaultOrSpecifiedCFF(stepSpec,self.NANOGENDefaultCFF)
-        self.scheduleSequence(_nanogenSeq,'nanoAOD_step')
-        custom = "customizeNanoGEN" if fromGen else "customizeNanoGENFromMini"
-        if self._options.runUnscheduled:
-            self._options.customisation_file_unsch.insert(0, '.'.join([_nanogenCff, custom]))
-        else:
-            self._options.customisation_file.insert(0, '.'.join([_nanogenCff, custom]))
 
     def prepare_SKIM(self, stepSpec = "all"):
         ''' Enrich the schedule with skimming fragments'''
