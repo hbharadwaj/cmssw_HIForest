@@ -308,6 +308,14 @@ ggHiNtuplizer::ggHiNtuplizer(const edm::ParameterSet& ps)
     tree_->Branch("phoE5x5", &phoE5x5_);
     tree_->Branch("phoMaxEnergyXtal", &phoMaxEnergyXtal_);
     tree_->Branch("phoSigmaEtaEta", &phoSigmaEtaEta_);
+    // PF Isolation values directly from DataFormats/EgammaCandidates/interface/Photon.h
+    tree_->Branch("phoChargedHadronIso", &phoChargedHadronIso_);
+    tree_->Branch("phochargedHadronWorstVtxIso", &phochargedHadronWorstVtxIso_);
+    tree_->Branch("phochargedHadronWorstVtxGeomVetoIso", &phochargedHadronWorstVtxGeomVetoIso_);
+    tree_->Branch("phochargedHadronPFPVIso", &phochargedHadronPFPVIso_);
+    tree_->Branch("phophotonIso", &phophotonIso_);
+    tree_->Branch("phoecalPFClusterIso", &phoecalPFClusterIso_);
+    tree_->Branch("phohcalPFClusterIso", &phohcalPFClusterIso_);
     tree_->Branch("phoSigmaIEtaIEta_2012", &phoSigmaIEtaIEta_2012_);
     tree_->Branch("phoR9_2012", &phoR9_2012_);
     tree_->Branch("phoE1x5_2012", &phoE1x5_2012_);
@@ -316,6 +324,7 @@ ggHiNtuplizer::ggHiNtuplizer(const edm::ParameterSet& ps)
     tree_->Branch("phoE5x5_2012", &phoE5x5_2012_);
     tree_->Branch("phoMaxEnergyXtal_2012", &phoMaxEnergyXtal_2012_);
     tree_->Branch("phoSigmaEtaEta_2012", &phoSigmaEtaEta_2012_);
+
 
     if (doPhoEReg_) {
       tree_->Branch("phoHadTowerOverEm1", &phoHadTowerOverEm1_);
@@ -770,6 +779,14 @@ void ggHiNtuplizer::analyze(const edm::Event& e, const edm::EventSetup& es) {
     phoE5x5_.clear();
     phoMaxEnergyXtal_.clear();
     phoSigmaEtaEta_.clear();
+    // PF Isolation values directly from DataFormats/EgammaCandidates/interface/Photon.h
+    phoChargedHadronIso_.clear();
+    phochargedHadronWorstVtxIso_.clear();
+    phochargedHadronWorstVtxGeomVetoIso_.clear();
+    phochargedHadronPFPVIso_.clear();
+    phophotonIso_.clear();
+    phoecalPFClusterIso_.clear();
+    phohcalPFClusterIso_.clear();
     phoSigmaIEtaIEta_2012_.clear();
     phoR9_2012_.clear();
     phoE1x5_2012_.clear();
@@ -1586,6 +1603,15 @@ void ggHiNtuplizer::fillPhotons(const edm::Event& e, const edm::EventSetup& es, 
     phoE5x5_.push_back(pho->e5x5());
     phoMaxEnergyXtal_.push_back(pho->maxEnergyXtal());
     phoSigmaEtaEta_.push_back(pho->sigmaEtaEta());
+
+    // PF Isolation values directly from DataFormats/EgammaCandidates/interface/Photon.h#L525
+    phoChargedHadronIso_.push_back(pho->chargedHadronIso());
+    phochargedHadronWorstVtxIso_.push_back(pho->chargedHadronWorstVtxIso());
+    phochargedHadronWorstVtxGeomVetoIso_.push_back(pho->chargedHadronWorstVtxGeomVetoIso());
+    phochargedHadronPFPVIso_.push_back(pho->chargedHadronPFPVIso());
+    phophotonIso_.push_back(pho->photonIso());
+    phoecalPFClusterIso_.push_back(pho->ecalPFClusterIso());
+    phohcalPFClusterIso_.push_back(pho->hcalPFClusterIso());
 
     if (doPhoEReg_) {
       phoHadTowerOverEm1_.push_back(pho->hadTowOverEm(1));
