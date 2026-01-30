@@ -327,6 +327,15 @@ private:
   std::vector<float> phoMaxEnergyXtal_;
   std::vector<float> phoSigmaEtaEta_;
 
+  // PF Isolation values directly from DataFormats/EgammaCandidates/interface/Photon.h
+  std::vector<float> phoChargedHadronIso_;
+  std::vector<float> phochargedHadronWorstVtxIso_;
+  std::vector<float> phochargedHadronWorstVtxGeomVetoIso_;
+  std::vector<float> phochargedHadronPFPVIso_;
+  std::vector<float> phophotonIso_;
+  std::vector<float> phoecalPFClusterIso_;
+  std::vector<float> phohcalPFClusterIso_;
+
   std::vector<float> phoSigmaIEtaIEta_2012_;
   std::vector<float> phoR9_2012_;
   std::vector<float> phoE1x5_2012_;
